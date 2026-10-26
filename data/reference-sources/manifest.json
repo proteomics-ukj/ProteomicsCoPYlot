@@ -4,9 +4,11 @@
     "python": "3.13.3",
     "script": "tools/build_reference_databases.py",
     "sources_sha256": {
+      "cambridge_contaminants": "e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0",
       "go_annotations_human": "db472faff1785878521693af62646546cea6af4a386609dd01c72c0554a46a30",
       "go_annotations_mouse": "9b7613f786f9f805531a8f6768f310220d28c82095f938e1212c86f39596ce30",
       "go_ontology": "6723f1cb15b6967331016295cdbfad42e09b0544bcfaf9c3637a04b3acef7404",
+      "gpm_crap_categories": "40e3369d0be0294261fe746feb8e727149469e59ca5c8e9696174ebcd054b6ee",
       "hgnc_complete_set": "9f516930890041b588f1c4c4bd7ab3490c41a5485420c8c52366cc74e7e9284c",
       "mgi_gene_model_coord": "b5d9c1b9c79ee2892f4f4906ce2c057232f8a2c2ca736933e43d7b6ee51fb263",
       "mgi_marker_list": "14591193928b86564c680c8d0890128c3e80f67aa53724d1482674b401c8717e",
@@ -62,9 +64,36 @@
       "bytes": 12548425,
       "records": 21864,
       "sha256": "9ecf591d37b77bd8132597c8e07fcbb22e97f4aa3faaba4d5a581cf384fc7452"
+    },
+    "crap_ccp.fasta": {
+      "built": "2026-10-26T10:35:03Z",
+      "bytes": 54094,
+      "records": 125,
+      "sha256": "e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0"
+    },
+    "crap_ccp_metadata.csv": {
+      "built": "2026-10-26T10:54:04Z",
+      "bytes": 18837,
+      "records": 125,
+      "sha256": "522b18cb8c2e1393b290367a4ab44639cd64e15acaa255c68895f3e869884880"
     }
   },
   "sources": {
+    "cambridge_contaminants": {
+      "bytes": 54094,
+      "citation": "Gatto, L. (2025). Proteomics contaminant databases (1.0). Zenodo. https://doi.org/10.5281/zenodo.15115102; Cambridge Centre for Proteomics, camprotR (Charlotte Dawson and Tom Smith); The UniProt Consortium.",
+      "file": "crap_ccp.fasta",
+      "licence": "CC BY 4.0 (Zenodo snapshot); upstream camprotR MIT and UniProt CC BY 4.0 notices retained",
+      "licence_url": "https://creativecommons.org/licenses/by/4.0/",
+      "notes": "Unmodified crap_ccp.fasta; 123 distinct non-placeholder accessions and two commercial reagent records with accession 000000. Source UniProt release unspecified by deposit. See data/db/CAMBRIDGE_NOTICE.md.",
+      "provider": "cambridge",
+      "release": "1.0 (Zenodo 15115102)",
+      "release_date": "2025-03-31",
+      "retrieved": "2026-10-26T10:35:03Z",
+      "sha256": "e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0",
+      "upstream_last_modified": "",
+      "url": "https://zenodo.org/api/records/15115102/files/crap_ccp.fasta/content"
+    },
     "go_annotations_human": {
       "bytes": 15041996,
       "citation": "Gene Ontology Consortium. The Gene Ontology knowledgebase in 2023. Genetics 224, iyad031 (2023); Ashburner et al. Gene Ontology: tool for the unification of biology. Nat Genet 25, 25-29 (2000).",
@@ -106,6 +135,19 @@
       "sha256": "6723f1cb15b6967331016295cdbfad42e09b0544bcfaf9c3637a04b3acef7404",
       "upstream_last_modified": "Sat, 08 Aug 2026 22:27:06 GMT",
       "url": "https://current.geneontology.org/ontology/go-basic.obo"
+    },
+    "gpm_crap_categories": {
+      "bytes": 1433,
+      "citation": "The Global Proteome Machine Organization. cRAP protein sequences, version 2012.01.01. https://www.thegpm.org/crap/",
+      "file": "gpm_crap_categories.json.gz",
+      "licence": "No explicit licence on source page; factual accession/category mapping only, with attribution. No GPM FASTA or descriptive prose redistributed.",
+      "licence_url": "https://www.thegpm.org/crap/",
+      "provider": "gpm_categories",
+      "release": "2012.01.01",
+      "release_date": "2012-01-01",
+      "retrieved": "2026-10-26T10:44:41Z",
+      "sha256": "40e3369d0be0294261fe746feb8e727149469e59ca5c8e9696174ebcd054b6ee",
+      "url": "https://www.thegpm.org/crap/"
     },
     "hgnc_complete_set": {
       "bytes": 4059076,

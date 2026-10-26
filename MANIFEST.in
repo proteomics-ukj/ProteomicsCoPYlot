@@ -3,3 +3,9 @@ include data/db/all_go_terms_genes.csv
 include data/db/all_go_terms_genes_mouse.csv
 include data/db/README.md
 include data/db/PACKAGED_README.md
+
+include data/db/crap_ccp.fasta
+include data/db/CAMBRIDGE_NOTICE.md
+include data/db/CAMBRIDGE_LICENSE.txt
+include data/db/CC-BY-4.0.txt
+include data/db/crap_ccp_metadata.csv

@@ -706,6 +706,8 @@ def _filter_is_applied(filter_config) -> bool:
     """
     if filter_config is None:
         return False
+    if getattr(getattr(filter_config, "contaminants", None), "enabled", False):
+        return True
     method = str(getattr(filter_config, "method", "at_least_n")).strip().lower()
     if method == "percentage":
         return float(getattr(filter_config, "minPercentage", 0.0) or 0.0) > 0.0
@@ -750,6 +752,14 @@ def _filter_description(annotation) -> str | None:
     description += (
         f" ({len(annotation.filtered_data)} of {len(annotation.source_data)} rows)."
     )
+    contaminants = getattr(filter_config, "contaminants", None)
+    if getattr(contaminants, "enabled", False):
+        description += (
+            f" Cambridge cRAP contaminant filtering ({cite('cambridge_contaminants')}; "
+            f"Cambridge Centre for Proteomics / camprotR) followed the completeness filter: "
+            f"categories {', '.join(map(str, contaminants.categories))}; exact protein names"
+            f"{' and accessions' if contaminants.matchAccessions else ''}; every group member must match."
+        )
     return description
 
 

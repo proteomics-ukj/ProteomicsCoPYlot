@@ -8,6 +8,7 @@ deterministic (gzip without timestamps, sorted rows).
 from __future__ import annotations
 
 import gzip
+import csv
 import importlib.util
 import json
 import shutil
@@ -38,12 +39,12 @@ def test_the_manifest_records_provenance_for_every_source(manifest) -> None:
         for key in ("url", "release", "retrieved", "sha256", "licence", "licence_url", "citation", "bytes"):
             assert entry.get(key), f"{name} lacks {key}"
         assert entry["url"].startswith("https://")
-        assert build_tool.source_path(name, entry["file"]).suffix == ".gz"
+        assert build_tool.source_path(name, entry["file"]).suffix in {".gz", ".fasta"}
 
 
 def test_fasta_sources_are_stored_once_with_unchanged_provenance(manifest) -> None:
-    fasta_sources = {name for name, entry in manifest["sources"].items() if entry["file"].endswith(".fasta.gz")}
-    assert len(fasta_sources) == 4
+    fasta_sources = {name for name, entry in manifest["sources"].items() if entry["file"].endswith((".fasta.gz", ".fasta"))}
+    assert fasta_sources == build_tool.DB_ONLY_SOURCES
     for name in fasta_sources:
         entry = manifest["sources"][name]
         path = build_tool.source_path(name, entry["file"])
@@ -60,6 +61,60 @@ def test_every_output_is_listed_and_documented(manifest) -> None:
         assert (ROOT / "data" / "db" / name).is_file()
         assert entry["sha256"] in readme, f"README does not quote the checksum of {name}"
     assert manifest["build"]["sources_sha256"] == {n: s["sha256"] for n, s in manifest["sources"].items()}
+
+
+def test_cambridge_categories_distinguish_gpm_and_scientist_decisions() -> None:
+    with (ROOT / "data/db/crap_ccp_metadata.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == len({r["cambridge_id"] for r in rows}) == 125
+    assert sum(r["match_method"] == "exact_accession" for r in rows) == 111
+    by_accession = {r["uniprot_accession"]: r for r in rows}
+    assert by_accession["P02769"]["gpm_category_id"] == "1"  # bovine albumin
+    assert by_accession["P13645"]["gpm_category_id"] == "2"  # human KRT10
+    assert by_accession["P00004"]["gpm_category_id"] == "3"  # horse cytochrome c
+    assert by_accession["P01375"]["gpm_category_id"] == "4"  # human TNF, UPS standard
+    assert by_accession["P32503"]["gpm_category_id"] == "5"  # yeast virus capsid
+    decisions = [r for r in rows if r["match_method"] == "scientific_decision"]
+    assert len(decisions) == 14
+    assert all(r["gpm_category"] for r in rows)
+    assert sum(r["gpm_category_id"] == "2" for r in decisions) == 3
+    assert sum(r["gpm_category_id"] == "1" for r in decisions) == 11
+    for row in decisions:
+        assert row["category_source"] == "scientific decision"
+        assert row["category_source_version"] == ""
+        assert row["gpm_entry_name"] == ""
+    assert len([r for r in rows if r["uniprot_accession"] == "000000"]) == 2
+    assert "decision_date" not in rows[0]
+    assert "decision_rationale" not in rows[0]
+
+
+def test_category_extraction_rejects_changed_source_layout() -> None:
+    with pytest.raises(ValueError, match="structure/version changed"):
+        build_tool.extract_gpm_categories(b"<html>temporarily unavailable</html>")
+
+
+def test_cambridge_fetch_rejects_changed_bytes_before_replacing_snapshot(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "crap_ccp.fasta"
+    target.write_bytes(b"existing snapshot")
+    monkeypatch.setattr(build_tool, "SOURCES", tmp_path)
+    monkeypatch.setattr(build_tool, "source_path", lambda *args: target)
+    monkeypatch.setattr(build_tool, "_uniprot_release", lambda: ("unused", "unused"))
+    monkeypatch.setattr(build_tool, "_go_release", lambda: "unused")
+    monkeypatch.setattr(build_tool, "_get", lambda url: (b"changed upstream bytes", {}))
+    with pytest.raises(ValueError, match="Cambridge v1.0 checksum mismatch"):
+        build_tool.fetch(["cambridge_contaminants"])
+    assert target.read_bytes() == b"existing snapshot"
+
+
+def test_scientist_decisions_refuse_changed_record_identity(tmp_path, monkeypatch) -> None:
+    fasta = (ROOT / "data/db/crap_ccp.fasta").read_text(encoding="utf-8")
+    (tmp_path / "crap_ccp.fasta").write_text(
+        fasta.replace("cRAP126|000000|ENDOP_GLUC", "cRAP126|000000|OTHER_REAGENT"),
+        encoding="utf-8")
+    monkeypatch.setattr(build_tool, "DB_SOURCES", tmp_path)
+    monkeypatch.setattr(build_tool, "DB", tmp_path)
+    with pytest.raises(ValueError, match="record identities changed"):
+        build_tool.build_cambridge_metadata()
 
 
 def test_nothing_from_the_sources_folder_is_shipped() -> None:

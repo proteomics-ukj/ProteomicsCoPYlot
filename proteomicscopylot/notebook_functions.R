@@ -734,6 +734,74 @@ inverse_log2_transform_data <- function(data, meta) {
   invisible(NULL)
 }
 
+# Optional Cambridge filtering. Row names survive for normalize_data(fit_rows=).
+# Exact names/accessions, every member must match; never match gene symbols.
+filter_contaminants <- function(data, enabled = FALSE, categories = 1:5,
+                                match_accessions = TRUE, database = NULL) {
+  if (!enabled) return(data)
+  if (!length(categories) || anyNA(categories) || !all(categories %in% 1:5)) {
+    stop("Select at least one valid contaminant category.", call. = FALSE)
+  }
+  if (is.null(database)) {
+    candidates <- c(file.path(.copylot_source_dir, "data", "crap_ccp_metadata.csv"),
+                    file.path(dirname(.copylot_source_dir), "data", "db", "crap_ccp_metadata.csv"))
+    path <- candidates[file.exists(candidates)][1]
+    if (is.na(path)) stop("Bundled Cambridge contaminant metadata is missing; supply database=.", call. = FALSE)
+    database <- utils::read.csv(path, colClasses = "character", check.names = FALSE, na.strings = "")
+  }
+  selected <- vapply(as.character(database$gpm_category_id), function(value) {
+    any(trimws(strsplit(value, ";", fixed = TRUE)[[1]]) %in% categories)
+  }, logical(1))
+  records <- database[selected, , drop = FALSE]
+  protein_names <- unique(c(records$entry_name, records$protein_name))
+  protein_names <- protein_names[!is.na(protein_names) & nzchar(protein_names)]
+  accessions <- records$uniprot_accession
+  accessions <- accessions[!is.na(accessions) & nzchar(accessions) & accessions != "000000"]
+  name_column <- intersect(c("ProteinNames", "Phosphoprotein"), names(data))[1]
+  accession_column <- if (match_accessions) intersect(c("ProteinAccessions", "Protein_group"), names(data))[1] else NA_character_
+  if (is.na(name_column) && is.na(accession_column)) {
+    stop("Contaminant filtering needs protein names or enabled accession matching with a protein accession column. Gene names are not used.", call. = FALSE)
+  }
+  members <- function(value) {
+    if (is.na(value)) return(character())
+    # Append a sentinel so strsplit retains empty trailing group members.
+    parts <- strsplit(paste0(as.character(value), ";.sentinel"), ";", fixed = TRUE)[[1]]
+    trimws(parts[-length(parts)])
+  }
+  identity <- function(member) {
+    member <- sub("^(CON__|contam_)", "", sub("^>", "", member))
+    token <- strsplit(member, " ", fixed = TRUE)[[1]][1]
+    parts <- strsplit(token, "|", fixed = TRUE)[[1]]
+    if (length(parts) == 3L && parts[1] %in% c("sp", "tr")) return(c(parts[3], parts[2]))
+    if (length(parts) == 4L && parts[1] %in% c("sp", "tr") && startsWith(parts[2], "cRAP")) return(c(parts[4], parts[3]))
+    c(member, member)
+  }
+  matches <- function(value) {
+    tokens <- members(value)
+    length(tokens) > 0L && all(vapply(tokens, function(member) {
+      ids <- identity(member)
+      ids[1] %in% protein_names || (match_accessions && ids[2] %in% accessions)
+    }, logical(1)))
+  }
+  removed <- vapply(seq_len(nrow(data)), function(i) {
+    name <- if (is.na(name_column)) NA_character_ else as.character(data[[name_column]][i])
+    accession <- if (is.na(accession_column)) NA_character_ else as.character(data[[accession_column]][i])
+    has_names <- !is.na(name) && nzchar(trimws(name))
+    has_accessions <- !is.na(accession) && nzchar(trimws(accession))
+    if (has_names && has_accessions) {
+      matched <- matches(accession) && (matches(name) || length(members(accession)) >= length(members(name)))
+      if (!matched && matches(name) && length(members(accession)) <= length(members(name))) {
+        matched <- all(vapply(members(accession), function(member) identity(member)[2] == "000000" || matches(member), logical(1)))
+      }
+      return(matched)
+    }
+    if (has_names) return(matches(name))
+    if (has_accessions) return(matches(accession))
+    FALSE
+  }, logical(1))
+  data[!removed, , drop = FALSE]
+}
+
 filter_data <- function(data, meta, num, mode = "per_group", method = "at_least_n", percentage = 70) {
   .validate_meta_samples(meta)
   .validate_sample_values(data, meta)

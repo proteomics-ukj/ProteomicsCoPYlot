@@ -14,13 +14,12 @@ from app.schemas.annotation import (
     phosprot_filter_config,
 )
 from app.services.annotation_store import StoredAnnotation, clear_annotation, get_annotation, store_prepared_annotation
-from app.services.annotation_processor import resolve_log2_state
+from app.services.annotation_processor import resolve_log2_state, filter_then_normalize
 from app.services.dataset_store import save_table_dataset
 from app.services.phospho_localization import localization_cutoff_description, validate_localization_cutoff
 from app.services.functions import (
     filter_localization,
     choose_best_source,
-    filter_data,
     inverse_log2_transform_data,
     log2_transform_data,
     raw_zero_to_nan,
@@ -383,23 +382,20 @@ def _store_phosprot_annotation(
     # phosphosite matrix or uploaded on their intended analysis scale. Never
     # normalize them again after collapse.
     filter_config = phosprot_filter_config(inherited_filter_config)
-    if resolved_log2:
-        log2_data = use_existing_log2_data(frame, sample_columns)
-    else:
-        log2_data = log2_transform_data(frame, sample_columns)
-
-    filtered_data = filter_data(
-        log2_data,
-        metadata,
+    log2_data, filtered_data = filter_then_normalize(
+        frame, metadata, resolved_log2, "none",
         min_present=filter_config.minPresent,
-        mode=filter_config.mode,
-        method=filter_config.method,
+        filter_mode=filter_config.mode,
+        filter_method=filter_config.method,
         min_percentage=filter_config.minPercentage,
+        contaminants=filter_config.contaminants.model_dump(),
     )
 
     warnings: list[str] = [
         f"{warning_prefix} Metadata and filter settings were inherited from phospho annotation."
     ]
+    if filtered_data.attrs.get("contaminant_filter"):
+        warnings.append(filtered_data.attrs["contaminant_filter"])
     if log2_warning:
         warnings.append(log2_warning)
     if upstream_normalization is None:

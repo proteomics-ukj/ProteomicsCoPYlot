@@ -25,6 +25,7 @@ comparison_tools.py
 dataset_reader.py
 id_translation.py
 annotation_processor.py
+contaminant_filter.py
 phosprot_tools.py
 r_vsn.py
 r_limma.py

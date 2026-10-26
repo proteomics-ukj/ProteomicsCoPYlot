@@ -1649,6 +1649,9 @@
       },
       "AnnotationFilterConfig": {
         "properties": {
+          "contaminants": {
+            "$ref": "#/components/schemas/ContaminantFilterConfig"
+          },
           "method": {
             "default": "at_least_n",
             "enum": [
@@ -3088,6 +3091,36 @@
           }
         },
         "title": "ConditionPaletteUpdateRequest",
+        "type": "object"
+      },
+      "ContaminantFilterConfig": {
+        "properties": {
+          "categories": {
+            "items": {
+              "enum": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "type": "integer"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "matchAccessions": {
+            "default": true,
+            "title": "Matchaccessions",
+            "type": "boolean"
+          }
+        },
+        "title": "ContaminantFilterConfig",
         "type": "object"
       },
       "ConversationSelection": {

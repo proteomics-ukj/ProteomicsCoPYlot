@@ -32,3 +32,18 @@ copyright 1999-present Gene Ontology Consortium, CC BY 4.0
 (https://geneontology.org/docs/go-citation-policy/).
 The exact files, checksums and the build are recorded in
 data/reference-sources/manifest.json and data/db/README.md.
+
+Cambridge CCP contaminants: unchanged crap_ccp.fasta from Gatto, L. (2025),
+Proteomics contaminant databases v1.0, https://doi.org/10.5281/zenodo.15115102
+(CC BY 4.0). Collection: Cambridge Centre for Proteomics, camprotR (Charlotte
+Dawson and Tom Smith); upstream UniProt records and GPM cRAP foundation.
+Copyright (c) 2020 Cambridge Centre for Proteomics (MIT notice retained).
+See data/db/CAMBRIDGE_NOTICE.md, CAMBRIDGE_LICENSE.txt and CC-BY-4.0.txt.
+
+crap_ccp_metadata.csv: 111 exact-accession category annotations from GPM
+cRAP version 2012.01.01, https://www.thegpm.org/crap/. Source page copyright
+2004-2011 The Global Proteome Machine Organization; no explicit source licence.
+See data/db/CAMBRIDGE_NOTICE.md for attribution and limits of the mapping.
+
+The additional 14 category assignments are CoPYlot scientist decisions approved
+by the user on 2026-10-26; these are not attributed to GPM or Cambridge.

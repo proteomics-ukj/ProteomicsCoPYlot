@@ -29,6 +29,10 @@ class Reference:
 
 
 REFERENCES: dict[str, Reference] = {
+    "cambridge_contaminants": Reference(
+        "Cambridge cRAP contaminant reference",
+        "Optional exact-identifier filtering; Cambridge Centre for Proteomics / camprotR reference",
+        "Gatto (2025)", "10.5281/zenodo.15115102"),
     "quantile_normalization": Reference(
         "Quantile normalization", "Normalization across samples",
         "Bolstad et al. (2003)", "10.1093/bioinformatics/19.2.185"),

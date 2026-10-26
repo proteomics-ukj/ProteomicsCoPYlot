@@ -240,6 +240,7 @@ def _compute_and_store(
                 min_percentage=filter_config.minPercentage,
                 normalization=filter_config.normalization,
                 normalization_fit=filter_config.normalizationFit,
+                contaminants=filter_config.contaminants.model_dump(),
             )
             metadata_source = "shared_phospho" if kind == "phosprot" else "uploaded"
         else:
@@ -253,6 +254,7 @@ def _compute_and_store(
                 min_percentage=filter_config.minPercentage,
                 normalization=filter_config.normalization,
                 normalization_fit=filter_config.normalizationFit,
+                contaminants=filter_config.contaminants.model_dump(),
             )
             computed.metadata = preserve_annotation_pair_ids(kind, computed.metadata)
             if pair_ids_from is not None and "pair_id" in pair_ids_from.columns:

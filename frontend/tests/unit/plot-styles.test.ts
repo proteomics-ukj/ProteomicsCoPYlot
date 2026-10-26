@@ -60,7 +60,10 @@ describe("plot styles", () => {
 });
 
 describe("the pipeline fence", () => {
-  it.each(["Localization probability cutoff", "Normalization", "Imputation method", "Filter *_M1", "Minimum valid values"])(
+  it.each(["Localization probability cutoff", "Normalization", "Imputation method", "Filter *_M1", "Minimum valid values",
+    "Contaminant categories", "matchAccessions", "contaminants_protein", "Laboratory proteins", "Dust/contact proteins",
+    "Molecular weight markers/Standard proteins", "Sigma-Aldrich Universal Protein Standard", "Common viral contaminants",
+    "Also match exact protein accessions when available"])(
     "%s is never an assistant control", (label) => expect(isPipelineControl(label)).toBe(true));
   it.each(["Data Source", "Dataset level", "Title / Size", "Condition 1"])(
     "%s stays available", (label) => expect(isPipelineControl(label)).toBe(false));

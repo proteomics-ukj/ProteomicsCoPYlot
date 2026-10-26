@@ -20,10 +20,6 @@ Proteomics CoPYlot is a React and FastAPI application for proteomics and phospho
 - Use optional AI features, backed by a local Ollama instance, a local server with the OpenAI-compatible API (llama.cpp, vLLM, LM Studio), or a cloud provider.
 - Reuse analysis helpers from Python or R notebooks.
 
-### Statistical scope
-
-The tests are two-group comparisons (pooled or Welch t, paired t on matched samples, and the limma moderated variants where R is available), control-corrected two-group contrasts, and a one-way ANOVA with Tukey HSD. Pairing is the only blocking the tool models: there is no linear model with covariates, batch terms, nested or repeated-measures factors, and no interaction tests. A design that needs them (several batches, paired time courses, a covariate such as age) is better analysed by exporting the processed matrix and metadata to limma or MSstats; CoPYlot does not pretend to adjust for what it did not model.
-
 ## Download and run
 
 Download the complete ZIP for your computer from
@@ -173,6 +169,10 @@ workflows. Use the examples above for detailed usage and parameter choices.
 
 ### Notebook exports
 
+Optional [contaminant filtering](docs/contaminant-filtering.md) uses the bundled
+Cambridge cRAP reference and selectable categories. It is off by default and
+retains mixed protein groups; gene symbols are not matched.
+
 Most plots and tables, and the report, can be downloaded as a ZIP that holds a Jupyter
 notebook recreating them. Given the original upload, the notebook replays the recorded
 preprocessing (normalization, filtering, localization cutoff and phosphosite collapse) and
@@ -279,6 +279,7 @@ please cite the original work alongside this software. This table is generated f
 
 | Method | Where it is used | Reference |
 | --- | --- | --- |
+| Cambridge cRAP contaminant reference | Optional exact-identifier filtering; Cambridge Centre for Proteomics / camprotR reference | Gatto (2025), [10.5281/zenodo.15115102](https://doi.org/10.5281/zenodo.15115102) |
 | Quantile normalization | Normalization across samples | Bolstad et al. (2003), [10.1093/bioinformatics/19.2.185](https://doi.org/10.1093/bioinformatics/19.2.185) |
 | Variance-stabilizing normalization | Normalization delegated to Bioconductor vsn | Huber et al. (2002), [10.1093/bioinformatics/18.suppl_1.S96](https://doi.org/10.1093/bioinformatics/18.suppl_1.S96) |
 | Low-quantile normal imputation (default) | Missing values drawn around a low quantile of the observed values, in the spirit of MinProb | Lazar et al. (2016), [10.1021/acs.jproteome.5b00981](https://doi.org/10.1021/acs.jproteome.5b00981) |

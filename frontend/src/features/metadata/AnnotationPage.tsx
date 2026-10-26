@@ -1,3 +1,4 @@
+import ContaminantFilter from "./ContaminantFilter";
 import SummaryCard from "../../components/SummaryCard";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -266,9 +267,10 @@ export default function AnnotationPage() {
   useEffect(() => {
     scaleChosen.current = false;
     filterChosen.current = false;
+    setFilterConfig(DEFAULT_FILTER);
     scaleRequest.current += 1;
     return () => { scaleRequest.current += 1; };
-  }, [kind, activeDataset?.filename, activeDatasetSource, currentDatasets?.activePackage]);
+  }, [kind, activeDataset?.filename, activeDatasetSource, currentDatasets?.activePackage, currentDatasets?.activeMetadataProfile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1010,6 +1012,11 @@ export default function AnnotationPage() {
         </div>
       </details>
 
+      {kind === "peptide" && <p className="text-sm text-slate-600">
+        Contaminant filtering follows the applied Protein filter settings for the active metadata profile.
+        Change those settings on the Protein tab and press Apply filter. Without a protein annotation,
+        peptide contaminant filtering is off. Mixed parent-protein groups are retained.
+      </p>}
       {kind === "peptide" && error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
@@ -1101,6 +1108,9 @@ export default function AnnotationPage() {
             </select>
           </div>
         </div>
+
+        <ContaminantFilter value={filterConfig.contaminants}
+          onChange={(contaminants) => editFilterConfig((prev) => ({ ...prev, contaminants }))} />
 
         <div className="mt-5">
           <button

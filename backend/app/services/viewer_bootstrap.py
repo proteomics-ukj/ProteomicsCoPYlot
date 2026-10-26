@@ -380,6 +380,7 @@ def _bootstrap_annotation(
                 min_percentage=filter_config.minPercentage,
                 normalization=filter_config.normalization,
                 normalization_fit=filter_config.normalizationFit,
+                contaminants=filter_config.contaminants.model_dump(),
             )
             metadata_source = metadata_source_with_metadata
         else:
@@ -393,6 +394,7 @@ def _bootstrap_annotation(
                 min_percentage=filter_config.minPercentage,
                 normalization=filter_config.normalization,
                 normalization_fit=filter_config.normalizationFit,
+                contaminants=filter_config.contaminants.model_dump(),
             )
             metadata_source = "auto" if computed.auto_detected else "manual"
 
@@ -692,6 +694,13 @@ def _filter_config(
                 "'filtered_rows' was used."
             )
         normalization_fit = "filtered_rows"
+    from app.schemas.annotation import ContaminantFilterConfig
+    try:
+        contaminants = ContaminantFilterConfig.model_validate(config.get(f"contaminants_{suffix}", {}))
+    except ValueError:
+        contaminants = ContaminantFilterConfig()
+        if warnings is not None:
+            warnings.append(f"Viewer contaminant settings for {suffix} were invalid; contaminant filtering is off.")
     resolved = AnnotationFilterConfig(
         method=method,
         minPresent=min_present,
@@ -699,6 +708,7 @@ def _filter_config(
         mode=mode,
         normalization=normalization,
         normalizationFit=normalization_fit,
+        contaminants=contaminants,
     )
     return (
         phosprot_filter_config(resolved)

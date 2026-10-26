@@ -19,3 +19,6 @@ proteomicscopylot/example_data/*.tsv text eol=lf
 *.pyc binary
 *.whl binary
 *.xlsx binary
+
+# Preserve the exact upstream database bytes used by the provenance checksum.
+data/db/crap_ccp.fasta -text

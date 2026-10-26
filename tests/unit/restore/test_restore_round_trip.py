@@ -42,6 +42,7 @@ def test_every_filter_field_survives_a_round_trip() -> None:
         minPercentage=80.0,
         mode="overall",
         normalization="vsn",
+        contaminants={"enabled": True, "categories": [1, 3], "matchAccessions": False},
     )
     restored = _coerce_filter_config(original.model_dump())
     lost = [
@@ -206,6 +207,7 @@ def test_current_export_preserves_every_annotation_filter_option() -> None:
             minPercentage=85,
             mode="overall",
             normalization="vsn",
+            contaminants={"enabled": True, "categories": [1, 4], "matchAccessions": False},
         )
         save_annotation(
             kind="protein",

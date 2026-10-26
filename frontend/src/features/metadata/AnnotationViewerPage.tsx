@@ -178,7 +178,9 @@ function formatFilterSummary(filter: AnnotationFilterConfig | null): string {
     filter.method === "percentage"
       ? `${formatValue(filter.minPercentage)}% valid values`
       : `min ${filter.minPresent} valid values`;
-  return `${threshold} ${scope}`;
+  const contaminants = filter.contaminants;
+  return `${threshold} ${filter.mode === "overall" ? "overall" : scope}` +
+    (contaminants?.enabled ? `; contaminants: categories ${contaminants.categories.join(", ")}, every member, exact names${contaminants.matchAccessions ? " / accessions" : ""}` : "; contaminants off");
 }
 
 function formatImputationSummary(imputation: AnnotationImputationInfo | null): string {

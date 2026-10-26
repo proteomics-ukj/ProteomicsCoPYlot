@@ -275,3 +275,95 @@ def protein_corrected_site_changes(
         dof = se_squared**2 / (se_s**4 / np.maximum(df_s, 1e-12) + se_p**4 / np.maximum(df_p, 1e-12))
     se = np.sqrt(se_squared)
     return fc, se, dof, two_sided_t_pvalues(fc, se, dof)
+
+
+def contaminant_members(value):
+    """Semicolon-separated groups; missing members never count as matches."""
+    if value is None or pd.isna(value):
+        return []
+    return [part.strip() for part in str(value).split(";")]
+
+
+def contaminant_identity(member):
+    member = member.removeprefix(">")
+    for prefix in ("CON__", "contam_"):
+        if member.startswith(prefix):
+            member = member[len(prefix):]
+            break
+    # A UniProt FASTA identifier contains pipes, not separate group members.
+    token = member.split(" ", 1)[0]
+    parts = token.split("|")
+    if len(parts) == 3 and parts[0] in {"sp", "tr"}:
+        return parts[2], parts[1]
+    if len(parts) == 4 and parts[0] in {"sp", "tr"} and parts[1].startswith("cRAP"):
+        return parts[3], parts[2]
+    return member, member
+
+
+def contaminant_mask(data, config=None, reference=None):
+    """True only when every identified member matches a selected category.
+
+    Names and accessions are independent group annotations, not necessarily in
+    the same order. A complete accession group can resolve unfamiliar display
+    names; a shorter accession list cannot resolve a larger named group.
+    Unknown and empty group members preserve the row. Never match gene symbols,
+    substrings, or stripped isoform suffixes.
+    """
+    config = config or {}
+    result = pd.Series(False, index=data.index, dtype=bool)
+    if not config.get("enabled", False):
+        return result
+    if reference is None:
+        raise ValueError("The contaminant reference snapshot is required.")
+    categories = set(config.get("categories", [1, 2, 3, 4, 5]))
+    if not categories or not categories <= {1, 2, 3, 4, 5}:
+        raise ValueError("Select at least one valid contaminant category.")
+    records = [r for r in reference["records"]
+               if categories.intersection(int(value.strip()) for value in str(r["gpm_category_id"]).split(";"))]
+    names = {r[key] for r in records for key in ("entry_name", "protein_name") if r[key]}
+    accessions = {r["uniprot_accession"] for r in records if r["uniprot_accession"] not in {"", "000000"}}
+    use_accessions = config.get("matchAccessions", True)
+    name_column = next((c for c in ("ProteinNames", "Phosphoprotein") if c in data.columns), None)
+    accession_column = next((c for c in ("ProteinAccessions", "Protein_group") if c in data.columns), None) if use_accessions else None
+    if name_column is None and accession_column is None:
+        raise ValueError("Contaminant filtering needs protein names or enabled accession matching with a protein accession column. Gene names are not used.")
+
+    def matches(value):
+        members = contaminant_members(value)
+        return bool(members) and all(
+            name in names or (use_accessions and accession in accessions)
+            for name, accession in map(contaminant_identity, members)
+        )
+
+    name_values = data[name_column] if name_column else pd.Series(None, index=data.index, dtype=object)
+    accession_values = data[accession_column] if accession_column else pd.Series(None, index=data.index, dtype=object)
+    decisions = []
+    cache = {}
+    for name_value, accession_value in zip(name_values, accession_values):
+        key = (None if pd.isna(name_value) else str(name_value), None if pd.isna(accession_value) else str(accession_value))
+        if key in cache:
+            decisions.append(cache[key])
+            continue
+        has_names = bool(contaminant_members(name_value)) and str(name_value).strip() != ""
+        has_accessions = bool(contaminant_members(accession_value)) and str(accession_value).strip() != ""
+        # A fully matching accession group is authoritative for an unrecognised
+        # display name only if it represents at least as many group members.
+        by_accession = has_accessions and matches(accession_value)
+        if has_names and has_accessions:
+            decision = by_accession and (
+                matches(name_value) or len(contaminant_members(accession_value)) >= len(contaminant_members(name_value))
+            )
+            # Commercial enzymes have no accession. Their placeholder provides
+            # no evidence either way; only a complete name group can remove them.
+            accession_members = contaminant_members(accession_value)
+            if not decision and matches(name_value) and len(accession_members) <= len(contaminant_members(name_value)):
+                decision = all(contaminant_identity(member)[1] == "000000" or matches(member) for member in accession_members)
+        elif has_names:
+            decision = matches(name_value)
+        elif has_accessions:
+            decision = by_accession
+        else:
+            decision = False
+        cache[key] = decision
+        decisions.append(decision)
+    return pd.Series(decisions, index=data.index, dtype=bool)

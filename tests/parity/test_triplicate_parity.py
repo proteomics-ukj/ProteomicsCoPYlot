@@ -136,6 +136,7 @@ BACKEND_ONLY_ANALYSIS_NAMES = (
 )
 
 PIP_ONLY_NAMES = (
+    "contaminant_mask",  # Shared Python row mask; R computes it inside filter_contaminants (results checked in test_notebook_contaminants.py).
     "adjust_finite_pvalues",  # R adjusts finite p-values inline in volcano calculations.
     "refuse_moderated",  # the moderated tests run in R limma; R runs them, this package refuses them (as it does VSN).
     "protein_results_for_correction",  # runs the protein comparison a site correction subtracts; R inlines the two calls in volcano_data_f.

@@ -34,7 +34,7 @@ def test_go_database_is_available_to_source_and_wheel_builds() -> None:
     assert (ROOT / "data" / "db" / "README.md").is_file()
     setup_text = (ROOT / "setup.py").read_text(encoding="utf-8")
     assert "all_go_terms_genes.csv" in setup_text
-    # The wheel ships only the GO tables, so it gets the notice written for them alone.
+    # The wheel gets the notice for its GO and Cambridge resources.
     assert '"PACKAGED_README.md"' in setup_text
     manifest_text = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     assert "all_go_terms_genes_mouse.csv" in setup_text and "all_go_terms_genes_mouse.csv" in manifest_text
@@ -43,16 +43,21 @@ def test_go_database_is_available_to_source_and_wheel_builds() -> None:
     assert Path(sys.prefix).is_dir()
 
 
-def test_packaged_go_notice_states_the_shipped_file_checksum() -> None:
+def test_packaged_reference_notice_states_the_shipped_file_checksums() -> None:
     import hashlib
 
     packaged = (ROOT / "data" / "db" / "PACKAGED_README.md").read_text(encoding="utf-8")
     repository = (ROOT / "data" / "db" / "README.md").read_text(encoding="utf-8")
-    for shipped in ("all_go_terms_genes.csv", "all_go_terms_genes_mouse.csv"):
+    for shipped in ("all_go_terms_genes.csv", "all_go_terms_genes_mouse.csv",
+                    "crap_ccp.fasta", "crap_ccp_metadata.csv"):
         digest = hashlib.sha256((ROOT / "data" / "db" / shipped).read_bytes()).hexdigest()
+        assert shipped in packaged and shipped in repository
         assert digest in packaged and digest in repository
-    for other in ("BioNamesDB.txt", ".fasta"):
+    for other in ("BioNamesDB.txt", "UP000005640_9606", "UP000000589_10090"):
         assert other not in packaged
+    for notice in ("CAMBRIDGE_NOTICE.md", "CAMBRIDGE_LICENSE.txt", "CC-BY-4.0.txt"):
+        assert notice in packaged
+        assert (ROOT / "data" / "db" / notice).is_file()
 
 
 def test_ora_requires_an_explicit_experiment_background(monkeypatch) -> None:

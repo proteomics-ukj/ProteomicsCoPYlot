@@ -101,3 +101,17 @@ output  UP000005640_9606_additional.fasta.gz          records 148,999   sha256 9
 == fetch 2026-10-14T09:34:15Z (stored under data/db only)
 source  UP000000589_10090_additional.fasta.gz         release 2026_03                  sha256 edbde2466111e563b3a12ce4fed9c4b436782acc74ddf9adca4bc253badb8cbf
 output  UP000000589_10090_additional.fasta.gz         records 41,468    sha256 edbde2466111e563b3a12ce4fed9c4b436782acc74ddf9adca4bc253badb8cbf
+
+== bundle 2026-10-26T10:35:03Z (unchanged Cambridge Zenodo snapshot; no other databases rebuilt)
+source  crap_ccp.fasta release 1.0 (Zenodo 15115102) sha256 e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0
+output  crap_ccp.fasta records 125 sha256 e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0
+
+== category annotation 2026-10-26T10:44:41Z (exact accession overlaps only)
+source  gpm_crap_categories.json.gz sha256 40e3369d0be0294261fe746feb8e727149469e59ca5c8e9696174ebcd054b6ee
+output  crap_ccp_metadata.csv records 125 sha256 7578e283931a5529498b1e0c643a72dc60f9521b3ead7946cfd02e78a08c9efa
+
+== scientist category decisions 2026-10-26T10:51:33Z (approved 2026-10-26)
+output  crap_ccp_metadata.csv records 125 (111 direct; 14 scientist decisions) sha256 4b653f8a63361289827b792d9f06969b227fd1b5e8143b9da439c86dc94dd8a0
+
+== metadata presentation 2026-10-26T10:54:04Z (scientific decision label only)
+output  crap_ccp_metadata.csv records 125 sha256 522b18cb8c2e1393b290367a4ab44639cd64e15acaa255c68895f3e869884880

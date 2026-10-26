@@ -213,7 +213,7 @@ export function useAssistantControl<T extends Element>(onChange: ((event: Change
 // transformed, and the session-wide phosphosite localization cutoff -- are never
 // offered to the assistant and never set by it, at any level, with or without
 // approval. The backend enforces the same rule (assistant_safety.py).
-export const PIPELINE_CONTROL = /\b(?:normali[sz]\w*|imput\w*|filter\w*|transform\w*|localization probability|valid values?)\b/i;
+export const PIPELINE_CONTROL = /\b(?:contaminant\w*|contaminants_\w*|matchAccessions|also match exact protein accessions when available|laboratory proteins|dust\/contact proteins|molecular weight markers\/standard proteins|sigma-aldrich universal protein standard|common viral contaminants|normali[sz]\w*|imput\w*|filter\w*|transform\w*|localization probability|valid values?)\b/i;
 
 export function isPipelineControl(label: string): boolean {
   return PIPELINE_CONTROL.test(label);

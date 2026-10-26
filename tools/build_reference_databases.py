@@ -42,9 +42,11 @@ What is built, and from what:
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import gzip
 import hashlib
+import html
 import io
 import json
 import re
@@ -70,6 +72,25 @@ UNIPROT_FIELDS = ("accession,id,reviewed,protein_name,gene_primary,gene_names,or
 GO_RELEASE = "https://current.geneontology.org"
 
 LICENCES = {
+    "gpm_categories": {
+        "licence": "No explicit licence on source page; factual accession/category mapping only, with attribution. No GPM FASTA or descriptive prose redistributed.",
+        "licence_url": "https://www.thegpm.org/crap/",
+        "citation": "The Global Proteome Machine Organization. cRAP protein sequences, version 2012.01.01. https://www.thegpm.org/crap/",
+    },
+    "cambridge": {
+        "licence": "CC BY 4.0 (Zenodo snapshot); upstream camprotR MIT and UniProt CC BY 4.0 notices retained",
+        "licence_url": "https://creativecommons.org/licenses/by/4.0/",
+        "citation": (
+            "Gatto, L. (2025). Proteomics contaminant databases (1.0). Zenodo. "
+            "https://doi.org/10.5281/zenodo.15115102; Cambridge Centre for Proteomics, camprotR (Charlotte "
+            "Dawson and Tom Smith); The UniProt Consortium."
+        ),
+        "notes": (
+            "Unmodified crap_ccp.fasta; 123 distinct non-placeholder accessions and two commercial reagent "
+            "records with accession 000000. Source UniProt release unspecified by deposit. See "
+            "data/db/CAMBRIDGE_NOTICE.md."
+        ),
+    },
     "uniprot": {"licence": "CC BY 4.0", "licence_url": "https://www.uniprot.org/help/license",
                 "citation": "The UniProt Consortium. UniProt: the Universal Protein Knowledgebase. Nucleic Acids Res."},
     "hgnc": {"licence": "CC0 1.0", "licence_url": "https://www.genenames.org/about/license/",
@@ -83,6 +104,8 @@ LICENCES = {
 
 # name -> (url, provider, stored file name, already gzipped upstream?)
 SOURCE_FILES = {
+    "gpm_crap_categories": ("https://www.thegpm.org/crap/", "gpm_categories", "gpm_crap_categories.json.gz", False),
+    "cambridge_contaminants": ("https://zenodo.org/api/records/15115102/files/crap_ccp.fasta/content", "cambridge", "crap_ccp.fasta", False),
     "uniprot_human_proteome_fasta": (f"{UNIPROT_FTP}/knowledgebase/reference_proteomes/Eukaryota/UP000005640/UP000005640_9606.fasta.gz",
                                      "uniprot", "UP000005640_9606.fasta.gz", True),
     "uniprot_mouse_proteome_fasta": (f"{UNIPROT_FTP}/knowledgebase/reference_proteomes/Eukaryota/UP000000589/UP000000589_10090.fasta.gz",
@@ -115,7 +138,7 @@ SOURCE_FILES = {
 # ComplexPortal) are left out: the enrichment background is a proteome.
 PROTEIN_OBJECT_TYPES = {"protein", "protein_coding_gene"}
 
-OUTPUTS = ("BioNamesDB.txt.gz", "all_go_terms_genes.csv", "all_go_terms_genes_mouse.csv",
+OUTPUTS = ("crap_ccp.fasta", "crap_ccp_metadata.csv", "BioNamesDB.txt.gz", "all_go_terms_genes.csv", "all_go_terms_genes_mouse.csv",
            "UP000005640_9606.fasta.gz", "UP000000589_10090.fasta.gz",
            "UP000005640_9606_additional.fasta.gz", "UP000000589_10090_additional.fasta.gz")
 
@@ -123,6 +146,7 @@ OUTPUTS = ("BioNamesDB.txt.gz", "all_go_terms_genes.csv", "all_go_terms_genes_mo
 # data/db/ only (fetched there, verified there); `build` copies them to its
 # output folder only when that is somewhere else (a rebuild in isolation).
 DB_ONLY_SOURCES = {
+    "cambridge_contaminants",
     "uniprot_human_proteome_fasta", "uniprot_mouse_proteome_fasta",
     "uniprot_human_proteome_fasta_additional", "uniprot_mouse_proteome_fasta_additional",
 }
@@ -216,13 +240,25 @@ def fetch(names: list[str] | None = None) -> None:
             continue
         print(f"fetching {name} ...", flush=True)
         data, headers = _get(url)
+        if provider == "cambridge" and hashlib.sha256(data).hexdigest() != (
+            "e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0"
+        ):
+            raise ValueError("Cambridge v1.0 checksum mismatch; existing snapshot was not replaced")
+        if provider == "gpm_categories":
+            data = extract_gpm_categories(data)
         target = source_path(name, stored)
         target.parent.mkdir(parents=True, exist_ok=True)
-        if gzipped:
+        if gzipped or not stored.endswith(".gz"):
             target.write_bytes(data)
         else:
             _write_gz_bytes(target, data)
-        if provider == "uniprot":
+        if provider == "gpm_categories":
+            release = json.loads(data)["source_version"]
+            release_date = release.replace(".", "-")
+        elif provider == "cambridge":
+            release = "1.0 (Zenodo 15115102)"
+            release_date = "2025-03-31"
+        elif provider == "uniprot":
             release = uniprot_release
             release_date = uniprot_release_date
         elif provider == "go":
@@ -514,6 +550,119 @@ def build_go(species: str, gene_symbols: dict[str, str] | None = None) -> "panda
 # build / verify
 # --------------------------------------------------------------------------- #
 
+def extract_gpm_categories(page: bytes) -> bytes:
+    """Freeze factual category assignments, without copying GPM descriptions or sequences."""
+    text = html.unescape(re.sub(r"<[^>]+>", " ", page.decode("windows-1252")))
+    text = re.sub(r"\s+", " ", text)
+    version = re.search(r"current version \((\d{4}\.\d{2}\.\d{2})\)", text)
+    headings = list(re.finditer(
+        r"([1-5])\. (Laboratory proteins|Dust/contact proteins|"
+        r"Molecular weight markers/Standard proteins|Sigma-Aldrich Universal Protein Standard|"
+        r"Common viral contaminants)\s*:", text))
+    if not version or [h.group(1) for h in headings] != list("12345"):
+        raise ValueError("GPM page structure/version changed; review category extraction")
+    rows = []
+    for index, heading in enumerate(headings):
+        section = text[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text)]
+        entries = re.findall(r"([A-Z0-9]+_[A-Z0-9]+)\s*\(([A-Z0-9]+)\)", section)
+        if not entries:
+            raise ValueError(f"GPM category {heading.group(1)} has no mapped accessions")
+        rows.extend({"accession": accession, "entry_name": name,
+                     "category_id": heading.group(1), "category": heading.group(2)}
+                    for name, accession in entries)
+    snapshot = {"source_url": "https://www.thegpm.org/crap/",
+                "source_version": version.group(1), "source_page_sha256": hashlib.sha256(page).hexdigest(),
+                "assignments": rows}
+    return (json.dumps(snapshot, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+# Scientist-approved assignments, approved by the user on 2026-10-26.
+# Key includes the frozen record identity: never transfer by cRAP numbering alone.
+CAMBRIDGE_SCIENTIST_DECISIONS = {
+    ('cRAP004', 'P0DUB6', 'AMY1A_HUMAN'): (
+        '2', 'Salivary amylase; follows GPM dust/contact classification of the older amylase entry.'),
+    ('cRAP005', 'P0DTE7', 'AMY1B_HUMAN'): (
+        '2', 'Salivary amylase; follows GPM dust/contact classification of the older amylase entry.'),
+    ('cRAP006', 'P0DTE8', 'AMY1C_HUMAN'): (
+        '2', 'Salivary amylase; follows GPM dust/contact classification of the older amylase entry.'),
+    ('cRAP102', 'P0C1U8', 'SSPA_STAAU'): (
+        '1', 'Proteolytic reagent; GPM lists the same entry name under a different accession.'),
+    ('cRAP116', 'P21578', 'LUXY_ALIFS'): (
+        '1', 'Tentative laboratory-protein classification approved by scientist; bacterial LuxY, not GFP-derived YFP. Cambridge inclusion rationale is undocumented.'),
+    ('cRAP117', 'P22629', 'SAV_STRAV'): (
+        '1', 'Biotin-binding affinity reagent.'),
+    ('cRAP118', 'P0AEX9', 'MALE_ECOLI'): (
+        '1', 'Protein-expression and affinity-purification tag.'),
+    ('cRAP119', 'P00772', 'CELA1_PIG'): (
+        '1', 'Protease; plausible preparation-reagent carryover.'),
+    ('cRAP120', 'P12763', 'FETUA_BOVIN'): (
+        '1', 'Potential serum-derived reagent contamination; GPM has no separate serum category.'),
+    ('cRAP121', 'Q58D62', 'FETUB_BOVIN'): (
+        '1', 'Potential serum-derived reagent contamination; GPM has no separate serum category.'),
+    ('cRAP122', 'Q28153', 'CELA1_BOVIN'): (
+        '1', 'Protease; plausible preparation-reagent carryover.'),
+    ('cRAP123', 'Q29461', 'CEL2A_BOVIN'): (
+        '1', 'Protease; plausible preparation-reagent carryover.'),
+    ('cRAP126', '000000', 'ENDOP_GLUC'): (
+        '1', 'Explicit commercial digestion reagent: NEB P8100S.'),
+    ('cRAP127', '000000', 'RECOM_LYSC'): (
+        '1', 'Explicit commercial digestion reagent: Promega V167A.'),
+}
+
+
+def build_cambridge_metadata() -> None:
+    """Combine direct GPM assignments with separately attributed scientist decisions."""
+    with _open_text(SOURCES / "gpm_crap_categories.json.gz") as handle:
+        snapshot = json.load(handle)
+    assignments = defaultdict(list)
+    for row in snapshot["assignments"]:
+        assignments[row["accession"]].append(row)
+    fields = ("cambridge_id", "uniprot_accession", "entry_name", "protein_name",
+              "gpm_category_id", "gpm_category", "gpm_entry_name", "match_method",
+              "category_source", "category_source_version")
+    with (DB / "crap_ccp_metadata.csv").open("w", encoding="utf-8", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        seen = set()
+        applied_decisions = set()
+        for line in (DB_SOURCES / "crap_ccp.fasta").read_text(encoding="utf-8").splitlines():
+            if not line.startswith(">"):
+                continue
+            _, cambridge_id, accession, description = line[1:].split("|", 3)
+            if cambridge_id in seen:
+                raise ValueError(f"Duplicate Cambridge record: {cambridge_id}")
+            seen.add(cambridge_id)
+            entry_name, protein_name = description.split(" ", 1)
+            matches = sorted(assignments.get(accession, []) if accession != "000000" else [],
+                             key=lambda row: (row["category_id"], row["entry_name"]))
+            decision_key = (cambridge_id, accession, entry_name)
+            decision = CAMBRIDGE_SCIENTIST_DECISIONS.get(decision_key)
+            if matches and decision:
+                raise ValueError(f"Scientist decision now overlaps GPM: {cambridge_id}; review required")
+            category_ids = ";".join(row["category_id"] for row in matches)
+            categories = ";".join(row["category"] for row in matches)
+            method = "exact_accession" if matches else "no_exact_accession_match"
+            source, version = snapshot["source_url"], snapshot["source_version"]
+            if decision:
+                category_ids = decision[0]
+                labels = {row["category"] for row in snapshot["assignments"]
+                          if row["category_id"] == category_ids}
+                if len(labels) != 1:
+                    raise ValueError(f"Unknown or ambiguous GPM category: {category_ids}")
+                categories = labels.pop()
+                method = "scientific_decision"
+                source, version = "scientific decision", ""
+                applied_decisions.add(decision_key)
+            writer.writerow(dict(zip(fields, (
+                cambridge_id, accession, entry_name, protein_name.split(" OS=", 1)[0],
+                category_ids, categories, ";".join(row["entry_name"] for row in matches),
+                method, source, version,
+            ))))
+        if applied_decisions != set(CAMBRIDGE_SCIENTIST_DECISIONS):
+            raise ValueError("Cambridge record identities changed; review scientist decisions")
+
+
+
 def build() -> None:
     manifest = _read_manifest()
     missing = [n for n in SOURCE_FILES if n not in manifest["sources"] or not source_path(n, manifest["sources"][n]["file"]).exists()]
@@ -521,6 +670,7 @@ def build() -> None:
         raise SystemExit(f"sources missing, run `fetch` first: {missing}")
     verify(sources_only=True)
     started = dt.datetime.now(dt.timezone.utc)
+    build_cambridge_metadata()
 
     table = build_bionames()
     _write_gz_text(DB / "BioNamesDB.txt.gz", table.to_csv(sep="\t", index=False, lineterminator="\n"))

@@ -136,13 +136,18 @@ def _load_peptide_frame_cached(path_str: str, modified_ns: int) -> pd.DataFrame:
         return read_dataframe(path.name, handle)
 
 
-def get_peptide_frame() -> pd.DataFrame:
+def get_peptide_frame(*, apply_contaminants: bool = True) -> pd.DataFrame:
     # Retain the dataset while reading: session expiry must not release its file
     # between resolving the path and opening it.
     stored = get_current_dataset("peptide")
     path = _peptide_dataset_path(stored)
     stat = path.stat()
-    return _load_peptide_frame_cached(str(path), stat.st_mtime_ns).copy()
+    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns).copy()
+    annotation = get_annotation("protein") if apply_contaminants else None
+    if annotation is not None and annotation.filter_config.contaminants.enabled:
+        from app.services.contaminant_filter import filter_peptide_contaminants, contaminant_reference
+        frame = filter_peptide_contaminants(frame, annotation.filter_config.contaminants.model_dump(), contaminant_reference())
+    return frame
 
 
 def _require_column(frame: pd.DataFrame, column: str) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 AnnotationKind = Literal["protein", "phospho", "phosprot"]
 MetadataAnnotationKind = Literal["protein", "phospho"]
@@ -59,7 +59,25 @@ class IdentifierTranslationStep(BaseModel):
     outputs: dict[str, dict[str, str | None]]
 
 
+def _default_contaminant_categories() -> list[Literal[1, 2, 3, 4, 5]]:
+    return [1, 2, 3, 4, 5]
+
+
+class ContaminantFilterConfig(BaseModel):
+    enabled: bool = False
+    categories: list[Literal[1, 2, 3, 4, 5]] = Field(default_factory=_default_contaminant_categories)
+    matchAccessions: bool = True
+
+    @model_validator(mode="after")
+    def require_categories(self):
+        if self.enabled and not self.categories:
+            raise ValueError("Select at least one contaminant category.")
+        self.categories = sorted(set(self.categories))
+        return self
+
+
 class AnnotationFilterConfig(BaseModel):
+    contaminants: ContaminantFilterConfig = Field(default_factory=ContaminantFilterConfig)
     method: FilterMethod = "at_least_n"
     minPresent: int = Field(default=0, ge=0)
     minPercentage: float = Field(default=70.0, ge=0.0, le=100.0)

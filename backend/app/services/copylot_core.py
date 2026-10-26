@@ -52,3 +52,5 @@ two_sided_t_pvalues = _core.two_sided_t_pvalues
 split_tokens = _core.split_tokens
 match_sites_to_proteins = _core.match_sites_to_proteins
 protein_corrected_site_changes = _core.protein_corrected_site_changes
+
+contaminant_mask = _core.contaminant_mask

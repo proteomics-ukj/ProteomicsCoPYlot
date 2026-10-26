@@ -43,6 +43,7 @@ try:
         split_tokens,
         match_sites_to_proteins,
         protein_corrected_site_changes,
+        contaminant_mask,
     )
 except ImportError:  # loaded from its file alone, outside the package
     import importlib.util as _importlib_util
@@ -65,6 +66,7 @@ except ImportError:  # loaded from its file alone, outside the package
     match_sites_to_proteins = _core.match_sites_to_proteins
     protein_corrected_site_changes = _core.protein_corrected_site_changes
     bh_adjust = _core.bh_adjust
+    contaminant_mask = _core.contaminant_mask
 # </shared-core>
 
 
@@ -639,6 +641,30 @@ def _validate_sample_values(data, meta, threshold=0.2):
             "sample would be treated as fully undetected rather than unreadable."
         )
     return data
+
+
+def filter_contaminants(data, enabled=False, categories=None, match_accessions=True, database=None):
+    """Remove complete contaminant groups, preserving indices for normalization.
+
+    Off by default. Categories 1..5 refer to the bundled Cambridge metadata.
+    Exact names and optional accessions only; mixed groups stay, genes are never
+    matched. Pass a metadata DataFrame as `database` to use a recorded snapshot.
+    Apply after `filter_data`, then fit normalization on the returned index.
+    """
+    if not enabled:
+        return data.copy()
+    if database is None:
+        filename = "crap_ccp_metadata.csv"
+        candidates = [Path(__file__).parent / "data" / filename,
+                      Path(__file__).resolve().parents[1] / "data" / "db" / filename]
+        path = next((path for path in candidates if path.is_file()), None)
+        if path is None:
+            raise FileNotFoundError("Bundled Cambridge contaminant metadata is missing; reinstall CoPYlot or supply database=.")
+        database = pd.read_csv(path, dtype=str, keep_default_na=False)
+    reference = {"records": database.to_dict(orient="records")}
+    config = {"enabled": True, "categories": [1, 2, 3, 4, 5] if categories is None else categories,
+              "matchAccessions": match_accessions}
+    return data.loc[~contaminant_mask(data, config, reference)].copy()
 
 
 def filter_data(data, meta, num, mode="per_group", method="at_least_n", percentage=70):

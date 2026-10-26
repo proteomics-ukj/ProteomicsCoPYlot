@@ -6,6 +6,8 @@ import re
 import numpy as np
 import pandas as pd
 
+from app.services.contaminant_filter import contaminant_mask, contaminant_reference
+
 from app.schemas.annotation import ConditionAssignment, FilterMode
 # One reading of the sample column for uploads and annotation (2026-10-02).
 from app.services.metadata_upload_store import MAX_MANUAL_METADATA_PROFILES, _resolve_sample_column
@@ -381,6 +383,8 @@ def filter_then_normalize(
     filter_method="at_least_n",
     min_percentage=70.0,
     normalization_fit: str = "filtered_rows",
+    contaminants: dict | None = None,
+    contaminant_snapshot: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The annotation's two matrices, in the order the pipeline runs.
 
@@ -408,12 +412,19 @@ def filter_then_normalize(
         plain, metadata, min_present=min_present, mode=filter_mode,
         method=filter_method, min_percentage=min_percentage,
     )
-    # A filter that keeps nothing leaves nothing to fit on; the unfiltered
-    # matrix is then normalized on every row, as it was before, so the "data"
-    # source stays usable while the filtered one is empty.
-    fit_rows = plain.index[keep] if bool(keep.any()) else None
+    reference = contaminant_snapshot
+    if contaminants and contaminants.get("enabled") and reference is None:
+        reference = contaminant_reference()
+    removed = contaminant_mask(plain, contaminants, reference)
+    contaminant_count = int((keep & removed).sum())
+    keep = keep & ~removed
+    # If completeness keeps nothing, fit the unfiltered source on all remaining
+    # non-contaminants. Excluded contaminants must never influence the fit.
+    fit_rows = plain.index[keep] if bool(keep.any()) else plain.index[~removed]
+    if normalization != "none" and not len(fit_rows):
+        raise ValueError("Cannot normalize: no rows remain after contaminant filtering. Leave normalization off or change the selected categories.")
     if normalization != "none" and str(normalization_fit or "filtered_rows") == "complete_features":
-        complete = plain[sample_columns].notna().all(axis=1)
+        complete = plain[sample_columns].notna().all(axis=1) & ~removed
         if not bool(complete.any()):
             raise ValueError(
                 "Cannot normalize using complete features: no feature is observed in every sample. "
@@ -424,6 +435,14 @@ def filter_then_normalize(
         data, sample_columns, is_log2_transformed, normalization, fit_rows=fit_rows,
     )
     filtered_data = log2_data.loc[keep].reset_index(drop=True)
+    if contaminants and contaminants.get("enabled"):
+        assert reference is not None  # Enabled matching above requires a reference.
+        filtered_data.attrs["contaminant_filter"] = (
+            f"Contaminant filter: removed {contaminant_count:,} rows after the valid-value filter; "
+            f"{reference['database']}; categories {contaminants.get('categories', [1, 2, 3, 4, 5])}; "
+            f"exact names{' and accessions' if contaminants.get('matchAccessions', True) else ' only'}; "
+            f"every member must match. Metadata SHA-256: {reference['metadataSha256']}."
+        )
     return log2_data, filtered_data
 
 
@@ -515,7 +534,7 @@ def _table_shape_warnings(data: pd.DataFrame) -> list[str]:
     if decoys:
         warnings.append(
             f"{decoys:,} rows look like decoy or contaminant entries (REV__/CON__ identifiers or a '+' in "
-            "Reverse / Potential contaminant / Only identified by site); they are kept. Remove them from "
+            "Reverse / Potential contaminant / Only identified by site). These flags do not themselves remove rows. Remove them from "
             "the export if they should not enter the analysis."
         )
     return warnings
@@ -839,6 +858,8 @@ def compute_annotation(
     min_percentage=70.0,
     normalization: str = "none",
     normalization_fit: str = "filtered_rows",
+    contaminants: dict | None = None,
+    contaminant_snapshot: dict | None = None,
 ) -> AnnotationComputationResult:
     metadata_result = build_metadata_from_conditions(
         data,
@@ -869,6 +890,7 @@ def compute_annotation(
         min_present=min_present, filter_mode=filter_mode,
         filter_method=filter_method, min_percentage=min_percentage,
         normalization_fit=normalization_fit,
+        contaminants=contaminants, contaminant_snapshot=contaminant_snapshot,
     )
 
     annotated = {str(sample) for sample in sample_columns}
@@ -905,6 +927,8 @@ def compute_annotation(
         warnings.append(zero_warning)
     if auto_detected:
         warnings.append("Metadata was auto-generated from date-like column names.")
+    if filtered_data.attrs.get("contaminant_filter"):
+        warnings.append(filtered_data.attrs["contaminant_filter"])
     warnings.append(_normalization_warning(normalization, normalization_fit))
     missingness_warning = _missingness_warning(filtered_data, metadata, normalization, normalization_fit)
     if missingness_warning:
@@ -931,6 +955,8 @@ def compute_annotation_from_metadata(
     min_percentage=70.0,
     normalization: str = "none",
     normalization_fit: str = "filtered_rows",
+    contaminants: dict | None = None,
+    contaminant_snapshot: dict | None = None,
 ) -> AnnotationComputationResult:
     normalized_metadata = normalize_uploaded_metadata(data=data, metadata=metadata)
     sample_columns = normalized_metadata["sample"].tolist()
@@ -956,6 +982,7 @@ def compute_annotation_from_metadata(
         min_present=min_present, filter_mode=filter_mode,
         filter_method=filter_method, min_percentage=min_percentage,
         normalization_fit=normalization_fit,
+        contaminants=contaminants, contaminant_snapshot=contaminant_snapshot,
     )
 
     warnings = ["Using uploaded metadata table for annotation."]
@@ -981,6 +1008,8 @@ def compute_annotation_from_metadata(
     zero_warning = _log2_zero_warning(data, sample_columns, resolved_log2)
     if zero_warning:
         warnings.append(zero_warning)
+    if filtered_data.attrs.get("contaminant_filter"):
+        warnings.append(filtered_data.attrs["contaminant_filter"])
     warnings.append(_normalization_warning(normalization, normalization_fit))
     missingness_warning = _missingness_warning(filtered_data, normalized_metadata, normalization, normalization_fit)
     if missingness_warning:

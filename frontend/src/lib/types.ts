@@ -184,7 +184,14 @@ export type NormalizationCapabilityResponse = Served<Schemas["NormalizationCapab
 /** Which volcano test types this installation can run; the moderated ones need R + limma. */
 export type StatisticsCapabilityResponse = Served<Schemas["StatisticsCapabilityResponse"]>;
 
+export type ContaminantFilterConfig = {
+  enabled: boolean;
+  categories: (1 | 2 | 3 | 4 | 5)[];
+  matchAccessions: boolean;
+};
+
 export type AnnotationFilterConfig = {
+  contaminants?: ContaminantFilterConfig;
   method: FilterMethod;
   minPresent: number;
   minPercentage: number;

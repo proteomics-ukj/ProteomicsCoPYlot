@@ -109,7 +109,7 @@ def test_rt_large_scatter_repeats_sampling(rt_input, monkeypatch):
     from app.services import peptide_tools
     rng = np.random.default_rng(82)
     data = pd.DataFrame(rng.normal(30, 10, (100001, 2)), columns=['Predicted.RT', 'RT'])
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: data.copy())
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: data.copy())
     options = dict(method='Scatter Plot', dpi=72, sampling_seed=17, add_line=True)
     image, token = render_rt(**options)
     assert image == peptide_tools.peptide_rt_plot(**options)
@@ -121,7 +121,7 @@ def test_rt_missing_columns_and_empty_pairs_keep_original_errors(rt_input, monke
     from app.services import peptide_tools
     for frame, message in [(pd.DataFrame({'RT': [1]}), 'Required peptide column'),
                            (pd.DataFrame({'RT': [1], 'Predicted.RT': ['bad']}), 'No numeric')]:
-        monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame.copy())
+        monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame.copy())
         with pytest.raises(ValueError, match=message):
             render_rt()
 
@@ -188,7 +188,7 @@ def test_interactive_rt_feature_fallback_and_sampling(rt_input, monkeypatch, fea
     frame = pd.DataFrame({'Predicted.RT': np.arange(size, dtype=float), 'RT': np.arange(size, dtype=float) + 1})
     if feature_column:
         frame[feature_column] = ['PEPTIDE', '', 'LONG_SEQUENCE_NAME']
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame.copy())
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame.copy())
     monkeypatch.setattr(peptide_tools, '_plotly_html', lambda fig: force_svg_rendering(fig).to_json())
     expected = json.loads(peptide_tools.peptide_rt_interactive_html(sampling_seed=72))
     _, token = render_interactive_rt(sampling_seed=72)
@@ -287,7 +287,7 @@ def test_modification_no_detected_classes_remains_exportable(modification_input,
     from app.services.notebook_peptide import render_modification
     frame = peptide_tools.get_peptide_frame()
     frame['Precursor.Quantity'] = 0.
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame.copy())
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame.copy())
     image, token = render_modification(dpi=80)
     assert image == peptide_tools.peptide_modification_plot(dpi=80)
     recipe = snapshots.get(get_session_id(), token)
@@ -311,7 +311,7 @@ def cleavage_input(modification_input, monkeypatch):
     frame = pd.DataFrame({'File.Name': [modification_input['sample'][0]] * 6 + [modification_input['sample'][1]] * 6,
         'Stripped.Sequence': sequences * 2,
         'Precursor.Quantity': [1., 2., 3., 4., 0., np.inf, 5., 0., 0., 2., 3., 0.]})
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame.copy())
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame.copy())
     return frame
 
 

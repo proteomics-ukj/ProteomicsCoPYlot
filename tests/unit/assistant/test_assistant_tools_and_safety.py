@@ -48,10 +48,15 @@ def test_pipeline_settings_never_reach_a_model(assistant_rig):
 
 
 @pytest.mark.parametrize("label", ["Localization probability cutoff", "Normalization", "Imputation method",
-                                   "Filter *_M1", "Minimum valid values", "log2 transformation"])
+                                   "Filter *_M1", "Minimum valid values", "log2 transformation",
+                                   "Contaminant categories", "matchAccessions", "contaminants_protein",
+                                   "Laboratory proteins", "Dust/contact proteins",
+                                   "Molecular weight markers/Standard proteins", "Sigma-Aldrich Universal Protein Standard",
+                                   "Common viral contaminants", "Also match exact protein accessions when available"])
 def test_any_action_on_a_pipeline_setting_is_refused(label):
     request = AssistantRequest(message="x", view={"module": "qc.cv", "controls": [
         {"id": "p", "label": label, "type": "text", "value": ""}]})
+    assert not assistant_safety.without_pipeline(request).view.controls
     with pytest.raises(ValueError, match="never changes"):
         assistant_safety.check_actions(request, [UiAction(type="set_control", target="p", value="1")])
     # Opening a page is not a change.

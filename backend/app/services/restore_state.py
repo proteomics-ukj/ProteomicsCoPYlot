@@ -349,6 +349,12 @@ def _coerce_filter_config(
         if "normalizationFit" in payload:
             report(f"Saved normalization fit {fit_raw!r} is not recognised; restored as 'filtered_rows'.")
         fit_raw = "filtered_rows"
+    from app.schemas.annotation import ContaminantFilterConfig
+    try:
+        contaminants = ContaminantFilterConfig.model_validate(payload.get("contaminants", {}))
+    except ValueError:
+        report("Saved contaminant settings are invalid; contaminant filtering was restored as off.")
+        contaminants = ContaminantFilterConfig()
     return AnnotationFilterConfig(
         method=method_raw,
         minPresent=min_present,
@@ -356,6 +362,7 @@ def _coerce_filter_config(
         mode=mode_raw,
         normalization=normalization_raw,
         normalizationFit=fit_raw,
+        contaminants=contaminants,
     )  # type: ignore[arg-type]
 
 
@@ -778,6 +785,7 @@ def export_state_blob(
                             "mode": str(stored_annotation.filter_config.mode),
                             "normalization": str(stored_annotation.filter_config.normalization),
                             "normalizationFit": str(stored_annotation.filter_config.normalizationFit),
+                            "contaminants": stored_annotation.filter_config.contaminants.model_dump(),
                         },
                         "imputation": (
                             stored_annotation.imputation.model_dump()
@@ -1480,6 +1488,7 @@ def _apply_prepared_restore_state(
                         min_percentage=filter_config.minPercentage,
                         normalization=filter_config.normalization,
                         normalization_fit=filter_config.normalizationFit,
+                        contaminants=filter_config.contaminants.model_dump(),
                     )
                     if not imputed_data.empty:
                         mismatch = _imputed_rows_mismatch(imputed_data, computed.filtered_data, computed.log2_data)

@@ -17,6 +17,7 @@ from app.services.notebook_source import (
 )
 from app.services.dataset_reader import rename_cols, sanitize_dataframe
 from app.services.annotation_processor import filter_then_normalize
+from app.services.contaminant_filter import contaminant_reference
 from app.services.id_translation import replay_id_translations
 from app.services.functions import filter_localization, inverse_log2_transform_data, raw_zero_to_nan
 from app.services.phosprot_tools import transform_phosprot
@@ -95,7 +96,8 @@ def replay_preprocessing(raw, metadata, config):
         log2_data, filtered_data = filter_then_normalize(raw, metadata, config['is_log2'], config['normalization'],
             min_present=filtering['minPresent'], filter_mode=filtering['mode'],
             filter_method=filtering['method'], min_percentage=filtering['minPercentage'],
-            normalization_fit=filtering.get('normalizationFit', 'filtered_rows'))
+            normalization_fit=filtering.get('normalizationFit', 'filtered_rows'),
+            contaminants=filtering.get('contaminants'), contaminant_snapshot=config.get('contaminant_reference'))
         data = filtered_data if config['source'] == 'filtered' else log2_data
     if config['kind'] == 'phospho':
         data = filter_localization(data, config['localization_cutoff'])
@@ -161,7 +163,10 @@ def preprocessing_source(collapse=False, vsn=False):
         functions,
         extract_notebook_source(module_source('dataset_reader.py'), ('rename_cols', 'sanitize_dataframe')).code,
         function_definition(module_source('annotation_processor.py'), 'prepare_normalized_log2_data'),
-        function_definition(module_source('annotation_processor.py'), 'filter_then_normalize'),
+        function_definition(module_source('annotation_processor.py'), 'filter_then_normalize').replace(
+            '        reference = contaminant_reference()',
+            '        raise ValueError("Missing contaminant snapshot in processing.json.")'),
+        extract_notebook_source(module_source('contaminant_filter.py'), ('contaminant_mask',)).code,
         function_definition(module_source('notebook_preprocessing.py'), 'read_original_table'),
         extract_notebook_source(module_source('id_translation.py'), ('replay_id_translations',)).code,
         replay)
@@ -246,6 +251,9 @@ def bind_original_preprocessing(recipe):
                 'id_translations': [step.model_dump() for step in upstream_dataset.id_translations]})
         raw = upstream_annotation.source_data
         original_filename = upstream_dataset.filename
+    for processing_config in [config] + ([config['upstream']] if collapse else []):
+        if processing_config['filter'].get('contaminants', {}).get('enabled'):
+            processing_config['contaminant_reference'] = contaminant_reference()
     processing_metadata = annotation.metadata[['sample', 'condition']].copy()
 
     def finish():

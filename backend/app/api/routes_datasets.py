@@ -229,6 +229,7 @@ def _ensure_profile_annotation_for_kind(
         min_percentage=filter_config.minPercentage,
         normalization=filter_config.normalization,
         normalization_fit=filter_config.normalizationFit,
+        contaminants=filter_config.contaminants.model_dump(),
     )
     save_annotation(
         kind=kind,

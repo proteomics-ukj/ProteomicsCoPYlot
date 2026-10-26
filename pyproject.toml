@@ -68,6 +68,8 @@ include-package-data = true
 proteomicscopylot = [
   "notebook_functions.R",
   "data/*.csv",
+  "data/*.fasta",
+  "data/*.txt",
   "data/*.md",
   "example_data/*.csv",
   "example_data/*.tsv",

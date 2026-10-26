@@ -3085,6 +3085,7 @@ export interface components {
         };
         /** AnnotationFilterConfig */
         AnnotationFilterConfig: {
+            contaminants?: components["schemas"]["ContaminantFilterConfig"];
             /**
              * Method
              * @default at_least_n
@@ -3725,6 +3726,21 @@ export interface components {
             palette?: {
                 [key: string]: string;
             };
+        };
+        /** ContaminantFilterConfig */
+        ContaminantFilterConfig: {
+            /** Categories */
+            categories?: (1 | 2 | 3 | 4 | 5)[];
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled?: boolean;
+            /**
+             * Matchaccessions
+             * @default true
+             */
+            matchAccessions?: boolean;
         };
         /** ConversationSelection */
         ConversationSelection: {

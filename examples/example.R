@@ -40,9 +40,32 @@ print(missing_sample_table(data, meta, id = FALSE, data_scale = "log2"))
 # reference. Here at least 3 valid values in each condition, then median
 # centring. The app's default is no filter; choose your own.
 kept <- filter_data(data, meta, 3, mode = "per_group")
+# Optional Cambridge cRAP filtering; off by default. Any nonempty combination:
+# 1 Laboratory proteins; 2 Dust/contact proteins;
+# 3 Molecular weight markers/Standard proteins;
+# 4 Sigma-Aldrich Universal Protein Standard; 5 Common viral contaminants.
+filter_protein_contaminants <- FALSE
+contaminant_categories <- 1:5
+kept <- filter_contaminants(kept, enabled = filter_protein_contaminants,
+                           categories = contaminant_categories, match_accessions = TRUE)
+if (!nrow(kept)) stop("No rows remain for normalization; revise the filters.")
 normalized <- normalize_data(data, meta, "median", fit_rows = rownames(kept))
 filtered <- normalized[rownames(kept), ]
 cat(nrow(data), "proteins,", nrow(filtered), "after filtering\n")
+
+# Exact names/accessions only, never genes. Every member must match:
+# albumin (including recognised search-engine prefixes) is removed, while its mixed group is retained.
+# Prefixes only enable database matching; flags alone never remove rows.
+contaminant_demo <- data.frame(
+  ProteinNames = c("ALBU_HUMAN", "ALBU_HUMAN;SAMPLE_PROTEIN", "SAMPLE_PROTEIN",
+                   "CON__P02768", "contam_sp|P02768|ALBU_HUMAN"),
+  intensity = c(100, 200, 300, 400, 500))
+print(filter_contaminants(contaminant_demo, enabled = TRUE, categories = c(1, 4)))
+# For peptide tables, use these same protein settings on parent annotations:
+# peptides <- filter_contaminants(peptides, enabled = filter_protein_contaminants,
+#                                categories = contaminant_categories)
+# A match is not proof of contamination. Sources and licence notices: data/db/.
+# Details: docs/contaminant-filtering.md.
 
 # Imputation ---------------------------------------------------------------
 # The default draws missing values around the 1% quantile of each sample's
@@ -106,6 +129,10 @@ fig <- phossite_coverage_plot(sites, meta_sites, id = FALSE)
 fig <- sty_plot(sites)
 fig <- missing_value_plot(sites, meta_sites, data_scale = "log2")
 sites_filtered <- filter_data(sites, meta_sites, 3, mode = "per_group")
+# Independent phosphosite setting, as in the app.
+filter_phospho_contaminants <- FALSE
+sites_filtered <- filter_contaminants(sites_filtered, enabled = filter_phospho_contaminants,
+                                     categories = 1:5)
 site_volcano <- volcano_data_f(sites_filtered, meta_sites, "WT", "GRK", workflow = "Phosphosite")
 fig <- volcano_plot(site_volcano, "WT", "GRK")
 site_id <- as.character(na.omit(sites_filtered$PTM_Collapse_key)[1])

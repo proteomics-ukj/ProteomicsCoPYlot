@@ -31,7 +31,13 @@ def bind_peptide_preprocessing(recipe):
     from app.services.notebook_preprocessing import preprocessing_source
     from app.services.notebook_provenance import NotebookProvenanceError
 
-    raw = peptide_tools.get_peptide_frame()
+    from app.services.annotation_store import get_annotation
+    from app.services.contaminant_filter import contaminant_reference, filter_peptide_contaminants
+    original_raw = peptide_tools.get_peptide_frame(apply_contaminants=False)
+    protein_annotation = get_annotation('protein')
+    contaminant_config = protein_annotation.filter_config.contaminants.model_dump() if protein_annotation else {}
+    reference = contaminant_reference() if contaminant_config.get('enabled') else None
+    raw = filter_peptide_contaminants(original_raw, contaminant_config, reference)
     meta = None
     plot = recipe.provenance.get('plot', recipe.provenance.get('output'))
     expected = pd.read_parquet(io.BytesIO(recipe.resources['input.parquet']))
@@ -88,8 +94,11 @@ def bind_peptide_preprocessing(recipe):
         roots = ()
     else:
         raise NotebookProvenanceError('This peptide output has no original-file replay recipe.')
+    config['contaminants'] = contaminant_config
+    config['contaminant_reference'] = reference
+    extra = merge_source(extra, extract_notebook_source(module_source('contaminant_filter.py'), ('filter_peptide_contaminants',)).code)
     source = extract_notebook_source(merge_source(recipe.source.code, loader, extra),
-        tuple(dict.fromkeys((*recipe.source.functions, 'read_original_table', *roots))))
+        tuple(dict.fromkeys((*recipe.source.functions, 'read_original_table', 'filter_peptide_contaminants', *roots))))
     resources['processing.json'] = json.dumps(config, allow_nan=False).encode()
 
     def finish():
@@ -120,6 +129,7 @@ def bind_peptide_preprocessing(recipe):
                 'are repeated before calculating the plot/table. Run matching uses hashes so original filesystem '
                 'paths are not written into the ZIP. The captured matrix is checked, never substituted.',
             preparation=prefix + "processing = json.loads((RESOURCES / 'processing.json').read_text(encoding='utf-8'))\n"
+                + "raw = functions.filter_peptide_contaminants(raw, processing['contaminants'], processing['contaminant_reference'])\n"
                 + preparation + "reference = read_resource_table(RESOURCES / 'input.parquet')\n"
                 "data = data.loc[reference.index, reference.columns]\n"
                 "pd.testing.assert_frame_equal(data, reference, check_exact=True)\n")

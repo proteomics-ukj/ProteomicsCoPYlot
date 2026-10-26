@@ -5,15 +5,17 @@ replace the source licenses described below.
 
 CoPYlot uses these frozen reference tables without downloading or rebuilding them at runtime.
 The construction script is `tools/build_reference_databases.py`. Upstream snapshots are in
-`data/reference-sources/`, except the four unchanged FASTAs, stored once in this folder as both
+`data/reference-sources/`, except the unchanged FASTAs, stored once in this folder as both
 frozen sources and runtime resources. Source URLs, releases, retrieval dates, licences and
 checksums remain in `data/reference-sources/manifest.json`.
 The manifest identifies the inputs and outputs of the current build; `BUILD.log` records past builds.
 
-## Runtime files (this folder)
+## Bundled reference files (this folder)
 
-| File | Runtime purpose | Records | Built from |
+| File | Purpose | Records | Built from |
 | --- | --- | ---: | --- |
+| `crap_ccp_metadata.csv` | Identifier/category lookup for optional contaminant filtering | 125 rows: 111 direct GPM matches, 14 scientific decisions | Cambridge FASTA + GPM cRAP category assignments |
+| `crap_ccp.fasta` | Unchanged Cambridge CCP source snapshot | 125 sequences | Gatto, Zenodo 15115102, v1.0 (2025-03-31), unchanged |
 | `BioNamesDB.txt.gz` | Identifier translation table (ID Translator page, notebook replay) | 280,689 rows: 172,337 human, 108,352 mouse | UniProt 2026_03 entries of the human and mouse reference proteomes + secondary accessions, HGNC complete set (2026-10-09), MGI marker reports (2026-10-12) |
 | `all_go_terms_genes.csv` | Gene Ontology term → human gene symbols, for over-representation analysis and pathway heatmaps (app, pip package, R functions; organism `human`) | 20,941 terms, 19,631 genes | GO release 2026-08-05: `goa_human.gaf.gz` + `go-basic.obo`, symbols from `BioNamesDB` |
 | `all_go_terms_genes_mouse.csv` | The same for mouse (organism `mouse` in the ORA and pathway-heatmap organism selectors and in `enrichment_data(organism=)`) | 21,864 terms, 22,002 genes | GO release 2026-08-05: `mgi.gaf.gz` + `go-basic.obo`, symbols from `BioNamesDB` |
@@ -30,6 +32,8 @@ and the Docker image ship this folder, not `data/reference-sources/`.
 
 | File | SHA-256 |
 | --- | --- |
+| `crap_ccp_metadata.csv` | `522b18cb8c2e1393b290367a4ab44639cd64e15acaa255c68895f3e869884880` |
+| `crap_ccp.fasta` | `e9da6a4361fac82331c63fd5d1a9534b48310ebf8136ebc245fd3451a1b230d0` |
 | `BioNamesDB.txt.gz` | `a5968748aca7f88728ffd46494adc9a21469a8bfdb778e420a185b270083c816` |
 | `UP000000589_10090.fasta.gz` | `c24568f70ce9ffd7693a1ecd31c23eaa97a1f43d9305e2ff5401bdf30e2a0a93` |
 | `UP000005640_9606.fasta.gz` | `64299d01e8f41fb6ef03cdf7ec051d3d4e5f041003b6b0fa75b09d439af79dce` |
@@ -78,7 +82,12 @@ and the Docker image ship this folder, not `data/reference-sources/`.
   primary gene from `BioNamesDB.txt.gz` when it has one, and dropped otherwise (62 human, 129
   mouse annotation objects in the 2026-08-05 release), so the table contains symbols only.
 
-**FASTA files**: the reference proteome files as published by UniProt, stored unchanged (gzipped)
+**Cambridge FASTA**: `crap_ccp.fasta` is the unchanged Zenodo snapshot, stored once
+in this folder. Credits, source history and limitations are in [CAMBRIDGE_NOTICE.md](CAMBRIDGE_NOTICE.md);
+full licence texts are in `CC-BY-4.0.txt` and `CAMBRIDGE_LICENSE.txt`. Filtering is off by default;
+see [contaminant filtering](../../docs/contaminant-filtering.md) for matching and provenance.
+
+**UniProt FASTA files**: the reference proteome files as published by UniProt, stored unchanged (gzipped)
 only in this folder. Offline rebuilds into a separate output folder copy them from here.
 The peptide-coverage page reads them directly.
 
@@ -86,6 +95,7 @@ The peptide-coverage page reads them directly.
 
 | Source | Release used | Licence | Citation / terms |
 | --- | --- | --- | --- |
+| Cambridge CCP contaminants | Zenodo 15115102 v1.0 (2025-03-31) | CC BY 4.0 snapshot; upstream MIT and UniProt notices retained | [Credits and terms](CAMBRIDGE_NOTICE.md); [dataset DOI](https://doi.org/10.5281/zenodo.15115102) |
 | UniProt reference proteomes and UniProtKB entries | 2026_03 (2 September 2026) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | The UniProt Consortium, *UniProt: the Universal Protein Knowledgebase*, Nucleic Acids Res.; [license](https://www.uniprot.org/help/license) |
 | HGNC complete set | file dated 2026-10-09 (HGNC publishes no release number; the file date is the release) | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | HUGO Gene Nomenclature Committee, EMBL-EBI, www.genenames.org; [licence](https://www.genenames.org/about/license/) |
 | MGI marker reports (`MRK_List2`, `MGI_Gene_Model_Coord`, `MRK_SwissProt_TrEMBL`) | files dated 2026-10-12 (MGI's reports are regenerated continuously; the file date is the release) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | Mouse Genome Informatics, The Jackson Laboratory, www.informatics.jax.org; [copyright](https://www.informatics.jax.org/mgihome/other/copyright.shtml) |
@@ -106,6 +116,30 @@ python tools/build_reference_databases.py verify   # what the test suite runs
 ```
 
 Then update the record counts and checksums in this file and in `PACKAGED_README.md` (the pip
-package ships the two GO tables with their checksums), run the test suite, and commit the sources,
+package ships the two GO tables and Cambridge snapshot with their notices and checksums), run the test suite, and commit the sources,
 the manifest, the outputs and `BUILD.log` together. Never edit an output by hand; change the build
 script instead.
+
+## Cambridge category metadata
+
+`crap_ccp_metadata.csv` is a CoPYlot-derived annotation, not an official Cambridge
+classification. One row per original Cambridge record (key `cambridge_id`);
+`uniprot_accession` is not a unique key because two custom entries use `000000`.
+Direct GPM category IDs and labels are transferred only on exact accession equality.
+The remaining 14 assignments are labelled `match_method=scientific_decision` and
+`category_source=scientific decision`; no per-row explanations or approval dates
+are included. `gpm_entry_name` and `category_source_version` stay blank for those
+rows. All 125 records currently have a category. The manual assignments are
+maintained in the offline builder and keyed by Cambridge ID, accession and entry
+name so a changed record requires review. They use GPM's category vocabulary but
+are not attributed to GPM or Cambridge.
+Multiple assignments, if present, are semicolon-separated in category-ID order.
+No gene-name, sequence, or secondary-accession inference is performed.
+
+The source is the factual accession/category mapping from https://www.thegpm.org/crap/
+(version 2012.01.01), frozen in `data/reference-sources/gpm_crap_categories.json.gz`.
+It includes the source page checksum and is registered in the shared manifest.
+The full webpage, descriptions and GPM sequences are not redistributed.
+GPM publishes no explicit licence on that page; its assignments are attributed
+to The Global Proteome Machine Organization and are not relabelled CC BY or MIT.
+See `CAMBRIDGE_NOTICE.md`. The existing offline builder regenerates this CSV.

@@ -165,7 +165,7 @@ def test_rejected_upload_preserves_dataset_and_all_profile_annotations(monkeypat
     if failure == "samples":
         frame = frame.rename(columns={"A": "unknownA", "B": "unknownB"})
     else:
-        monkeypatch.setattr(phosprot_tools, "resolve_log2_state" if failure == "scale" else "filter_data", fail)
+        monkeypatch.setattr(phosprot_tools, "resolve_log2_state" if failure == "scale" else "filter_then_normalize", fail)
     with pytest.raises(ValueError):
         phosprot_tools.upload_phosprot(frame, "rejected.csv", True)
     assert get_current_dataset("phosprot") is before_dataset
@@ -196,7 +196,7 @@ def test_rejected_aggregation_preserves_current_dataset(monkeypatch):
     def fail(*args, **kwargs):
         raise ValueError("Synthetic filter failure")
 
-    monkeypatch.setattr(phosprot_tools, "filter_data", fail)
+    monkeypatch.setattr(phosprot_tools, "filter_then_normalize", fail)
     with pytest.raises(ValueError, match="filter failure"):
         phosprot_tools.aggregate_from_phospho("mean")
     assert get_current_dataset("phosprot") is previous_dataset

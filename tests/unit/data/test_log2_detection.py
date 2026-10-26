@@ -185,6 +185,7 @@ def test_generate_endpoint_detects_after_condition_mapping() -> None:
     assert payload["isLog2Transformed"] is True
     assert payload["log2AutoDetected"] is True
     assert payload["filter"] == {
+        "contaminants": {"enabled": False, "categories": [1, 2, 3, 4, 5], "matchAccessions": True},
         "method": "at_least_n",
         "minPresent": 0,
         "minPercentage": 70.0,

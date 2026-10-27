@@ -1,4 +1,6 @@
 import json
+from app.services.assistant_trace import traced
+
 import re
 import logging
 import math
@@ -18,10 +20,10 @@ from contextvars import ContextVar
 from app.services.assistant_profiles import LEVELS, PROFILES, TIERS, Tier, scaled_budgets
 from app.services import assistant_plot_parts, assistant_presets, assistant_prose, assistant_safety, assistant_tools
 from app.services.assistant_methods import METHODS, method_evidence, canvas_workflow_guidance
-from app.services.assistant_answers import evidence_context
+from app.services.assistant_answers import evidence_context, partial_qualification
 from app.services.assistant_narrative import answer_catalogue, assemble_answer, catalogue_fallback
-from app.services.assistant_routing import planner_tasks, response_guidance, refers_to_visible_result, requests_canvas_guidance, ui_actions_schema, canvas_add_request, canvas_explanation_request, requests_current_result, feature_request, feature_request_mode, requests_unchanged_view, explanation_requested, explicit_selection, explicit_destination, contradictory_preservation, where_request
-from app.services.assistant_routing import appearance_only_request, positive_request, canvas_focus_intent, requests_numeric_summary, rephrase_request, _APPEARANCE_NOUNS
+from app.services.assistant_routing import planner_tasks, response_guidance, refers_to_visible_result, requests_canvas_guidance, ui_actions_schema, canvas_add_request, canvas_explanation_request, requests_current_result, feature_request, feature_request_mode, requests_unchanged_view, explanation_requested, explicit_selection, explicit_destination, contradictory_preservation, where_request, application_feature_question, application_help_module
+from app.services.assistant_routing import appearance_only_request, positive_request, preserved_tile_scopes, canvas_focus_intent, requests_numeric_summary, rephrase_request, _APPEARANCE_NOUNS, code_request
 from app.services.runtime_cache import runtime_cache_version
 from app.services.single_protein_tools import single_protein_options
 from app.services.workload_manager import provider_deadline
@@ -149,6 +151,10 @@ means partial work/fallback: don't repeat completed actions or claim a validated
 Styling workflow: labels, colors, borders, fonts and rotation are listed under styling and
 apply immediately, whether or not the user has the advanced panel open. Never ask the user to
 open it, and never claim a listed styling setting is unsupported.
+When independent requested appearance changes mix supported and unsupported settings, apply the
+supported ones and clearly report what could not be done. Do not ask again for already-requested
+cosmetic changes. Clarify only when the choice is ambiguous or the changes depend on each other;
+never substitute a different feature or change processing to work around an unavailable style.
 If completed receipts show the requested action succeeded, finish with task=ui and actions=[].
 Do not explain a plot after a view-only request. Do not set controls already at the requested value.
 For a request combining explicit view changes with an explanation, choose ui first and set
@@ -257,13 +263,15 @@ def _bounded_evidence(name: str, text: str, limit: int = 5000) -> Evidence:
         status = "partial"
     context = evidence_context(text)
     if len(text) <= limit:
+        if "scope=row_sample_only" in text:
+            context["partial_scope"] = {"scope": "row_sample_only"}
         return Evidence(tool=name, status=status, text=text, context=context)
     # Keep constraints and computed summaries ahead of potentially thousands of result rows.
     def priority(line):
         label = line.split("|", 1)[0]
         if "status=" in line or label.endswith(("_evidence_limit", "_quality_rule", "_inference_rule")):
             return 0
-        if label.endswith(("_answer_summary", "_formula", "_axes", "_contrast", "_testing", "_selected_p_metric", "_multiple_testing", "_active_view", "_overview")):
+        if label.endswith(("_answer_summary", "_formula", "_axes", "_contrast", "_testing", "_selected_p_metric", "_multiple_testing", "_active_view", "_overview", "_condition_summary", "_class_rule")) or label in {"missing_heatmap_condition", "missing_tables_condition"}:
             return 1
         return 2
     selected = []
@@ -275,6 +283,7 @@ def _bounded_evidence(name: str, text: str, limit: int = 5000) -> Evidence:
     return Evidence(tool=name, status="unavailable" if status == "unavailable" else "partial", text="\n".join(selected) + "\nAdditional rows omitted; not an exhaustive result.", context=context)
 
 
+@traced
 def _module_evidence(module: str, workflow: str, mode: ContextMode | None, profile: str = "compact") -> list[Evidence]:
     if workflow == "peptide" and not (module.startswith("peptide.") or module.startswith("completeness.") or module == "qc.coverage"):
         return [Evidence(tool=module, status="unavailable", text="This evidence tool does not support peptide-level data; no protein-level substitute was used.")]
@@ -293,6 +302,7 @@ def _module_evidence(module: str, workflow: str, mode: ContextMode | None, profi
     return evidence
 
 
+@traced
 def _entity_evidence(workflow: str, query: str, profile: str = "compact") -> Evidence:
     kind = {"protein": "protein", "phosphosite": "phospho", "phosphoprotein": "phosprot"}.get(workflow)
     if not kind or not query:
@@ -423,6 +433,7 @@ def _evidence_module(request: AssistantRequest, plan: AssistantPlan) -> str:
     return plan.module
 
 
+@traced
 def scientific_evidence(request: AssistantRequest, plan: AssistantPlan, profile: str = "compact") -> list[Evidence]:
     plan = plan.model_copy(update={"module": _evidence_module(request, plan)})
     view = request.view
@@ -528,6 +539,14 @@ def _diagnostic_consistent(request: AssistantRequest, plan: AssistantPlan) -> As
         return plan.model_copy(update={"task": "current_plot" if requests_current_result(request.message) else "help",
                                        "module": request.view.module, "query": ""})
     chosen = plan.module or request.view.module
+    if (named[0] == "correlation" and chosen == "comparison.pearson" and plan.task == "current_plot"
+            and re.search(r"\b(?:replicates?|all (?:my |the )?samples|every sample|within (?:each |the |my )?(?:condition|group)s?|"
+                          r"best|worst|highest|lowest|least|most similar|pairs?|matrix|heatmap)\b", request.message, re.I)
+            and not re.search(r"\b(?:scatter|two samples|these two|sample \S+ (?:and|vs\.?|versus|against) sample)\b", request.message, re.I)
+            and request.view.module != "comparison.pearson"):
+        # Replicate-wide summaries require the all-sample QC correlation matrix.
+        LOGGER.info("Assistant evidence corrected from comparison.pearson to the replicate correlation matrix.")
+        return plan.model_copy(update={"module": "qc.correlation"})
     others = {module for key, (_, group, _) in _DIAGNOSTICS.items() if key != named[0] for module in group}
     # A method question is answered by the named diagnostic's method; a result
     # question keeps a non-diagnostic current plot (the user may mean it).
@@ -938,8 +957,15 @@ def _explicit_destination_response(request: AssistantRequest, revision: int) -> 
     key = explicit_destination(request.message, request.view.destinations, request.view.module)
     if key is None:
         return None
+    explain = explanation_requested(request.message)
+    # Explicit destination matching also accepts a leading navigation clause
+    # in a compound request. Only a navigation-only request is complete here;
+    # feature selection, styling and explanations still need the next step.
+    navigation_text = re.sub(r"[,;.!?]?\s*(?:please|thanks|thank you|bitte)[.!?]*$", "", request.message.strip(), flags=re.I)
+    navigation_only = not explain and not re.search(
+        r"\b(?:and|then|for|to explain|so that)\b|[.!?;,]\s*\S", navigation_text, re.I)
     return AssistantResponse(model="application", revision=revision, actions=[{"type": "navigate", "target": key}],
-                             explainAfterChanges=explanation_requested(request.message))
+                             explainAfterChanges=explain, finished=navigation_only)
 
 
 _ENTITY_TOKEN = re.compile(r"(?<![\w-])[A-Z][A-Z0-9]{2,}(?:[_-][A-Z0-9]+)*(?![\w-])")
@@ -947,12 +973,95 @@ _NOT_ENTITIES = {"PCA", "CV", "ORA", "GO", "DPI", "PNG", "JPG", "PDF", "SVG", "W
                  "FDR", "ANOVA", "KSEA", "VSN", "STY", "LOG2", "FC", "IQR", "SD", "RMS", "PC1", "PC2", "WT", "KO"}
 
 
+_VALUE_ERROR_DETAIL = re.compile(r"Value error, (.+?)\s*\[type", re.S)
+
+
+def _unavailable_reason(evidence) -> str:
+    """Why the result adapter returned nothing, from its own status line.
+
+    "go to the volcano plot and tell me how many proteins are significant right
+    now" with both conditions still WT (2026-10-27, GLM) got the bare "No
+    calculated result is available" although the evidence carried
+    status=error|detail=…Please select two different conditions. Pydantic's
+    wrapper text is stripped; anything else is passed on as the adapter wrote it.
+    """
+    for item in evidence:
+        for line in item.text.splitlines():
+            if "status=error" not in line and "status=incomplete_parameters" not in line:
+                continue
+            fields = dict(part.split("=", 1) for part in line.split("|")[1:] if "=" in part)
+            detail = fields.get("detail", "").strip()
+            match = _VALUE_ERROR_DETAIL.search(detail)
+            reason = (match[1] if match else detail).strip().rstrip(".")
+            if not reason and fields.get("status") == "incomplete_parameters":
+                reason = "the plot's selections are incomplete"
+            if reason:
+                return reason[:200] + "."
+    return ""
+
+
+_METHOD_QUESTION = re.compile(r"\b(?:cite|citation|cited|reference|version|release|database|annotation source|methods? section|"
+                              r"how (?:is|are|was|were|does|do) (?:it|this|the \w+|they) (?:computed|calculated|tested|derived|defined)|"
+                              r"what (?:does|do) [^?.!]{1,100} (?:mean|stand for)|power calculation|"
+                              r"(?:can|does|will|is) [^?.!]{1,100} (?:predict\w*|guarantee\w*)|"
+                              r"what [^?.!]{1,60} (?:tell|support|establish)|define|definition|abbreviations?|acronyms?)\b", re.I)
+
+
+_SAMPLE_LIKE = re.compile(r"(?<![\w-])([A-Za-z][A-Za-z0-9]*_\d+)(?![\w-])")
+
+
+def _entity_clarification(request: AssistantRequest) -> str:
+    """The question for a lookup that found nothing to look up.
+
+    "why is that one weird?" after an answer that named GRK_1 and GRK_5 (2026-10-26)
+    was met with "Which exact protein, gene or phosphosite identifier should I use?":
+    the message names no identifier at all, and the only things "that one" can refer
+    to are the samples the previous answer discussed. Offer them, so the user picks
+    with one word instead of guessing what the assistant wants.
+    """
+    if _ENTITY_TOKEN.findall(request.message):
+        return _CLARIFICATIONS["entity"]
+    previous = next((message.content for message in reversed(request.messages)
+                     if message.role == "assistant" and message.content), "")
+    samples = list(dict.fromkeys(_SAMPLE_LIKE.findall(previous)))
+    conditions = [name for name in assistant_plot_parts.condition_colours(request) if name]
+    if samples:
+        return ("Which one do you mean? If a sample from my last answer: " + ", ".join(samples[:6])
+                + ". If a protein, gene or phosphosite, give its name or accession.")
+    if conditions:
+        return ("Which one do you mean: a condition (" + ", ".join(conditions[:6])
+                + "), a sample, or a protein, gene or phosphosite? Name it and I'll look.")
+    return _CLARIFICATIONS["entity"]
+
+
+def _uploaded_entity_aliases(request: AssistantRequest) -> dict[str, str]:
+    """Unique gene/accession-to-feature mappings from this uploaded data level.
+
+    Model guesses and ambiguous parent matches never authorize a selection.
+    Phosphosites still require a named site, not just a parent protein.
+    """
+    kind = _data_kind(request.view)
+    if kind not in {"protein", "phosprot"}:
+        return {}
+    aliases = {}
+    for token in set(_ENTITY_TOKEN.findall(request.message)):
+        if token in _NOT_ENTITIES:
+            continue
+        try:
+            matches = feature_candidates(kind, parent=token)
+        except ValueError:
+            continue
+        if len(matches) == 1:
+            aliases[token.casefold()] = matches[0].casefold()
+    return aliases
+
+
 def _entity_pending(request: AssistantRequest, plan: AssistantPlan, controls) -> bool:
     """An identifier the request names that no control carries after this batch.
 
-    "put a boxplot of CCN1 on the canvas" (the model, 2026-10-13): the batch that chose the
-    source was marked finished, and the field for CCN1 only appears after it. While such
-    a name is still unplaced the request is not complete, whatever the batch looks like."""
+    Choosing a source can reveal a feature selector only in the next step.
+    While the requested name is unplaced, the request remains incomplete.
+    """
     if request.answerOnly:
         return False
     options = {str(option).casefold() for control in request.view.controls for option in (control.options or [])}
@@ -960,9 +1069,10 @@ def _entity_pending(request: AssistantRequest, plan: AssistantPlan, controls) ->
                for value in (control.value if isinstance(control.value, list) else [control.value])}
     carried |= {str(action.value).casefold() for action in plan.actions if isinstance(action.value, str)}
     receipts = " ".join(request.receipts).casefold()
+    aliases = _uploaded_entity_aliases(request)
     for token in set(_ENTITY_TOKEN.findall(request.message)):
         folded = token.casefold()
-        if token in _NOT_ENTITIES or folded in options or folded in receipts:
+        if token in _NOT_ENTITIES or folded in options or folded in receipts or aliases.get(folded) in carried:
             continue
         if not any(folded == value or value.startswith(folded + "_") for value in carried):
             return True
@@ -980,6 +1090,7 @@ def _names_entity_or_condition(request: AssistantRequest) -> bool:
 
 def _ungrounded_entity(request: AssistantRequest, actions, controls) -> str | None:
     """A clarification when a setter names a feature the user did not name."""
+    aliases = set(_uploaded_entity_aliases(request).values())
     for action in actions:
         control = controls.get(action.target)
         if action.type != "set_control" or control is None or not _ENTITY_LABEL.fullmatch(control.label):
@@ -989,7 +1100,7 @@ def _ungrounded_entity(request: AssistantRequest, actions, controls) -> str | No
             # A free-text feature list: every listed identifier must be the user's.
             values = [token for token in re.split(r"[;,\s]+", action.value) if token]
         current = control.value if isinstance(control.value, list) else [control.value]
-        if all(isinstance(value, str) and (value in current or _grounded(value, request)) for value in values):
+        if all(isinstance(value, str) and (value in current or _grounded(value, request) or value.casefold() in aliases) for value in values):
             continue
         return (f"I won't choose a feature for {control.label} that you did not name. "
                 "Which exact uploaded identifier should I select?")
@@ -1080,10 +1191,45 @@ _OTHER_ADJUSTMENT = re.compile(r"\b(?:gr(?:ö|oe|o)(?:ß|ss)er\w*|kleiner\w*|ver
                                r"aumenta\w*|reduc\w*)", re.I)
 
 
+def _preserved_canvas_control(request: AssistantRequest, control) -> bool:
+    if request.view.module != "analysis.canvas" or control is None:
+        return False
+    scopes = preserved_tile_scopes(request.message)
+    if not scopes:
+        return False
+    if control.label in {"Dataset level", "Identifier", "Linked plot source"}:
+        return True  # global changes would affect the protected plots too
+    tile = re.match(r"Tile (\d+): ([^/]+) / ", control.label)
+    if not tile:
+        return False
+    for scope in scopes:
+        if re.search(r"\btiles?\s+" + tile[1] + r"\b", scope, re.I):
+            return True
+        if re.search(r"\bvolcano\b", scope, re.I) and tile[2].lower().startswith("volcano"):
+            return True
+        tokens = [token for token in _ENTITY_TOKEN.findall(scope) if token not in _NOT_ENTITIES]
+        aliases = _uploaded_entity_aliases(request.model_copy(update={"message": scope}))
+        protected = {token.casefold() for token in tokens} | set(aliases.values())
+        for sibling in request.view.controls:
+            if sibling.label.startswith(tile[0]) and _ENTITY_LABEL.fullmatch(sibling.label):
+                values = sibling.value if isinstance(sibling.value, list) else [sibling.value]
+                if any(token.casefold() in protected for value in values if isinstance(value, str)
+                       for token in re.split(r"[;,\s]+", value)):
+                    return True
+        if not tokens and re.search(r"\b(?:boxplot|lineplot)\b", scope, re.I):
+            if any(word in tile[2].lower() for word in re.findall(r"boxplot|lineplot", scope, re.I)):
+                return True
+    return False
+
+
 def _scope_problem(request: AssistantRequest, action, control) -> str | None:
+    if _preserved_canvas_control(request, control):
+        return f"You asked to keep this plot unchanged, so I left {control.label} unchanged."
     if action.type != "set_control" or control is None:
         return None
     message = request.message
+    if re.search(r"\b(?:keep|leave|do not change|don't change)\b[^.!?]{0,80}\breference\s+(?:plot|panel|distribution)\b", message, re.I) and re.search(r"\breference\b", control.label, re.I):
+        return f"You asked to preserve the reference panel, so I left {control.label} unchanged."
     if control.appearance and control.permission == "view" and _broad_style(request):
         # "Nature style", "make it look its best": the whole look is handed over,
         # so fonts, sizes, frame and colours may all change. Names stay the
@@ -1284,7 +1430,8 @@ def _build_planner_call(request: AssistantRequest, keep: list[int] | None = None
               "changeScope": "appearance only; preserve every selection and scientific setting" if appearance_only else "explicitly requested controls only",
               **({"notDone": request.notes} if request.notes else {}),
               "conversationState": request.conversationState.model_dump() if request.conversationState else None,
-              "evidenceModules": list(_MODULE_SPECIFIC_AI_FUNCTIONS) if "current_plot" in tasks else [], "executionProfile": profile}
+              "evidenceModules": list(dict.fromkeys([*(list(_MODULE_SPECIFIC_AI_FUNCTIONS) if "current_plot" in tasks else []),
+                  *([key for key in METHODS if key in request.view.destinations or key == request.view.module] if "help" in tasks else [])])), "executionProfile": profile}
     schema = AssistantPlan.model_json_schema()
     style_options = assistant_styling.catalogue(request.model_copy(update={"receipts": []}), keep, narrow=tier.narrowed_styling)
     style_schema = schema["$defs"]["StyleEdit"]
@@ -1299,7 +1446,7 @@ def _build_planner_call(request: AssistantRequest, keep: list[int] | None = None
     schema["properties"]["actions"] = ui_actions_schema(view, min(MAX_SETTERS_PER_BATCH, remaining) if "ui" in tasks else 0)
     # The runtime keeps the leading part of a longer batch and plans the rest again.
     schema["properties"]["styles"]["maxItems"] = max(8, tier.setters_per_batch) if "ui" in tasks else 0
-    schema["properties"]["preset"] = {"type": "string", "enum": ["", *assistant_presets.PRESETS] if tier.presets and "ui" in tasks else [""]}
+    schema["properties"]["preset"] = {"type": "string", "enum": ["", *assistant_presets.PRESETS] if tier.presets and "ui" in tasks and _broad_style(request) else [""]}
     schema["properties"]["designNote"] = {"type": "string", "maxLength": 600 if tier.free_design else 0}
     schema["properties"]["question"] = {"type": "string", "maxLength": 400 if tier.free_design else 0}
     if "lookup" in tasks:
@@ -1719,6 +1866,7 @@ def _broad_style(request: AssistantRequest) -> bool:
                              r"colou?r\s*(?:scheme|palette))\b", request.message, re.I))
 
 
+@traced
 def _lookup_results(request: AssistantRequest, lookups, profile: str) -> list[dict]:
     """Read-only answers for an Advanced model's lookups; nothing is applied."""
     results: list[dict] = []
@@ -1763,7 +1911,7 @@ def _written_answer(request: AssistantRequest, model: str, evidence: list[Eviden
     None sends the request on to the sentence catalogue, as for other levels."""
     module = plan.module or request.view.module
     data = {"question": request.message, "earlierQuestion": context_question, "conversation": [] if method_only else history,
-            "module": module, "answerScope": "method_only" if method_only else "results",
+            "module": module, "completed": request.receipts, "answerScope": "method_only" if method_only else "results",
             "responseGuidance": response_guidance(plan.responseStyle), "methodGuidance": METHODS.get(module, ""),
             "evidence": [{"tool": item.tool, "status": item.status, "text": item.text} for item in evidence]}
     pinned = request if model == "application" else request.model_copy(update={"model": model})
@@ -1781,8 +1929,9 @@ def _written_answer(request: AssistantRequest, model: str, evidence: list[Eviden
     if not checked:
         return None
     checked = _page_names(checked, request)
-    if any(item.status == "partial" for item in evidence):
-        checked += "\n\nThis is based on part of the results; the full table was too long to read at once."
+    notes = list(dict.fromkeys(partial_qualification(item) for item in evidence if item.status == "partial"))
+    if notes:
+        checked += "\n\n" + " ".join(notes)
     return checked
 
 
@@ -1836,6 +1985,7 @@ def _resolve_module(request: AssistantRequest, given: str, modules: list[str]) -
                 + "; or an empty module for the open plot.")
 
 
+@traced
 def _read_for_tools(request: AssistantRequest, arguments: dict, profile: str,
                     modules: list[str] | None = None) -> list[Evidence]:
     """What read_results returns: the application's evidence for a module, computed as for any answer."""
@@ -1882,6 +2032,7 @@ def _read_for_tools(request: AssistantRequest, arguments: dict, profile: str,
     return found
 
 
+@traced
 def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image: str | None, effort: str | None,
                check_cancelled) -> tuple[str, str, dict | None]:
     """(model, plan JSON, written answer) from a native tool conversation (assistant_tools).
@@ -1907,12 +2058,15 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
     nudged = False  # one correction round for a reply that used no tool, or a tool wrongly
     answer_tasks = [task for task in call.tasks if task not in {"ui", "clarify", "lookup", "canvas_focus", "plot_controls"}]
     tool_names = [tool["function"]["name"] for tool in tools]
+    seen_reads: set[str] = set()
+    finish_only = False
     rounds = 6
     for round_index in range(rounds):
-        if round_index == rounds - 2:
+        if finish_only or round_index == rounds - 2:
             # The last two replies may only finish; a model that keeps reading is told so
             # once instead of running out of rounds (2026-10-13).
             messages.append({"role": "user", "content": _FINISH_NOW})
+        # Keep declarations stable: providers may bind thinking blocks to them.
         model, message = assistant_tool_turn(request, messages, tools, image=image, effort=effort)
         check_cancelled()
         calls = [item for item in message.get("tool_calls") or [] if isinstance(item, dict)]
@@ -1977,10 +2131,8 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
                 except ValueError as exc:
                     raise PlanRejected(str(exc)) from exc
                 if name == "ask_user" and plan.get("clarification") == "condition" and not request.answerOnly:
-                    # It read another page's results, found them waiting for a contrast and asked
-                    # which (the model, 2026-10-13). That page is opened instead: with two conditions
-                    # the question's own wording sets the contrast there, and the user
-                    # confirms any test change as always.
+                    # Open the page awaiting a contrast. With two conditions, the
+                    # question's wording sets the contrast; test changes still need approval.
                     if waiting and "current_plot" in call.tasks:
                         # Handed on as an answer about that module: the application opens it.
                         return model, json.dumps({"task": "current_plot", "module": waiting[0]}), {"text": "", "evidence": read}
@@ -1995,8 +2147,7 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
                 if name == "answer" and plan.get("task") not in call.tasks and "ui" in call.tasks:
                     text = str(arguments.get("text") or "").strip()
                     if text and read:
-                        # The model opened the page and explained it from what it read (the model,
-                        # 2026-10-13): that is the explanation the request asked for.
+                        # Keep the requested explanation grounded in the results just read.
                         return model, json.dumps({"task": "current_plot"}), {"text": text, "evidence": read}
                     # "answer" with task=ui after a finished batch is a closing remark (glm5,
                     # 2026-10-08): the application reports the changes itself, so it simply finishes.
@@ -2023,14 +2174,23 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
                             plan["preset"] = key
                             break
                 text = str(arguments.get("text") or "").strip() if name == "answer" else ""
-                # Written without reading anything ("I can't run exports from here", the model
-                # 2026-10-13), the reply is still checked: a figure it did not read is removed,
-                # and an answer emptied by that falls back to the application's own.
+                # Validate even replies without result reads. Unsupported numerical
+                # claims are removed; an empty answer uses the application's fallback.
                 written = {"text": text, "evidence": read} if text else None
                 return model, json.dumps(plan), written
             if name == "preset_details" and str(arguments.get("preset") or "") in assistant_presets.PRESETS:
                 looked_up.append(str(arguments["preset"]))
             if name == "read_results":
+                # The request/view is immutable within a step. All arguments are part
+                # of the key: a different feature, contrast or method is a new read.
+                resolved, _ = _resolve_module(request, str(arguments.get("module") or ""), modules)
+                read_key = json.dumps({**arguments, "module": resolved or arguments.get("module", "")}, sort_keys=True)
+                if read_key in seen_reads:
+                    finish_only = True
+                    messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
+                                     "content": "Already read with these arguments in this step; the evidence above is unchanged. Finish using it, or explain what is unavailable. Do not repeat the read."})
+                    continue
+                seen_reads.add(read_key)
                 found = _read_for_tools(request, arguments, call.profile, modules)
                 asked, _ = _resolve_module(request, str(arguments.get("module") or ""), modules)
                 if (asked and asked != request.view.module and asked in request.view.destinations
@@ -2043,10 +2203,12 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
                         break
                     clipped = entry.text[:remaining]
                     supplied.append(entry.model_copy(update={"text": clipped,
-                        "status": "partial" if len(clipped) < len(entry.text) else entry.status}))
+                        "status": "partial" if len(clipped) < len(entry.text) else entry.status,
+                        "context": {k: v for k, v in entry.context.items() if k != "partial_scope"} if len(clipped) < len(entry.text) else entry.context}))
                     remaining -= len(clipped) + 1
                 if len(supplied) < len(found) and supplied:
-                    supplied[-1] = supplied[-1].model_copy(update={"status": "partial"})
+                    supplied[-1] = supplied[-1].model_copy(update={"status": "partial",
+                        "context": {k: v for k, v in supplied[-1].context.items() if k != "partial_scope"}})
                 read.extend(supplied)
                 messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
                                  "content": "\n".join(entry.text for entry in supplied)})
@@ -2141,8 +2303,18 @@ def _lookup_round(request: AssistantRequest, raw: str, lookups_left: int, profil
     return None
 
 
-_NAMED_COLOUR = re.compile(r"#[0-9a-fA-F]{3,6}\b|\b(?:red|blue|green|black|white|gr[ae]y|orange|purple|violet|yellow|pink|"
-                           r"brown|cyan|magenta|teal|navy|maroon|olive|lime|gold|silver|beige|turquoise|crimson)\b", re.I)
+# A colour the user names in their own language is the user's choice, so the
+# palette rule below does not apply ("mach GRK dunkelgrün" → the model's #006400
+# was refused as not colour-blind-safe, 2026-10-26). English, German, French,
+# Spanish and Italian words, with the usual light/dark prefixes.
+_NAMED_COLOUR = re.compile(
+    r"#[0-9a-fA-F]{3,6}\b|\b(?:light|dark|pale|deep|hell|dunkel|clair|fonc\u00e9|claro|oscuro|chiaro|scuro)?[ -]?"
+    r"(?:red|blue|green|black|white|gr[ae]y|orange|purple|violet|yellow|pink|"
+    r"brown|cyan|magenta|teal|navy|maroon|olive|lime|gold|silver|beige|turquoise|crimson|"
+    r"rot|blau|gr\u00fcn|gruen|schwarz|wei(?:\u00df|ss)|grau|lila|violett|gelb|rosa|braun|t\u00fcrkis|tuerkis|"
+    r"rouge|bleu|vert|noir|blanc|gris|jaune|rose|brun|marron|"
+    r"rojo|azul|verde|negro|blanco|amarillo|morado|rosado|marr\u00f3n|"
+    r"rosso|blu|nero|bianco|grigio|giallo|viola|marrone)(?:e[sn]?|a|o)?\b", re.I)
 
 
 def _safe_free_colours(request: AssistantRequest, styles) -> tuple[list, list[str]]:
@@ -2193,6 +2365,7 @@ def plan_request(request: AssistantRequest, lookup_results: list[dict] | None = 
         return call
     budget = preferred if call.profile == "compact" else maximum
     size = estimate_tokens(call.system, call.payload)
+    _record_prompt_size(call, size, budget, len(controls))
     if size <= budget:
         return call
     scores = [_control_relevance(control.label, request.message,
@@ -2211,8 +2384,19 @@ def plan_request(request: AssistantRequest, lookup_results: list[dict] | None = 
         removable = removable[4:]
         call = _build_planner_call(request, sorted(keep), describe_pages=describe, **extra)
         size = estimate_tokens(call.system, call.payload)
+    _record_prompt_size(call, size, budget, len(keep), trimmed=len(controls) - len(keep))
     return call
 
+
+def _record_prompt_size(call, size: int, budget: int, controls: int, trimmed: int = 0) -> None:
+    """How much of the model's window the planner prompt takes (conversation log)."""
+    from app.services.assistant_trace import _active
+    trace = _active.get()
+    if trace is not None:
+        trace.record("Planner prompt size", {"estimatedTokens": size, "budgetTokens": budget, "profile": call.profile,
+                                             "controlsIncluded": controls, "controlsTrimmed": trimmed})
+
+@traced
 def assistant_step(request: AssistantRequest, cancelled=None) -> AssistantResponse:
     """Preserve partial progress without claiming the whole request succeeded.
 
@@ -2313,6 +2497,17 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
     where = _where_response(request, revision)
     if where is not None:
         return where
+    if code_request(request.message) and not request.answerOnly:
+        # 2026-10-27: asked for "an R script that reproduces this correlation plot", the
+        # model wrote a guessed sketch and said the app has no R export. The human
+        # decided the assistant writes no analysis or plot code; the reviewed routes are
+        # Export notebook and the bundled examples.
+        return AssistantResponse(model="application", revision=revision, answer=(
+            "I don't write analysis or plotting code. To reproduce a plot or table outside the app, use "
+            "\"Export notebook\" next to that output's download controls: it gives a ZIP with a Python notebook, the "
+            "captured input tables, the settings and the original output to compare against. For a standalone "
+            "workflow in Python or R, the bundled examples (examples/example.ipynb and examples/example.R) show the "
+            "same steps with the app's own functions. Nothing was changed."))
     library = _style_library_response(request, revision)
     if library is not None:
         return library
@@ -2382,8 +2577,7 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
         numeric_targets = {control.id for control in request.view.controls if control.type == "number"}
         actions = payload.get("actions", []) if isinstance(payload, dict) else []
         if isinstance(actions, list) and actions and all(isinstance(item, list) for item in actions):
-            # the model wrapped the action list once more, [[{...}, {...}]] (GRK, 2026-10-13): one
-            # level is unwrapped; each action is still validated exactly as written.
+            # Unwrap one extra list level; validate every action exactly as written.
             actions = [item for group in actions for item in group]
             payload["actions"] = actions
         if isinstance(actions, list):
@@ -2434,7 +2628,7 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
         raise PlanRejected("The model asked for more lookups than this request allows. Nothing was changed.")
     design_notes: list[str] = []
     if plan.preset:
-        if plan.task != "ui" or plan.preset not in assistant_presets.PRESETS or not tier.presets:
+        if plan.task != "ui" or plan.preset not in assistant_presets.PRESETS or not tier.presets or not _broad_style(request):
             raise PlanRejected("That style preset is not available here. Nothing was changed.")
         preset_edits, preset_summary = assistant_presets.edits(plan.preset, request)
         own = {(edit.element, edit.property) for edit in plan.styles}
@@ -2576,6 +2770,13 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                     raise PlanRejected("Buttons cannot be assigned values.")
                 if action.type == "set_control":
                     value = action.value
+                    # Tool schemas share one value union across single and multiple
+                    # selectors. A one-item list naming a visible single option is
+                    # unambiguous; keep all option, scope and permission checks below.
+                    if (control.type == "select" and isinstance(value, list) and len(value) == 1
+                            and isinstance(value[0], str) and value[0] in control.options):
+                        value = value[0]
+                        action.value = value
                     if control.type == "checkbox":
                         valid = isinstance(value, bool)
                     elif control.type == "multiple":
@@ -2618,12 +2819,15 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                                 for action in plan.actions)
                         and (_broad_style(request) or bool(re.search(_APPEARANCE_NOUNS, request.message, re.I))))
         # Choosing a tile type or naming a list on the canvas prepares the next step (the
-        # add), it does not complete the request (the model, 2026-10-13: finished after the type).
+        # add), it does not complete the request.
         preparatory = any(controls.get(action.target) is not None
-                          and controls[action.target].label.split(" / ")[-1] in {"New tile type", "New list name"}
+                          and controls[action.target].label.split(" / ")[-1] in {"New tile type", "New list name", "Protein source"}
                           for action in plan.actions)
         finished = bool(plan.actions and not deferred and not explain_after and not styling_left and not preparatory
                         and not _entity_pending(request, plan, controls)
+                        # Canvas construction can still have other requested tiles to add.
+                        # Re-read the resulting view before declaring the whole request complete.
+                        and (request.view.module != "analysis.canvas" or appearance_only_request(request.message))
                         and not re.search(_ALL_PLOTS, request.message, re.I)
                         and all(action.type == "set_control" for action in plan.actions)
                         and (model == "application" or tier.free_design)) or reviewing
@@ -2691,6 +2895,17 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                     answer=f"I couldn't find {query!r} in the current feature choices. Check the identifier mode or provide its uploaded identifier. The current selection was kept.")
         return AssistantResponse(model=model, answer=_own_question(request, plan, tier) or _CLARIFICATIONS[reason],
                                  revision=revision, needsClarification=True)
+    if (written and plan.task in {"current_plot", "help"}
+            and (plan.task == "current_plot" or requests_current_result(request.message)
+                 or requests_numeric_summary(request.message))
+            and not any(item.status != "unavailable" and not item.tool.startswith("method:")
+                        and item.tool not in {"project_state", "read_results"}
+                        for item in written["evidence"])):
+        # A method definition or control catalogue cannot substantiate findings
+        # about the current dataset. Re-read actual results and compose from them
+        # through the normal evidence path instead of accepting unchecked prose.
+        written = None
+        plan = plan.model_copy(update={"task": "current_plot"})
     if (written and plan.task == "current_plot" and plan.module and plan.module != request.view.module
             and plan.module in request.view.destinations and not request.answerOnly
             and any(item.status == "unavailable" or "status=incomplete_parameters" in item.text
@@ -2720,14 +2935,19 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
             raise ValueError("The analysis changed while the assistant was working. Please retry.")
         if checked:
             checked = _page_names(checked, request)
-            if any(item.status == "partial" for item in evidence_read):
-                checked += "\n\nThis is based on part of the results; the full table was too long to read at once."
+            notes = list(dict.fromkeys(partial_qualification(item) for item in evidence_read if item.status == "partial"))
+            if notes:
+                checked += "\n\n" + " ".join(notes)
             return AssistantResponse(model=model, answer=checked, evidence=evidence_read, revision=revision)
     proposed = plan
     # A named multi-analysis overview is already an evidence choice; a single
     # relevance pick would collapse it to one module. A plan an Advanced model made
     # with its tools already chose among the same sources (it could read them).
-    plan = plan if plan.task == "results_overview" or tooled_plan else _select_evidence_plan(request, plan, model, history)
+    help_module = application_help_module(request.message) if plan.task == "help" else ""
+    if help_module:
+        plan = plan.model_copy(update={"module": help_module})
+    elif plan.task != "results_overview" and not tooled_plan:
+        plan = _select_evidence_plan(request, plan, model, history)
     if (request.answerOnly and request.view.module == "analysis.canvas"
             and canvas_explanation_request(request.message)):
         plan = proposed.model_copy(update={"task": "current_plot", "module": "analysis.canvas", "query": "", "clarification": ""})
@@ -2773,13 +2993,34 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
             # (2026-10-08: "WT vs GRK volcano, welch, BH 0.05 - how many go up?" from the QC page).
             return AssistantResponse(model=model, revision=revision, explainAfterChanges=True,
                                      actions=[UiAction(type="navigate", target=plan.module)])
-        answer = (_CLARIFICATIONS["entity"] if lookup else
-                  "No calculated result is available for this selection. Check the plot's selections and, if needed, run the analysis first.")
-        if any(item.tool.startswith("canvas tile") and item.text.startswith("No completed enrichment result") for item in primary):
-            answer = "There is no completed enrichment result for this tile yet. Run ORA before asking about its results."
-        if any(item.tool == "external_activity" for item in primary):
-            answer = next(item.text for item in primary if item.tool == "external_activity")
-        return AssistantResponse(model=model, answer=answer, evidence=evidence, revision=revision, needsClarification=lookup)
+        method = method_evidence(plan.module or request.view.module)
+        # Application and method questions fall back to workflow guidance when
+        # the page has no method text of its own.
+        help_intent = (proposed.task == "help" or _METHOD_QUESTION.search(request.message)
+                       or application_feature_question(request.message)
+                       or ((plan.module or request.view.module) in METHODS
+                           and (plan.module or request.view.module) not in _MODULE_SPECIFIC_AI_FUNCTIONS))
+        if method.status != "available" and help_intent and not lookup:
+            method = method_evidence("workflow.overview")
+        if (not lookup and plan.task != "entity_lookup" and method.status == "available"
+                and help_intent and not requests_numeric_summary(request.message)):
+            # "which GO release do the terms come from and how should I cite it?" on an ORA
+            # page whose two conditions were still equal got "No calculated result is
+            # available" (2026-10-27): the question is about the method and its database,
+            # which exist without a result. Answer from the method; keep the failed result
+            # in the evidence so the reply can say that no result is available.
+            plan = plan.model_copy(update={"task": "help", "responseStyle": "explanation", "query": "", "clarification": ""})
+            evidence = ([method] if not requests_current_result(request.message) else [method, *evidence])
+        else:
+            reason = _unavailable_reason(primary)
+            answer = (_entity_clarification(request) if lookup else
+                      ("No calculated result is available for this selection" + (f": {reason}" if reason else ".")
+                       + " Check the plot's selections and, if needed, run the analysis first."))
+            if any(item.tool.startswith("canvas tile") and item.text.startswith("No completed enrichment result") for item in primary):
+                answer = "There is no completed enrichment result for this tile yet. Run ORA before asking about its results."
+            if any(item.tool == "external_activity" for item in primary):
+                answer = next(item.text for item in primary if item.tool == "external_activity")
+            return AssistantResponse(model=model, answer=answer, evidence=evidence, revision=revision, needsClarification=lookup)
     method_only = plan.task == "help"
     context_question = memory.request if rephrasing and same_view else ""
     if context_question and rephrase_request(context_question):

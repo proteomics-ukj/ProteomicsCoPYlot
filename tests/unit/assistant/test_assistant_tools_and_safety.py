@@ -618,8 +618,7 @@ def test_a_model_that_keeps_reading_is_told_to_finish_before_the_last_round(adva
 # --- Grounded project answers -------------------------------------------------
 
 def test_a_project_answer_the_model_wrote_is_kept_and_checked(advanced, monkeypatch):
-    """A model answered a cutoff question correctly with task=project_state; the
-    application threw the text away and rewrote it without the key sentence."""
+    """Keep a grounded project-state answer without discarding its cutoff explanation."""
     from app.schemas.assistant import Evidence
 
     advanced.evidence = [Evidence(tool="project_state", status="available",
@@ -645,9 +644,7 @@ def test_visibility_given_as_a_string_boolean_is_accepted():
 
 
 def test_a_view_request_answered_from_the_opened_page_keeps_the_explanation(advanced, monkeypatch):
-    """"show me the PCA, do my groups separate?" is a UI request; after opening the page the
-    model read the results and answered. The answer tool was not offered in that step and
-    the model invented it (2026-10-13); now it is offered and the text is the explanation."""
+    """Offer the answer tool after navigation so the model can explain the results it read."""
     from app.schemas.assistant import Evidence
 
     advanced.evidence = [Evidence(tool="current_plot", status="available", text="pca|pc1_variance=49.65|pc2_variance=9.14")]
@@ -662,9 +659,7 @@ def test_a_view_request_answered_from_the_opened_page_keeps_the_explanation(adva
 
 
 def test_asking_which_contrast_after_reading_a_waiting_page_opens_that_page(advanced, monkeypatch):
-    """From the coverage page, "which phosphosites go up most in GRK?" has no change_view tool;
-    the model read the volcano (waiting for a contrast) and asked which one (2026-10-13). The page is
-    opened instead; the question's wording sets the contrast there."""
+    """Open the page awaiting a contrast so the user's named comparison can be selected."""
     from app.schemas.assistant import Evidence
 
     advanced.evidence = [Evidence(tool="volcano_data", status="unavailable", text="volcano_data|status=incomplete_parameters")]
@@ -692,8 +687,7 @@ def test_a_hit_the_assistant_just_listed_can_be_shown_as_the_first_one():
 
 
 def test_a_reply_written_without_reading_is_checked_not_dropped(advanced, monkeypatch):
-    """"export the summary table as excel": the model answered without reading anything and the
-    application showed the module's method text instead (the model, 2026-10-13)."""
+    """Validate a help answer without result reads instead of substituting method text."""
     _raw_turns(monkeypatch, [{"content": "", "tool_calls": [_call("answer", {"task": "help", "text":
         "I can't run exports from here. The Download CSV button above the table saves it; 9999 rows are shown."})]}])
     result = advanced.run([], message="ok then export the summary table as excel for me", view=_coverage_view())
@@ -718,12 +712,13 @@ def test_a_batch_leaving_the_named_protein_unplaced_is_not_finished(advanced, mo
     result = advanced.run([plan], message="put a boxplot of CCN1 on the analysis canvas", view=view,
                           receipts=["Opened Analysis.", "+ Add Plot: completed."])
     assert _targets(result) == {"src": "manual"} and not result.finished
-    # Once the name is placed, the same kind of batch is complete.
+    # Even with the name placed, changing the source needs a refreshed canvas
+    # before the assistant can decide that the full request is complete.
     placed = {**view, "controls": [*view["controls"], {"id": "p", "label": "Tile 1: proteinBoxplot / Protein or gene",
                                                       "type": "text", "value": "CCN1_HUMAN"}]}
     result = advanced.run([plan], message="put a boxplot of CCN1 on the analysis canvas", view=placed,
                           receipts=["Opened Analysis.", "+ Add Plot: completed."])
-    assert result.finished
+    assert not result.finished
 
 
 def test_a_german_correlation_rounded_to_three_decimals_is_confirmed():

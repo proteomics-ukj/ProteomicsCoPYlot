@@ -101,8 +101,6 @@ _IMPROVE = re.compile(r"\b(?:look\s+(?:better|nicer|best|good|great|professional
                       # "make it look cleaner for my lab meeting" (2026-10-08): the whole look is handed over
                       r"clean(?:er)?\s*(?:up|look\w*)?|tid(?:y|ier)(?:\s+up)?|declutter\w*|less\s+cluttered|sleek\w*|"
                       r"(?:presentation|publication|slide|poster|talk)[- ]ready|"
-                      r"for\s+(?:my|a|the|our)\s+(?:(?:lab|group|team)\s+meeting|talk|presentation|slides?|poster|seminar|"
-                      r"defen[cs]e|lecture|report|thesis)|"
                       r"sch(?:ö|oe)ner|h(?:ü|ue)bscher|aufr(?:ä|ae)umen|aufger(?:ä|ae)umt\w*|professioneller)\b", re.I)
 
 
@@ -117,7 +115,7 @@ def requested(message: str) -> tuple[str | None, str | None]:
     other = _OTHER_JOURNALS.search(message)
     if other:
         return None, other[1]
-    if _PUBLICATION.search(text) and _STYLE.search(text):
+    if _PUBLICATION.search(text) and re.search(r"\b(?:style|format\w*|look|guidelines?|ready|standards?|fit|match|like|layout|reif|tauglich|publikations(?:stil|reif|tauglich))\b", text):
         return "publication", None
     return None, None
 

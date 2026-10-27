@@ -1028,6 +1028,20 @@ export default function AnalysisPage({
                             })
                           }
                         />
+                        {tile.sourceMode !== "active" ? (
+                          <SelectField
+                            label="Tile identifier"
+                            value={tile.plotIdentifier ?? "global"}
+                            options={[
+                              { value: "global", label: `Use global setting (${options?.availableIdentifiers.find(entry => entry.key === identifier)?.label ?? identifier})` },
+                              ...(options?.availableIdentifiers ?? []).map(entry => ({ value: entry.key, label: entry.label })),
+                            ]}
+                            onChange={value => updateTile(tile.id, {
+                              ...tile,
+                              plotIdentifier: value === "global" ? undefined : value as StatsIdentifier,
+                            })}
+                          />
+                        ) : null}
                         {tile.sourceMode === "manual" ? (
                           <TextField
                             label="Protein or gene"
@@ -1109,6 +1123,20 @@ export default function AnalysisPage({
                           />
                         ) : null}
 
+                        {tile.sourceMode !== "active" ? (
+                          <SelectField
+                            label="Tile identifier"
+                            value={tile.plotIdentifier ?? "global"}
+                            options={[
+                              { value: "global", label: `Use global setting (${options?.availableIdentifiers.find(entry => entry.key === identifier)?.label ?? identifier})` },
+                              ...(options?.availableIdentifiers ?? []).map(entry => ({ value: entry.key, label: entry.label })),
+                            ]}
+                            onChange={value => updateTile(tile.id, {
+                              ...tile,
+                              plotIdentifier: value === "global" ? undefined : value as StatsIdentifier,
+                            })}
+                          />
+                        ) : null}
                         {tile.sourceMode === "manual" ? (
                           <label className="block text-sm">
                             <span className="mb-1 block font-medium text-slate-700">Proteins or genes (comma, space, or newline)</span>

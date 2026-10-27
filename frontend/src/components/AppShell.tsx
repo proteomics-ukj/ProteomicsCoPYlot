@@ -35,6 +35,8 @@ import { focusNavigatedPlot } from "../lib/assistantNavigation";
 import { beginAssistantRequest } from "../lib/assistantControls";
 import { savedStyleNames } from "../lib/plotStyles";
 import AssistantChangeLog from "./AssistantChangeLog";
+import { AssistantLog } from "../lib/assistantLog";
+import AssistantLogDownload from "./AssistantLogDownload";
 import { AssistantConversation } from "../lib/assistantConversation";
 
 // A stable empty mode, so the assistant's view does not change identity on
@@ -190,12 +192,14 @@ export default function AppShell({
   const selectedChatModel = usingLocalProvider ? chatModel.trim() : chatRemoteModel.trim();
   const viewRef = useRef({ module: moduleKey, workflow: workflowScope, mode: contextMode, destinations: assistantDestinations });
   const conversationRef = useRef(new AssistantConversation());
+  const [chatLog] = useState(() => new AssistantLog());
   const [evidenceByMessage, setEvidenceByMessage] = useState<Record<number, AssistantResult["evidence"]>>({});
   useEffect(() => {
     viewRef.current = { module: moduleKey, workflow: workflowScope, mode: contextMode, destinations: assistantDestinations };
   }, [moduleKey, workflowScope, contextMode, assistantDestinations]);
 
   const resetChatForModelChange = useCallback(() => {
+    if (chatLog.count()) chatLog.record("Conversation reset", "Model or provider settings changed; prior log retained.");
     chatAbortRef.current?.abort();
     setChatMessages([{ role: "assistant", content: CHAT_READY_MESSAGE }]);
     setEvidenceByMessage({});
@@ -206,7 +210,7 @@ export default function AppShell({
     setModelCapabilityError(null);
 
 
-  }, []);
+  }, [chatLog]);
 
   const applyChatModelList = useCallback((
     available: string[],
@@ -520,6 +524,8 @@ export default function AppShell({
       }
     }
 
+    chatLog.exclude(chatApiKey.trim(), chatOllamaEndpointActive.trim(), localServerEndpointActive.trim());
+    chatLog.record("User message", { message, provider: chatProvider, model: selectedModel, assistantLevel, capability: modelCapability });
     const nextUserMessage: ChatMessage = { role: "user", content: message };
     const history = [...chatMessages, nextUserMessage];
     setChatMessages([...history, { role: "assistant", content: "" }]);
@@ -537,11 +543,14 @@ export default function AppShell({
     chatAbortRef.current = controller;
 
     try {
-      const updateAnswer = (content: string) => setChatMessages(current => {
-        const next = [...current];
-        next[history.length] = { role: "assistant", content };
-        return next;
-      });
+      const updateAnswer = (content: string) => {
+        chatLog.record("Displayed assistant response / progress", content);
+        setChatMessages(current => {
+          const next = [...current];
+          next[history.length] = { role: "assistant", content };
+          return next;
+        });
+      };
       let navigated = false;
       beginAssistantRequest();  // what the assistant changes from here is one undo unit
       const response = await runAssistant({
@@ -557,9 +566,11 @@ export default function AppShell({
         onAssistantNavigate(destination);
         navigated = true;
       }, updateAnswer, controller.signal, conversationRef.current, {
+        trace: chatLog.record,
         slow: Boolean(modelCapability?.reasoning) || (usingLocalProvider && effectiveLevel === "advanced"),
         plotImage: effectiveLevel === "advanced" && modelCapability?.supportsVision ? () => capturePlotImage() : undefined,
       });
+      chatLog.record("Request completed", { answer: response.answer, evidence: response.evidence, stoppedEarly: response.stoppedEarly, needsClarification: response.needsClarification });
       if (controller.signal.aborted) return;
       setEvidenceByMessage(current => ({ ...current, [history.length]: response.evidence }));
       updateAnswer(response.answer);
@@ -568,6 +579,7 @@ export default function AppShell({
         stopPlotFocus.current = focusNavigatedPlot();
       }
     } catch (err) {
+      chatLog.record(controller.signal.aborted ? "Request stopped" : "Request failed", err instanceof Error ? err.message : "Unknown error");
       const consentRequired = err instanceof CloudAiConsentRequiredError;
       if (consentRequired) {
         setCloudConsentStatus(err.status);
@@ -707,6 +719,8 @@ export default function AppShell({
                           onChange={(event) => {
                             const nextProvider = event.target.value as ChatProvider;
                             if (!nextProvider || nextProvider === chatProvider) return;
+                            setChatApiKey("");
+                            setLocalServerKeyActive("");
                             setChatProvider(nextProvider);
                             if (nextProvider === "openai_compatible") {
                               if (!localServerEndpoint.trim() && localServerPreset) {
@@ -1010,6 +1024,7 @@ export default function AppShell({
                 </svg>
               </button>
             </div>
+            <AssistantLogDownload log={chatLog} />
             <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
               <div className="space-y-3">
                 {chatMessages.map((item, index) => (
@@ -1119,6 +1134,8 @@ export default function AppShell({
                 type="button"
                 onClick={() => {
                   setCloudConsentDialogOpen(false);
+                  setChatApiKey("");
+                  setLocalServerKeyActive("");
                   setChatProvider("ollama");
                   resetChatForModelChange();
                 }}

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import anyio
 from threading import Event
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from app.schemas.chat import (
     AiOperatorPolicyResponse,
@@ -20,7 +22,8 @@ from app.schemas.chat import (
     OllamaModelsResponse,
     ProviderDefaultsResponse,
 )
-from app.schemas.assistant import AssistantProgressResponse, AssistantRequest, AssistantResponse
+from app.schemas.assistant import AssistantProgressResponse, AssistantRequest, AssistantResponse, AssistantTraceResponse
+from app.services.assistant_trace import Trace, take_partial
 from app.services import assistant_progress
 from app.services.scientific_assistant import assistant_step
 from app.services.chat_tools import (
@@ -52,6 +55,16 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 async def scientific_assistant_route(payload: AssistantRequest, request: Request):
     if not ai_mode_enabled():
         raise HTTPException(status_code=404, detail="AI features are disabled for this app mode.")
+    trace = Trace(payload.apiKey, payload.ollamaUrl, payload.localServerUrl,
+                  *(os.environ.get(name) for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "COPYLOT_LOCAL_AI_API_KEY")),
+                  trace_id=payload.traceId)
+
+    def run_step():
+        with trace:
+            result = assistant_step(payload, cancelled)
+            result.trace = trace.events
+            return result
+
     try:
         cancelled = Event()
         async def watch_disconnect():
@@ -64,21 +77,36 @@ async def scientific_assistant_route(payload: AssistantRequest, request: Request
         async with anyio.create_task_group() as group:
             group.start_soon(watch_disconnect)
             try:
-                result = await anyio.to_thread.run_sync(lambda: assistant_step(payload, cancelled))
+                result = await anyio.to_thread.run_sync(run_step)
             except Exception as exc:
                 error = exc
             finally:
                 group.cancel_scope.cancel()
         if error is not None:
             raise error
+        trace.finish()
         return result
     except CloudAiConsentRequired as exc:
-        raise HTTPException(status_code=428, detail=exc.detail()) from exc
+        trace.finish()
+        return JSONResponse(status_code=428, content={"detail": exc.detail(), "trace": trace.events})
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
+        trace.finish()
+        return JSONResponse(status_code=400, content={"detail": str(exc), "trace": trace.events})
+    except Exception:
         LOGGER.exception("Scientific assistant failed")
-        raise HTTPException(status_code=500, detail="The assistant could not complete this step.") from exc
+        trace.finish()
+        return JSONResponse(status_code=500, content={"detail": "The assistant could not complete this step.", "trace": trace.events})
+
+
+@router.get("/assistant-trace/{progress_id}", response_model=AssistantTraceResponse)
+def assistant_trace_route(progress_id: str):
+    """A session-scoped snapshot, retained briefly even after the step returns.
+    Reading it does not delete events or prevent later recovery."""
+    if not ai_mode_enabled():
+        raise HTTPException(status_code=404, detail="AI features are disabled for this app mode.")
+    if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", progress_id):
+        raise HTTPException(status_code=400, detail="Invalid progress id.")
+    return AssistantTraceResponse(trace=take_partial(progress_id))
 
 
 @router.get("/assistant-progress/{progress_id}", response_model=AssistantProgressResponse)

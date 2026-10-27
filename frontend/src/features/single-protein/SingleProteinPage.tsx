@@ -9,7 +9,7 @@ import NumberField from "../../components/NumberField";
 import { collectColumns } from "../../lib/tableData";
 import { csvDataUrl, rowsToCsv } from "../../lib/tableData";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildPlotUrl, getSingleProteinOptions, getSingleProteinTable, isAbortError } from "../../lib/api";
+import { buildPlotUrl, getSingleProteinOptions, getSingleProteinTable, isAbortError, type SingleProteinCarry } from "../../lib/api";
 import { useCurrentDatasetsSnapshot, useDatasetRevision } from "../../lib/datasetAvailability";
 import {
   coercePlotDownloadFormat,
@@ -71,6 +71,10 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
   });
   const { availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
   const [options, setOptions] = useState<SingleProteinOptionsResponse | null>(null);
+  // The selection at the moment the Identifier select changed, handed to the
+  // next options request so the same proteins stay selected under their other
+  // names (2026-10-27: the switch cleared the plot to the first three entries).
+  const carryRef = useRef<SingleProteinCarry | null>(null);
   const {
     dataSource,
     applyChoices: applyDataSourceChoices,
@@ -170,7 +174,9 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
     setOptions(null);
     setOptionsLoading(true);
     setOptionsError(null);
-    getSingleProteinOptions(effectiveKind, activeTab, activeIdentifier, dataSource, { signal: controller.signal })
+    const carry = carryRef.current;
+    carryRef.current = null;
+    getSingleProteinOptions(effectiveKind, activeTab, activeIdentifier, dataSource, { signal: controller.signal, carry })
       .then((data) => {
         setOptions(data);
         // Unconditionally. This used to be gated on the response echoing back a
@@ -199,6 +205,8 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
     if (!options) return;
     const proteinChoices = options.proteins ?? [];
     const conditionChoices = options.conditions ?? [];
+    const carried = options.carried ?? {};
+    const carryOver = (name: string) => carried[name] ?? name;
 
     if (activeTab === "boxplot") {
       setBox((prev) => {
@@ -206,8 +214,8 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
         const nextIdentifier = validIdentifiers.has(prev.identifier)
           ? prev.identifier
           : (options.identifier ?? "workflow");
-        const nextProtein =
-          prev.protein && proteinChoices.includes(prev.protein) ? prev.protein : proteinChoices[0] ?? "";
+        const protein = carryOver(prev.protein);
+        const nextProtein = protein && proteinChoices.includes(protein) ? protein : proteinChoices[0] ?? "";
         const filtered = prev.conditions.filter((value) => conditionChoices.includes(value));
         const nextConditions = filtered.length > 0 ? filtered : [...conditionChoices];
         return { ...prev, identifier: nextIdentifier, protein: nextProtein, conditions: nextConditions };
@@ -221,7 +229,7 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
         const nextIdentifier = validIdentifiers.has(prev.identifier)
           ? prev.identifier
           : (options.identifier ?? "workflow");
-        const filteredProteins = prev.proteins.filter((value) => proteinChoices.includes(value));
+        const filteredProteins = Array.from(new Set(prev.proteins.map(carryOver))).filter((value) => proteinChoices.includes(value));
         const nextProteins =
           filteredProteins.length > 0 ? filteredProteins : proteinChoices.slice(0, Math.min(3, proteinChoices.length));
         const filteredConditions = prev.conditions.filter((value) => conditionChoices.includes(value));
@@ -236,8 +244,8 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
       const nextIdentifier = validIdentifiers.has(prev.identifier)
         ? prev.identifier
         : (options.identifier ?? "workflow");
-      const nextProtein =
-        prev.protein && proteinChoices.includes(prev.protein) ? prev.protein : proteinChoices[0] ?? "";
+      const protein = carryOver(prev.protein);
+      const nextProtein = protein && proteinChoices.includes(protein) ? protein : proteinChoices[0] ?? "";
       const filtered = prev.conditions.filter((value) => conditionChoices.includes(value));
       const nextConditions = filtered.length > 0 ? filtered : [...conditionChoices];
       return { ...prev, identifier: nextIdentifier, protein: nextProtein, conditions: nextConditions };
@@ -698,9 +706,10 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
               value={box.identifier}
               options={identifierOptions}
               labels={identifierLabels}
-              onChange={(value) =>
-                setBox({ ...box, identifier: value as SingleProteinIdentifier, protein: "" })
-              }
+              onChange={(value) => {
+                carryRef.current = { identifier: box.identifier, names: box.protein ? [box.protein] : [] };
+                setBox({ ...box, identifier: value as SingleProteinIdentifier });
+              }}
             />,
             <SelectField
               key="protein"
@@ -758,9 +767,10 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
               value={line.identifier}
               options={identifierOptions}
               labels={identifierLabels}
-              onChange={(value) =>
-                setLine({ ...line, identifier: value as SingleProteinIdentifier, proteins: [] })
-              }
+              onChange={(value) => {
+                carryRef.current = { identifier: line.identifier, names: line.proteins };
+                setLine({ ...line, identifier: value as SingleProteinIdentifier });
+              }}
             />,
             <MultiSelectField
               key="proteins"
@@ -804,9 +814,10 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
             value={heatmap.identifier}
             options={identifierOptions}
             labels={identifierLabels}
-            onChange={(value) =>
-              setHeatmap({ ...heatmap, identifier: value as SingleProteinIdentifier, protein: "" })
-            }
+            onChange={(value) => {
+              carryRef.current = { identifier: heatmap.identifier, names: heatmap.protein ? [heatmap.protein] : [] };
+              setHeatmap({ ...heatmap, identifier: value as SingleProteinIdentifier });
+            }}
           />,
           <SelectField
             key="protein"

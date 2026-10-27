@@ -41,6 +41,9 @@ const OWN_ERROR_PATH: Record<string, string> = {
 // Clients that do not yet show a 422 readably. Each is a product defect; the
 // entry is removed when it is fixed.
 const KNOWN_DEFECTS = new Set<string>([]);
+// Recovery is optional background work; its failures must not replace the
+// original request error. Its own tests cover the empty result and deadline.
+const BEST_EFFORT_CLIENTS = new Set(["getAssistantPartialTrace"]);
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -54,7 +57,7 @@ describe("every API client", () => {
     expect(clients.length).toBeGreaterThan(80);
   });
 
-  it.each(clients.filter(([name]) => !KNOWN_DEFECTS.has(name)))(
+  it.each(clients.filter(([name]) => !KNOWN_DEFECTS.has(name) && !BEST_EFFORT_CLIENTS.has(name)))(
     "%s raises the messages of a 422 body",
     async (name, client) => {
       const body = { detail: [{ msg: "First problem", input: "private" }, { msg: "Second problem" }] };

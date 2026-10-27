@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.assistant_trace import traced
+
 import json
 import math
 import ipaddress
@@ -908,6 +910,7 @@ def _anthropic_chat_text(
     temperature: float,
     max_tokens: int,
     image: str | None = None,
+    schema: dict | None = None,
 ) -> str:
     system_text, dialogue = _extract_system_and_dialogue(messages)
     request_body: dict[str, object] = {
@@ -918,6 +921,13 @@ def _anthropic_chat_text(
             {"type": "text", "text": text}]),
         "max_tokens": max_tokens,
     }
+    if schema is not None:
+        # A structured response tool avoids prose/XML plan dialects.
+        # This tool only returns data; the caller still validates the full schema
+        # and applies the same action and permission checks as any other plan.
+        request_body["tools"] = [{"name": "structured_response", "description": "Return the complete response matching the provided schema.", "input_schema": schema}]
+        request_body["tool_choice"] = {"type": "auto"}
+        system_text += "\nReturn the requested JSON object using structured_response. Its input is the response, not an executable action."
     # Use provider defaults: recent Anthropic models reject sampling overrides.
     if system_text:
         request_body["system"] = system_text
@@ -936,6 +946,15 @@ def _anthropic_chat_text(
     blocks = parsed.get("content")
     if not isinstance(blocks, list) or not blocks:
         raise ValueError("Anthropic response did not include content.")
+    if schema is not None:
+        calls = [item for item in blocks if isinstance(item, dict) and item.get("type") == "tool_use"]
+        if parsed.get("stop_reason") == "max_tokens":
+            raise ValueError("The model used its reply budget before completing the structured response. Nothing was changed.")
+        if calls:
+            if len(calls) != 1 or calls[0].get("name") != "structured_response" or not isinstance(calls[0].get("input"), dict):
+                raise ValueError("Anthropic did not return the requested structured response. Nothing was changed.")
+            return json.dumps(calls[0]["input"], ensure_ascii=False)
+        # Auto tool choice may return a text object; the caller validates it too.
     texts: list[str] = []
     for block in blocks:
         if not isinstance(block, dict):
@@ -1169,6 +1188,7 @@ def _ollama_num_ctx(model: str, endpoint_override: str | None, prompt_tokens: in
     return chosen
 
 
+@traced
 def assistant_completion(payload: ChatRequest, instruction: str, data: str, *, schema=None,
                          image: str | None = None, effort: str | None = None) -> tuple[str, str]:
     """Bounded completion for the assistant's planner or evidence explanation.
@@ -1237,15 +1257,29 @@ def assistant_completion(payload: ChatRequest, instruction: str, data: str, *, s
         check_ai_operator_policy(provider, model)
         completion = {"openai": _openai_chat_text, "anthropic": _anthropic_chat_text, "gemini": _gemini_chat_text}[provider]
         text = completion(model=model, api_key=_resolve_api_key(payload, provider), messages=messages,
-                          temperature=0, max_tokens=max_tokens, image=image)
+                          temperature=0, max_tokens=max_tokens, image=image,
+                          **({"schema": schema} if provider == "anthropic" else {}))
     if not isinstance(text, str) or not text.strip():
         raise ValueError("The assistant returned no usable answer.")
     return model, _unwrap_json_reply(text) if schema else text.strip()
 
 
 def _unwrap_json_reply(text: str) -> str:
-    """Remove a single presentation fence, never repair or extract a partial plan."""
+    """Remove a single presentation fence, never repair or extract a partial plan.
+
+    A complete parameter-based invoke reply becomes one JSON object. Every
+    field still undergoes schema validation; conflicting plans remain invalid.
+    """
     text = text.strip()
+    # Only empty invoke wrappers may precede a plan. Never discard a nonempty
+    # block to select another plan or accept just one of multiple plans.
+    while block := _INVOKE_BLOCK.match(text):
+        invoked = _invoke_block_as_json(text)
+        if invoked is not None:
+            return invoked
+        if block[1].strip():
+            return text
+        text = text[block.end():].strip()
     fenced = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
     if fenced:
         candidate = fenced[1].strip()
@@ -1254,7 +1288,58 @@ def _unwrap_json_reply(text: str) -> str:
         except ValueError:
             return text
         return candidate
+    # Fourth dialect: the JSON object with one unbalanced fence ("{…}\n```", or
+    # "```json\n{…}"). The fence is presentation; the object itself must still parse.
+    unbalanced = re.fullmatch(r"(?:```(?:json)?\s*\n)?(\{.*\})\s*(?:\n```)?", text, re.DOTALL | re.IGNORECASE)
+    if unbalanced and unbalanced[1] != text:
+        candidate = unbalanced[1].strip()
+        try:
+            json.loads(candidate)
+            return candidate
+        except ValueError:
+            pass
+    # Third dialect (same day): a sentence of prose, then the complete JSON object on
+    # its own line ("The canvas is open … nothing more is needed.\n\n{"task":"ui",…}").
+    # The object is used whole when it parses; prose alone, or a broken object, is
+    # left as it is, so nothing partial is ever repaired into a plan.
+    if not text.startswith("{") and "\n{" in text:
+        split = text.rfind("\n{") + 1
+        # Prose may precede one object, but another structured fragment makes
+        # selecting the final object ambiguous.
+        if re.search(r"[{}]|```|<invoke\b", text[:split]):
+            return text
+        candidate = text[split:].strip()
+        try:
+            if isinstance(json.loads(candidate), dict):
+                return candidate
+        except ValueError:
+            pass
     return text
+
+
+_INVOKE_BLOCK = re.compile(r"\A<invoke\b[^>]*>(.*?)</invoke>", re.DOTALL)
+_INVOKE_PARAMETER = re.compile(r"<parameter\s+name=\"([^\"]+)\"\s*>(.*?)</parameter>", re.DOTALL)
+
+
+def _invoke_block_as_json(text: str) -> str | None:
+    """The JSON object a leading ``<invoke>`` block spells out, or None."""
+    block = _INVOKE_BLOCK.match(text)
+    if not block or block.end() != len(text):
+        return None
+    if _INVOKE_PARAMETER.sub("", block[1]).strip():
+        return None
+    fields: dict[str, object] = {}
+    for name, value in _INVOKE_PARAMETER.findall(block[1]):
+        if name in fields:
+            return None
+        value = value.strip()
+        try:
+            fields[name] = json.loads(value)
+        except ValueError:
+            fields[name] = value
+    if not fields:
+        return None
+    return json.dumps(fields)
 
 
 class NativeToolsUnavailable(ValueError):
@@ -1376,6 +1461,7 @@ def _tool_messages_text(messages: list[dict]) -> str:
     return "\n".join(parts)
 
 
+@traced
 def assistant_tool_turn(payload: ChatRequest, messages: list[dict], tools: list[dict], *,
                         image: str | None = None, effort: str | None = None) -> tuple[str, dict]:
     """One model turn with tools; returns (model, assistant message with any tool_calls).

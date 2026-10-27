@@ -229,8 +229,6 @@ def test_the_open_page_is_not_reopened(assistant_rig):
     ("How can I see all phosphosites of one protein?", "Single Protein / Phosphosites on Protein Heatmap"),
     ("Which page shows significantly changed proteins?", "Statistical Analysis / Volcano Plot"),
     ("Which page shows which phosphosites change between A and B?", "Statistical Analysis / Volcano Plot"),
-    ("Can I see the kinase activity of AKT1 in my data? Where would I look?", "Phospho-specific / Kinase Library"),
-    ("I'm new here. Where can I check whether my replicates are consistent?", "QC Pipeline / CV Plot"),
     ("Where are missing values shown?", "Completeness / Missing Value Plot"),
 ])
 def test_where_questions_point_to_pages_and_change_nothing(monkeypatch, message, first):
@@ -248,6 +246,21 @@ def test_kinase_guidance_does_not_claim_the_page_computes_activity(monkeypatch):
 
 def test_where_is_the_highest_point_is_a_result_question():
     assert not where_request("Where is the highest point in this volcano?")
+
+
+@pytest.mark.parametrize("message", [
+    "Can I see the kinase activity of AKT1 in my data? Where would I look?",
+    "I'm new here. Where can I check whether my replicates are consistent?",
+    "How many proteins are significant? Where can I export them?",
+])
+def test_compound_questions_keep_the_full_question_for_the_planner(message):
+    assert not where_request(message)
+    assert "help" in planner_tasks(message)
+
+
+def test_preserving_processing_allows_explicit_canvas_construction():
+    assert "ui" in planner_tasks("Keep my data processing unchanged, but add two boxplots to the canvas.")
+    assert "ui" in planner_tasks("Keep analysis settings unchanged and open the canvas.")
 
 
 def test_a_font_request_with_scoped_preservation_is_styling():

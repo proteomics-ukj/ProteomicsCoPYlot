@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -59,3 +60,30 @@ def resolve_reference_db(filename: str, description: str) -> Path:
         f"Could not find the bundled {description}. "
         "The searched locations are recorded in the server log."
     )
+
+
+_RELEASE_LINE = re.compile(r"^source\s+(\S+)\s+release\s+(.+?)\s+sha256\s+[0-9a-f]{64}\s*$")
+
+
+def reference_release(source_filename: str) -> str:
+    """The upstream release of a bundled source as ``data/db/BUILD.log`` records it, "" when unknown.
+
+    ``tools/build_reference_databases.py`` appends one block per build, each
+    line ``source <file> release <release> sha256 <hash>``; the last block is
+    the data that ships. Asked "which GO database version is this and how do
+    I cite it?" the assistant could only say that the app does not state one
+    (2026-10-26), although README.md and BUILD.log both carry it.
+    """
+    for candidate in reference_db_candidates("BUILD.log"):
+        if not candidate.exists():
+            continue
+        release = ""
+        try:
+            for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines():
+                match = _RELEASE_LINE.match(line.strip())
+                if match and match[1] == source_filename:
+                    release = match[2].strip()
+        except OSError:
+            return ""
+        return release
+    return ""

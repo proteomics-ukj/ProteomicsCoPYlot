@@ -151,8 +151,11 @@ describe("reading the controls", () => {
     expect(shown[0].label).toBe("Protein / Site");
     // An analysis control the question does not name still makes the cut.
     expect(readAssistantControls("").some((control) => control.label === "Z-score cutoff")).toBe(true);
-    // A named cosmetic setting still comes first when the question asks for it.
-    expect(readAssistantControls("Make the legend smaller.")[0].label).toBe("Legend / Text size");
+    // Keep selectors available even for styling questions. The named cosmetic
+    // setting wins over unrelated cosmetics and still fits within the cap.
+    const styling = readAssistantControls("Make the legend smaller.");
+    expect(styling[0].label).toBe("Protein / Site");
+    expect(styling.find(control => control.appearance)?.label).toBe("Legend / Text size");
   });
 
   it("searches the displayed option names but keeps the machine value", () => {

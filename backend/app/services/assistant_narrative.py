@@ -174,6 +174,14 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
     median_refs = set()
     plain = bool(re.search(r"\b(plain|simpler|simple|simply|brief|briefly|short version|shorter (?:answer|explanation)|less technical|natural|naturally|langauge|one sentence)\b", question, re.I))
     detail_question = re.sub(r"\b(?:does|that|this|it|you|I) mean\b", "", question, flags=re.I)
+    # "what do the dots and percentage actually mean in this experiment" is the verb,
+    # not the statistic: drop "mean(s)" at the end of a
+    # clause or before "in/for/by/here/that/when/to" unless an article or comparative
+    # marks it as the noun ("the mean", "higher mean").
+    detail_question = re.sub(
+        r"(?<!\bthe )(?<!\ba )(?<!higher )(?<!lower )(?<!\bits )(?<!their )\bmeans?\b"
+        r"(?=\s*(?:[?.!,;]|$|\s+(?:in|for|by|here|that|when|to)\b))",
+        "", detail_question, flags=re.I)
     detailed = bool(re.search(r"\b(mean|quartiles?|whiskers?|minimum|maximum|all statistics|details|q1|q3|count|how many|source|normalization|imputation)\b", detail_question, re.I))
     brief = not detailed and bool(re.search(r"\b(short|shorter|brief|briefly|concise|one sentence|two sentences)\b", question, re.I))
     for source, item in zip(sources, evidence):
@@ -212,7 +220,72 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
                                   "priority": 1 if label == "result_overview" else 0})
                 continue
             topics = ["results"] + (["scale"] if "scale" in fields else [])
-            if label == "coverage_overview" and {"entity", "samples", "conditions"} <= fields.keys():
+            if label == "distribution_answer_summary" and {"count", "missingCount", "mean", "median", "std"} <= fields.keys():
+                text = (f"The pooled input contains {fields['count']} observed measurements and {fields['missingCount']} missing cells. "
+                        f"The mean is {_short(fields['mean'])}, the median {_short(fields['median'])}, and the population standard deviation {_short(fields['std'])}. "
+                        "These summaries do not establish whether the QQ plot follows a normal distribution.")
+            elif label == "distribution_scope":
+                text = "These summaries use the annotated input before valid-value/contaminant filtering and imputation; a phosphosite localization cutoff still applies where relevant."
+            elif label.startswith("distribution_"):
+                if label == "distribution_warning":
+                    text = fields.get("message", "")
+                else:
+                    continue
+            elif label == "simulation_answer_summary" and {"totalRows", "upregulatedCount", "downregulatedCount", "notSignificantCount", "condition1", "condition2"} <= fields.keys():
+                text = (f"For {fields['condition1']} versus {fields['condition2']}, this what-if view contains {fields['totalRows']} features: "
+                        f"{fields['upregulatedCount']} up, {fields['downregulatedCount']} down, and {fields['notSignificantCount']} not significant at the selected thresholds. "
+                        "These are projected classifications with observed effects held fixed, not guaranteed future discoveries.")
+            elif label.startswith("simulation_"):
+                if label == "simulation_warning":
+                    text = fields.get("message", "")
+                elif label == "simulation_term" and detailed:
+                    text = f"{fields.get('term', 'Selected feature')}: log2 fold change {_short(fields.get('log2FC'))}; selected p-value {_short(fields.get('selected_pval'))}."
+                else:
+                    continue
+            elif label == "phospho_coverage_class_rule":
+                text = "Class I means localization probability at least 0.75; the other class is below that value. These classes concern site localization, not differential phosphorylation."
+            elif label in {"phospho_coverage_answer_summary", "phospho_coverage_condition_summary"} and {"class_i_mean", "not_class_i_mean"} <= fields.keys():
+                text = (f"{fields.get('condition') or fields.get('name')}: on average, {_short(fields['class_i_mean'])} Class I sites "
+                        f"and {_short(fields['not_class_i_mean'])} other sites were detected per sample.")
+                if "class_i_sd" in fields:
+                    text += f" The respective standard deviations are {_short(fields['class_i_sd'])} and {_short(fields['not_class_i_sd'])}."
+                grouped = next((entry for entry in facts if entry.get("coverage_conditions") == item.tool), None)
+                if grouped:
+                    grouped["text"] += " " + text
+                else:
+                    facts.append({"id": ref, "text": text, "topics": ["results"], "priority": 0, "coverage_conditions": item.tool})
+                continue
+            elif label == "phospho_coverage_sample" and detailed:
+                text = (f"{fields.get('sample')}: {fields.get('total')} detected sites, including {fields.get('class_i')} Class I "
+                        f"and {fields.get('not_class_i')} other sites.")
+            elif label.startswith("phospho_coverage_"):
+                continue
+            elif label == "phospho_sty_total":
+                text = f"The table contains {fields.get('total_phosphosite_count')} phosphosites across serine, threonine and tyrosine."
+            elif label == "phospho_sty_row" and {"residue", "count", "percentage"} <= fields.keys():
+                residue = {"S": "Serine", "T": "Threonine", "Y": "Tyrosine"}.get(fields['residue'], fields['residue'])
+                text = f"{residue}: {fields['count']} sites ({_short(fields['percentage'])}%). These are site counts, not kinase activity."
+            elif label.startswith("phospho_sty_"):
+                continue
+            elif label == "comparison_venn_group_size":
+                text = f"{fields.get('group')}: {fields.get('count')} detected entities in this selected set."
+            elif label in {"comparison_venn_unique", "comparison_venn_overlap"}:
+                text = f"The {fields.get('region')} region contains {fields.get('count')} entities. Overlap describes detection, not differential abundance."
+            elif label.startswith("comparison_venn_"):
+                continue
+            elif label == "peptide_missed_cleavage_global":
+                text = (f"Across samples, {fields.get('total_detected_entries')} detected peptide-sequence occurrences contribute to this distribution. "
+                        "A sequence detected in several samples is counted in each sample, not just once for the experiment.")
+            elif label == "peptide_missed_cleavage_global_bin":
+                text = f"{_short(fields.get('percentage'))}% of these detected occurrences have {fields.get('count')} missed cleavages under the selected rule."
+            elif label == "peptide_missed_cleavage_sample":
+                text = (f"{fields.get('sample')}: {fields.get('n_detected_peptides')} distinct detected peptide sequences; "
+                        f"{_short(fields.get('single_missed_cleavage_percent'))}% have exactly one missed cleavage.")
+            elif label == "peptide_missed_cleavage_parameters":
+                text = f"The selected cleavage rule is {fields.get('protease_label', fields.get('protease', 'unknown'))}."
+            elif label.startswith("peptide_missed_cleavage_"):
+                continue
+            elif label == "coverage_overview" and {"entity", "samples", "conditions"} <= fields.keys():
                 text = (f"You're looking at {fields['entity']} detected across {fields['samples']} samples. "
                         f"The plot groups those samples into {fields['conditions']} groups; each bar shows how many {fields['entity']} were detected in one sample.")
                 if plain:
@@ -229,6 +302,111 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
                         if fields['min'] == fields['max'] else
                         f"In {fields['name']}, samples have between {fields['min']} and {fields['max']} detected features.")
             elif label in {"condition", "sample_values"} and item.tool == "qc_coverage_plot" and not detailed:
+                continue
+            elif label == "pca_variance" and {"PC1", "PC2"} <= fields.keys():
+                # Basic level, "tell me in simple words if my two groups look different"
+                # (2026-10-27): the PCA lines were printed as "Pca data: status: available; …".
+                # Reviewed sentences for the lines a reader needs; the rest stay detail.
+                total = fields.get("PC1_PC2_total", "")
+                topics.append("axis")  # the sentence explains what the axis percentages are
+                text = (f"The first component (PC1) explains {fields['PC1']}% of the variation between samples and the second (PC2) {fields['PC2']}%"
+                        + (f", {total}% together" if total else "")
+                        + ". These percentages describe how much of the sample-to-sample variation each axis captures, not a share of proteins that changed.")
+            elif label == "pca_condition_comparison" and {"left", "right", "centroid_distance", "centroid_to_within_ratio"} <= fields.keys():
+                topics.append("group_separation")
+                ratio = fields["centroid_to_within_ratio"]
+                spread = ("There is no spread within either group." if ratio in {"inf", "Infinity"} else
+                          f"That distance is about {ratio} times the typical spread within a group.")
+                text = (f"The centres of the {fields['left']} and {fields['right']} groups are {fields['centroid_distance']} units apart in this projection. "
+                        f"{spread} This describes the picture; it is not a significance test or proof of a biological cause.")
+            elif label in {"missing_heatmap_condition", "missing_tables_condition"} and {"condition", "samples", "missing_count", "missing_percent"} <= fields.keys():
+                # Per-condition sums of the returned per-sample missing counts.
+                text = (f"In {fields['condition']} ({fields['samples']} samples), {fields['missing_count']} measurements are missing, "
+                        f"{fields['missing_percent']}% of that group's measurements")
+                if detailed and fields.get("sample_missing_percent_min") and fields.get("sample_missing_percent_max"):
+                    text += f" (per sample between {fields['sample_missing_percent_min']}% and {fields['sample_missing_percent_max']}%)"
+                text += "."
+            elif label in {"missing_heatmap_condition_source", "missing_tables_condition_source"}:
+                continue
+            # Completeness: reviewed sentences for the value lines;
+            # the descriptive, checklist and encoding lines are method material and never
+            # printed as raw labels.
+            elif label in {"missing_tables", "missing_heatmap_data"} and fields.get("status") == "unavailable":
+                text = f"No completeness tables are available for this selection ({fields.get('detail', 'unknown reason').replace('_', ' ')})."
+            elif label in {"missing_heatmap_data", "missing_tables_overall"} and fields.get("overall_missing_values_percent"):
+                text = f"Overall, {fields['overall_missing_values_percent']}% of the measurements are missing."
+            elif label == "missing_measurements" and {"features", "samples", "missing_values", "total_measurement_cells"} <= fields.keys():
+                text = (f"Across {fields['features']} features and {fields['samples']} samples, {fields['missing_values']} of "
+                        f"{fields['total_measurement_cells']} measurements are missing.")
+            elif label in {"missing_heatmap_high_missing_sample", "missing_sample_row"} and {"sample", "missing_count", "missing_percent"} <= fields.keys():
+                where = f" ({fields['condition']})" if fields.get("condition") else ""
+                text = f"{fields['sample']}{where} has {fields['missing_count']} missing values, {fields['missing_percent']}% of its measurements."
+            elif label == "missing_outlier" and {"sample", "missing_percent", "defined_by_threshold_percent_gt"} <= fields.keys():
+                text = (f"{fields['sample']} exceeds the missing-value threshold: {fields['missing_percent']}% missing, "
+                        f"above the {fields['defined_by_threshold_percent_gt']}% cutoff set on the page.")
+            elif label == "missing_outlier_answer_summary" and fields.get("threshold_percent") and fields.get("count") is not None:
+                text = (f"No sample has more than {fields['threshold_percent']}% missing values."
+                        if fields["count"] == "0" else
+                        f"{fields['count']} sample(s) have more than {fields['threshold_percent']}% missing values (the cutoff set on the page).")
+            elif label in {"missing_feature_bin", "missing_feature_row"} and fields.get("feature_count") and fields.get("feature_percent"):
+                missing = fields.get("missing_values") or fields.get("missing_values_per_feature")
+                detected = fields.get("detected_samples_per_feature")
+                if missing == "0":
+                    text = f"{fields['feature_count']} features ({fields['feature_percent']}%) have no missing values" + (f" (measured in all {detected} samples)." if detected else ".")
+                else:
+                    text = (f"{fields['feature_count']} features ({fields['feature_percent']}%) are missing in {missing} "
+                            + ("sample" if missing == "1" else "samples") + (f", measured in {detected}." if detected else "."))
+                if not detailed and missing not in {"0", "1"} and not re.search(r"\b(distribution|bins?|how many (?:proteins|features|sites)|detected in)\b", question, re.I):
+                    continue
+            elif label in {"missing_excluded_features", "missing_tables_excluded_features"} and fields.get("no_value_in_any_selected_sample"):
+                text = (f"{fields['no_value_in_any_selected_sample']} features with no value in any selected sample are "
+                        "left out of the plot, heatmap and tables.")
+            elif label.startswith("missing_"):
+                continue
+            elif label == "pca_points":
+                # Explain the encoding without exposing internal evidence labels.
+                text = "Each point in the plot is one sample."
+            elif label == "pca_data" and fields.get("sample_points") and fields.get("conditions"):
+                text = f"The plot shows {fields['sample_points']} samples from {fields['conditions']} conditions."
+            elif label == "pca_condition_geometry" and detailed and fields.get("condition") and fields.get("within_condition_rms_distance"):
+                text = (f"{fields['condition']}: {fields.get('sample_count', '?')} samples; the typical distance of a sample from "
+                        f"the group centre is {fields['within_condition_rms_distance']} units.")
+            elif label == "pca_sample_score" and fields.get("sample") and fields["sample"] in question:
+                coords = "; ".join(f"{key} {value}" for key, value in fields.items() if key.startswith("PC"))
+                text = f"{fields['sample']} ({fields.get('condition', '')}) lies at {coords}."
+            elif label == "pca_variance" and fields.get("status"):
+                reason = fields.get("reason", "").replace("_", " ")
+                text = (f"Explained variance is not defined for {fields.get('method', 'this method')}; it applies to PCA only."
+                        if fields["status"] == "not_applicable" else
+                        f"The explained variance is not available for this view ({reason}).")
+            elif label.startswith("pca_"):
+                # Descriptive text (components, projection, checklists, usage,
+                # reproducibility, per-sample scores) is method or detail material;
+                # it is never printed as a raw label at Basic/Standard.
+                continue
+            elif label == "correlation_condition_summary" and {"condition", "pair_count", "mean_r", "min_r", "max_r"} <= fields.keys():
+                # Report within-condition correlations as descriptive summaries.
+                text = (f"Within {fields['condition']}, the {fields['pair_count']} replicate pairs have a mean Pearson r of {fields['mean_r']} "
+                        f"(from {fields['min_r']} to {fields['max_r']}).")
+            elif label == "correlation_high_pair" and {"rank", "left", "right", "pearson_r"} <= fields.keys():
+                if fields["rank"] != "1" and not detailed:
+                    continue
+                where = {"within_condition": "both from the same condition", "between_condition": "from different conditions"}.get(fields.get("relationship", ""), "")
+                text = (f"The most similar pair is {fields['left']} and {fields['right']} (Pearson r = {fields['pearson_r']}"
+                        + (f", {where})." if where else ")."))
+            elif label == "correlation_low_pair" and {"rank", "left", "right", "pearson_r"} <= fields.keys():
+                # Standard level, "which two samples are least similar" (2026-10-27): the
+                # line was printed as "Correlation low pair: rank: 1; left: WT_5; …".
+                if fields["rank"] != "1" and not detailed:
+                    continue
+                where = {"within_condition": "both from the same condition", "between_condition": "from different conditions"}.get(fields.get("relationship", ""), "")
+                text = (f"The least similar pair is {fields['left']} and {fields['right']} (Pearson r = {fields['pearson_r']}"
+                        + (f", {where}" if where else "") + f"), from {fields['pairwise_complete_proteins']} proteins measured in both."
+                        if fields.get("pairwise_complete_proteins") else
+                        f"The least similar pair is {fields['left']} and {fields['right']} (Pearson r = {fields['pearson_r']}" + (f", {where})." if where else ")."))
+            elif label == "correlation_group_summary" and {"group", "median_r", "min_r", "max_r"} <= fields.keys():
+                text = f"Within {fields['group']}, sample correlations range from r = {fields['min_r']} to {fields['max_r']} (median {fields['median_r']})."
+            elif label in {"correlation_answer_summary", "correlation_overview"} and not detailed:
                 continue
             elif label == "cov_condition" and not detailed and {"name", "median_cv"} <= fields.keys():
                 text = f"Median CV for {fields['name']}: {fields['median_cv']}%."
@@ -297,7 +475,7 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
             elif label.startswith("volcano_") and not detailed and label not in {"volcano_answer_summary", "volcano_term", "volcano_warnings"}:
                 continue
             elif fields and not label.endswith(("_rule", "_functions", "_processing", "_general", "_labels")):
-                priority = (4 if item.tool == "project_state" else 0 if label.endswith(("_answer_summary", "_selection")) else 1)
+                priority = (4 if item.tool == "project_state" else 0 if label in {"pca_variance", "pca_condition_comparison"} or label.endswith(("_answer_summary", "_selection")) else 1)
                 facts.append({"id": ref, "text": text, "topics": topics, "priority": priority})
 
     # Each canvas tile gets its reviewed plot description as an optional method
@@ -336,6 +514,9 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
                 "This plot alone is not enough to judge overall data quality. Consider the study design, missing measurements and the other quality-control views before excluding data.")
         methods.append({"id": "quality_scope", "text": text, "topics": ["quality_scope"]})
     required = (["method"] if method_only else ["results"])
+    if module == "qc.pca" and not method_only and re.search(r"\b(groups?|conditions?)\b", question, re.I) and re.search(
+            r"\b(separat\w*|apart|different|difference|overlap\w*|cluster\w*|compar\w*)\b", question, re.I):
+        required.append("group_separation")
     if quality_question:
         required.append("quality_scope")
     if module in {"singleProtein.boxplot", "singleProtein.lineplot", "stats.volcano", "analysis.canvas"} and re.search(
@@ -344,7 +525,8 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
         required.append("activity_scope")
     has_direction = any("direction" in fact["topics"] for fact in facts)
     required += [topic for topic, (pattern, _) in _TOPICS.items() if re.search(pattern, question, re.I) and topic not in required
-                 and (topic != "direction" or has_direction)]
+                 and (topic != "direction" or has_direction)
+                 and (not method_only or topic not in {"contrast", "direction", "results"})]
     facts.sort(key=lambda item: item.pop("priority"))
     for fact in facts:
         fact.pop("boxplot", None)
@@ -373,7 +555,7 @@ def answer_catalogue(evidence: list[Evidence], module: str, question: str, *, me
                 topic = f"requested_median:{fact['id']}"
                 fact["topics"].append(topic)
                 required.append(topic)
-    if not method_only and (plain or "activity_scope" in required) and set(required) & {"causality", "activity_scope"} and not re.search(
+    if not method_only and "group_separation" not in required and (plain or "activity_scope" in required) and set(required) & {"causality", "activity_scope"} and not re.search(
             r"\b(?:values?|medians?|means?|counts?|fold changes?|log2fc|p[- ]?values?|which|compare|difference|higher|lower|results?|summary|summari[sz]e)\b", detail_question, re.I):
         facts, comparison_fields, pairs = [], [], []
         methods = [item for item in methods if set(item["topics"]) & {"causality", "activity_scope"}]

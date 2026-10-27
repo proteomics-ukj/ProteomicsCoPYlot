@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 """Single-protein boxplot, lineplot and heatmap (`/api/plots/single-protein/...`).
 
 One of the routers `routes_plots` combines; see that module for what is shared.
@@ -8,7 +10,7 @@ One of the routers `routes_plots` combines; see that module for what is shared.
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
 from app.schemas.annotation import AnnotationKind, DataSource
@@ -40,13 +42,24 @@ def single_protein_options_route(
     tab: SingleProteinTab = "boxplot",
     identifier: FeatureIdentifier = "workflow",
     dataSource: DataSource = "data",
+    carry: str | None = Query(default=None, max_length=20000, description="JSON list of names selected under carryIdentifier"),
+    carryIdentifier: FeatureIdentifier | None = None,
 ) -> dict[str, object]:
+    names: list[str] = []
+    if carry:
+        try:
+            parsed = json.loads(carry)
+        except ValueError:
+            parsed = []
+        names = [str(item) for item in parsed if isinstance(item, str)][:50] if isinstance(parsed, list) else []
     with plot_errors("Failed to load single-protein options"):
         return single_protein_options(
             kind=kind,
             tab=tab,
             identifier=identifier,
             data_source=dataSource,
+            carry=names,
+            carry_identifier=carryIdentifier,
         )
 
 

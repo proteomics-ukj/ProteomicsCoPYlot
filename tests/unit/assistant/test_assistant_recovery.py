@@ -34,7 +34,7 @@ def test_a_flag_inside_the_action_list_no_longer_invalidates_the_plan(assistant_
 
 
 def test_an_action_list_wrapped_once_more_is_unwrapped(assistant_rig):
-    """the model returned "actions": [[{...}, {...}]] on the GRK project (2026-10-13)."""
+    """Unwrap a single nested action list while preserving action validation."""
     run = assistant_rig.run
     plan = {"task": "ui", "actions": [[{"type": "set_control", "target": "test", "value": "unpaired_welch"},
                                        {"explainAfterChanges": True}]]}

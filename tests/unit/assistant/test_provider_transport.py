@@ -22,6 +22,26 @@ def test_json_presentation_fence_preserves_strict_plan_validation(text, expected
     assert chat_tools._unwrap_json_reply(text) == expected
 
 
+@pytest.mark.parametrize("prefix", ["", '<invoke name="noop"></invoke>\n'])
+def test_complete_invoke_plan_is_translated_and_validated(prefix):
+    reply = '<invoke name="emit"><parameter name="task">ui</parameter><parameter name="actions">[]</parameter></invoke>'
+    assert json.loads(chat_tools._unwrap_json_reply(prefix + reply)) == {"task": "ui", "actions": []}
+
+
+@pytest.mark.parametrize("reply", [
+    '<invoke><parameter name="task">ui</parameter></invoke>\n{"task":"clarify"}',
+    '<invoke><parameter name="task">ui</parameter></invoke><invoke><parameter name="task">clarify</parameter></invoke>',
+    '<invoke><parameter name="task">ui</parameter><parameter name="task">clarify</parameter></invoke>',
+    '<invoke>unparsed action<parameter name="task">ui</parameter></invoke>',
+    '<invoke>unparsed action</invoke>\n{"task":"ui"}',
+    'Here are two plans:\n{"task":"ui"}\n{"task":"clarify"}',
+])
+def test_ambiguous_or_partial_invoke_plans_are_not_repaired(reply):
+    assert chat_tools._unwrap_json_reply(reply) == reply
+    with pytest.raises(ValueError):
+        json.loads(chat_tools._unwrap_json_reply(reply))
+
+
 @pytest.mark.parametrize("stage", ["headers", "stall", "trickle", "success"])
 def test_actual_http_deadline_interrupts_slow_provider(stage):
     import threading

@@ -63,10 +63,11 @@ async function scenario(replies: Reply[], {
   }) as unknown as typeof window.setTimeout);
   vi.spyOn(window, "confirm").mockImplementation(() => !decline);
   vi.mocked(unsavedAnalysis.capture).mockImplementation(() => ({ revision, pending: 0, ui: "" }));
-  vi.mocked(api.assistantStep).mockImplementation(async (payload) => {
+  vi.mocked(api.assistantStep).mockImplementation(async (payload, _signal, trace) => {
     calls.push(structuredClone(payload));
     const reply = replies.shift();
     expect(reply, "Unexpected extra assistant request").toBeTruthy();
+    if (reply!.trace) trace?.("Server functions", reply!.trace);
     if (reply!.error) throw new Error(reply!.error);
     if (reply!.cancel) controller.abort();
     if (reply!.mutate) reply!.mutate();
@@ -542,4 +543,57 @@ describe("assistant levels in the request loop", () => {
     expect(plotImage).toHaveBeenCalledTimes(2);
     expect(calls.every((call) => call.plotImage === "data:image/png;base64,AAAA")).toBe(true);
   });
+});
+
+
+it("logs proposals separately from approved and applied actions", async () => {
+  const trace = vi.fn();
+  await scenario([{ actions: [{ type: "set_control", target: "title", value: "New" }], finished: true }], {
+    controls: [{ id: "title", label: "Title", value: "Old" }], runOptions: { trace },
+  });
+  const kinds = trace.mock.calls.map(call => call[0]);
+  expect(kinds).toEqual(["View readiness started", "View readiness completed", "Step request", "Step response / proposed actions", "User approval", "Applied action / search result", "Request state"]);
+  expect(trace.mock.calls.find(call => call[0] === "User approval")?.[1].approved).toBe(true);
+});
+
+it("records a declined approval without an applied-action event", async () => {
+  const trace = vi.fn();
+  await scenario([{ actions: [{ type: "set_control", target: "title", value: "New" }] }], {
+    decline: true, controls: [{ id: "title", label: "Title", value: "Old" }], runOptions: { trace },
+  });
+  expect(trace.mock.calls.find(call => call[0] === "User approval")?.[1].approved).toBe(false);
+  expect(trace.mock.calls.some(call => call[0] === "Applied action / search result")).toBe(false);
+});
+
+it("collects the server's partial events when a step does not return", async () => {
+  const trace = vi.fn();
+  const partialTrace = vi.spyOn(api, "getAssistantPartialTrace").mockResolvedValue([{ time: "t", kind: "function started", data: { function: "scientific_evidence" } }]);
+  await expect(scenario([{ error: "Network lost" }], { runOptions: { trace } })).rejects.toThrow("Network lost");
+  const partial = trace.mock.calls.find(call => String(call[0]).startsWith("Server functions (recovered snapshot"));
+  expect(partial?.[1]).toEqual([{ time: "t", kind: "function started", data: { function: "scientific_evidence" } }]);
+  const sent = vi.mocked(api.assistantStep).mock.calls[0][0];
+  expect(partialTrace).toHaveBeenCalledWith(sent.traceId);
+  expect(sent.traceId).toBeTruthy();
+  expect(sent.progressId).toBeUndefined();
+});
+
+
+it("does not wait for diagnostic recovery when the request fails", async () => {
+  vi.spyOn(api, "getAssistantPartialTrace").mockReturnValue(new Promise(() => {}));
+  await expect(scenario([{ error: "Network lost" }], { runOptions: { trace: vi.fn() } })).rejects.toThrow("Network lost");
+});
+
+it("only enables provider progress for slow requests while tracing both", async () => {
+  const fast = await scenario([{ actions: [] }]);
+  expect(fast.calls[0].traceId).toBeTruthy();
+  expect(fast.calls[0].progressId).toBeUndefined();
+  const slow = await scenario([{ actions: [] }], { runOptions: { slow: true } });
+  expect(slow.calls[0].progressId).toBe(slow.calls[0].traceId);
+});
+
+
+it("does not recover a duplicate trace already delivered with an error response", async () => {
+  const recovery = vi.spyOn(api, "getAssistantPartialTrace").mockResolvedValue([]);
+  await expect(scenario([{ error: "Rejected", trace: [] }], { runOptions: { trace: vi.fn() } })).rejects.toThrow("Rejected");
+  expect(recovery).not.toHaveBeenCalled();
 });

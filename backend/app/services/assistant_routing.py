@@ -61,6 +61,40 @@ def canvas_add_request(message: str) -> dict | None:
     return {'type': kind, 'count': count}
 
 
+_APPLICATION_FEATURE = re.compile(
+    r"\b(?:html report|report builder|notebook export|export notebook|exported notebook|notebook zip|viewer (?:package|build|mode|version)|"
+    r"data ?viewer|download csv|plot download|download plot|id translator|translat(?:e|ing) (?:uniprot|accessions?|identifiers?)|gonetview|peptide collapse|condition colo[u]?rs?)\b", re.I)
+_FEATURE_QUESTION = re.compile(
+    r"\b(?:difference|differ|differs|what (?:is|are)|which (?:one|of (?:them|these|those))|rerun|re-run|reproduce|reproducible|"
+    r"explain|whether|preview\w*|overwrite|upload|what is it for|can you|does it change|will it change|should i use|when (?:do|should|would) i|what (?:do|does) .{0,40}\b(?:contain|include)|how (?:do|does|can) .{0,60}\b(?:use|open|share|work))\b", re.I)
+
+
+def application_feature_question(question: str) -> bool:
+    """A question about the app's own outputs (report, notebook export, viewer), not about data.
+
+    Questions about reproducibility and export formats use application guidance
+    even when their wording includes result-like terms such as "which".
+    """
+    text = question.strip()
+    return bool(_APPLICATION_FEATURE.search(text) and _FEATURE_QUESTION.search(text)
+                and not re.search(r"\b(?:how many|counts?|values?|higher|lower|significan\w*|medians?|means?)\b", text, re.I))
+
+
+def application_help_module(question: str) -> str:
+    """Reviewed app-feature guidance already has a known owner; no result lookup."""
+    if not application_feature_question(question):
+        return ""
+    if re.search(r"\b(?:report|viewer|notebook|download|export)\b", question, re.I):
+        return "summary.report"
+    for pattern, module in ((r"\b(?:id translator|translat\w*)\b", "data.translator"),
+                            (r"\bgonetview\b", "external.gonetView"),
+                            (r"\bpeptide collapse\b", "external.peptideCollapse"),
+                            (r"\bcondition colo[u]?rs?\b", "data.conditionPalette")):
+        if re.search(pattern, question, re.I):
+            return module
+    return ""
+
+
 def requests_current_result(question: str) -> bool:
     """The question is about what is on screen now: numbers, the axis, the selection.
 
@@ -71,6 +105,24 @@ def requests_current_result(question: str) -> bool:
     raw or adjusted" answered without the axis state.
     """
     text = question.lower()
+    # A reference to "this figure" in download instructions is not a request
+    # to interpret its values. Mixed result questions retain result grounding.
+    export_help = re.search(
+        r"\b(?:how|where)\b[\s\S]{0,250}\b(?:save|export|download)\b|"
+        r"\b(?:save|export|download)\b[\s\S]{0,250}\b(?:how|where)\b|"
+        # Recognize export intent even when the user does not say "export".
+        r"\b(?:how|where|can i)\b[\s\S]{0,120}\b(?:get|take|copy|move|bring)\b[\s\S]{0,120}\b(?:out of (?:the )?(?:app|tool|copylot|program)|into (?:my |a |the )?(?:thesis|paper|talk|slides?|presentation|poster|manuscript|report|word|powerpoint|excel))\b|"
+        r"\b(?:how|where|can i)\b[\s\S]{0,120}\b(?:use|put|include|insert)\b[\s\S]{0,80}\b(?:in|into|for) (?:my |a |the )?(?:thesis|paper|talk|slides?|presentation|poster|manuscript|lab meeting)\b", text)
+    if export_help and not re.search(
+            r"\b(?:how many|counts?|values?|higher|lower|significan\w*|interpret|explain (?:this|the) (?:plot|result))\b", text):
+        return False
+    if application_feature_question(question):
+        return False
+    # "where do I turn on median normalization…" is about a setting, not the medians on
+    # screen (2026-10-27: "median" alone made it a result question and the canvas was dumped).
+    if _PROCESSING_HOWTO.search(text) and not re.search(
+            r"\b(?:how many|counts?|higher|lower|significan\w*|interpret|explain (?:this|the) (?:plot|result))\b", text):
+        return False
     if re.search(r"\b(?:other|another|separate|standalone)\s+(?:protein|gene|site|phosphosite|plot|dataset|analysis|module|lookup|result|view|comparison)s?\b"
                  r"|\b(?:in general|generally|conceptual(?:ly)?|without using (?:this|the) data(?:set)?|not (?:using )?this dataset)\b", text):
         return False
@@ -252,9 +304,11 @@ def appearance_only_request(question: str) -> bool:
     matches = list(_PRESERVE.finditer(text))
     for match in matches:
         scope = match['keep'] or match['avoid']
+        # Preserving a reference panel is not preserving the entire figure.
+        scope = re.sub(r"\b(?:the\s+)?reference\s+(?:plot|panel|distribution)\b", "data", scope, flags=re.I)
         if re.search(r"\b(?:interface|view|plot|anything|everything|appearance)\b", scope, re.I):
             return False
-        if not re.search(r"\b(?:data|analysis|scientific|comparison|contrast|selected|selections?|test|thresholds?|normalization|imputation|proteins?|sites?|features?|conditions?|groups?|samples?)\b", scope, re.I):
+        if not re.search(r"\b(?:data|analysis|scientific|comparison|contrast|selected|selections?|test|thresholds?|values?|normalization|imputation|proteins?|sites?|features?|conditions?|groups?|samples?)\b", scope, re.I):
             return False
     actionable = _PRESERVE.sub(" ", text)
     if re.search(r"\b(?:add|create)\b[^.!?]{0,70}\b(?:plots?|tiles?|canvas)\b", actionable, re.I):
@@ -267,6 +321,12 @@ def appearance_only_request(question: str) -> bool:
     if re.search(r"\b(?:back to|go to|take me to|over to|return to)\s+(?:the\s+)?[a-z]", actionable, re.I):
         return False
     if re.search(r"\b(?:test|threshold|p-?value|data source|condition selection)\b", actionable, re.I):
+        return False
+    # Which identifier a plot is keyed by (Protein Names / Gene Names, accessions) is a page
+    # control, not styling: "label it with the gene name instead of the entry name" went down
+    # the styling-only route and was declared unsupported (2026-10-27, GLM), although the
+    # Identifier select was on the page.
+    if re.search(r"\b(?:gene|entry|protein|accession)\s+(?:names?|ids?|symbols?)\b|\b(?:accessions?|identifiers?)\b", actionable, re.I):
         return False
     if re.search(r"\b(?:do not|don't|never)\b", actionable, re.I):
         return False
@@ -282,10 +342,50 @@ _APPEARANCE_NOUNS = (r"\b(?:colou?rs?|rotate|tilt|hide|remove|fonts?|typefaces?|
                      r"|(?:call|name) (?:this |the |my )?(?:plot|chart|figure))\b")
 
 
+# Preserving data processing does not prohibit requested view changes.
+# Processing remains outside the assistant's mutation permissions.
+_PROCESSING_SCOPE = re.compile(
+    r"\b(?:data processing|processing|pre-?processing|normali[sz]ation|imputation|filter(?:ing|s)?|annotation|"
+    r"pipeline|calculations?|statistics|raw data|the data|my data|dataset|matrix|analysis settings)\b", re.I)
+_VIEW_SCOPE = re.compile(r"\b(?:interface|view|plot|chart|figure|canvas|selection|selected|proteins?|sites?|conditions?|"
+                         r"colou?rs?|layout|anything|everything|whole|all|rest)\b", re.I)
+
+
+def preserved_tile_scopes(question: str) -> list[str]:
+    """Named tiles/feature plots are a scope constraint, not a global freeze."""
+    scopes = []
+    for match in _PRESERVE.finditer(question.replace("’", "'")):
+        scope = match["keep"] or match["avoid"] or ""
+        if re.search(r"\b(?:everything|anything|whole|all|entire|interface|view|canvas)\b", scope, re.I):
+            continue
+        if (re.search(r"\btiles?\s+\d+", scope, re.I)
+                or re.search(r"\b[A-Z][A-Z0-9_]{2,}\b.*\bplots?\b", scope)
+                or re.fullmatch(r"(?:the |my )?(?:volcano|boxplot|lineplot)(?: plot)?", scope, re.I)):
+            scopes.append(scope)
+    return scopes
+
+
 def requests_unchanged_view(question: str) -> bool:
     if appearance_only_request(question):
         return False
-    return bool(_PRESERVE.search(question.replace("’", "'")))
+    text = question.replace("’", "'")
+    matches = list(_PRESERVE.finditer(text))
+    if not matches:
+        return False
+    # A clause that names only processing leaves the view free; one that names
+    # the view (or nothing specific) keeps it. Processing permissions are not
+    # affected either way: the assistant cannot change processing at all.
+    scoped = set(preserved_tile_scopes(question))
+    explicit_view_change = re.search(
+        r"\b(?:open|show|add|create|build|set up|navigate|go to|return to)\b[^.!?]{0,100}"
+        r"\b(?:canvas|plots?|boxplots?|lineplots?|charts?|figures?|pages?|panels?|tiles?|view)\b", text, re.I)
+    return any(scope not in scoped and (_VIEW_SCOPE.search(scope) or not _PROCESSING_SCOPE.search(scope) or not explicit_view_change)
+               for scope in ((match["keep"] or match["avoid"] or "") for match in matches))
+
+
+_PROCESSING_HOWTO = re.compile(
+    r"^(?:please\s+)?(?:where|how)\b[^.!?]{0,60}?\b(?:turn on|turn off|switch on|switch off|enable|disable|apply|configure|set up|activate|run|do)\b"
+    r"[^.!?]{0,40}?\b(?:normali[sz]ation|normali[sz]e|imputation|impute|valid-?value filter|contaminant filter|filtering)\b", re.I)
 
 
 def planner_tasks(question: str) -> list[str]:
@@ -303,7 +403,14 @@ def planner_tasks(question: str) -> list[str]:
     # Advice/questions must not accidentally become interface mutations.
     explicit_following_action = re.search(
         r"(?:[;.?!]\s*|\b(?:and|then)\s+)(?:then\s+)?(?:please\s+)?"
-        r"(?:show|open|select|rotate|rename|recolor|colour|color|hide|bold|resize|set|change)\b", text)
+        r"(?:show|open|select|rotate|rename|recolor|colour|color|hide|bold|resize|set|change|take me|go to|navigate|return to)\b", text)
+    if application_feature_question(question) and not explicit_following_action:
+        # The reviewed workflow guide and the page's method text answer questions about
+        # the app's own outputs (report, notebook export, viewer); no result is involved.
+        return ["help", "project_state", "clarify"]
+    if _PROCESSING_HOWTO.search(text) and not explicit_following_action:
+        # Processing how-to questions use workflow guidance, not plotted results.
+        return ["help", "project_state", "clarify"]
     if re.match(r"^(?:please\s+)?(?:what|which|where|when|who|why|how|explain|describe|review|assess|is|are|does)\b", text) and not explicit_following_action:
         return [*science, "clarify"]
     if re.match(r"^(?:please\s+)?(?:open|show|select|add|remove|rotate|rename|recolor|colour|color|hide|bold|resize|öffne)\b", text) and not (explanation_requested(question) or re.search(r"\b(?:explain|describe|review|why|assess|compare|erkläre)\b", text)):
@@ -452,14 +559,18 @@ def contradictory_preservation(question: str) -> str | None:
         return None
     text = question.replace("’", "'")
     matches = list(_PRESERVE.finditer(text))
-    if not matches or not any(re.search(r"\b(?:interface|view|plot|anything|everything|whole|all)\b",
+    scoped = set(preserved_tile_scopes(question))
+    if not matches or not any((match["keep"] or match["avoid"] or "") not in scoped and re.search(r"\b(?:interface|view|plot|anything|everything|whole|all)\b",
                                         match["keep"] or match["avoid"] or "", re.I) for match in matches):
         return None
     actionable = _PRESERVE.sub(" ", text)
     change = re.search(r"\b(?:change|make|set|colou?r|rotate|tilt|hide|remove|rename|select|switch|open|apply|use)\b[^.!?;]*",
                        actionable, re.I)
-    if not change or re.match(r"^\s*(?:please\s+)?(?:what|which|why|how|explain|describe|could|can|would|should|is|are|does)\b",
-                              text, re.I):
+    # "Where would I apply median normalisation if I wanted it later? … Just explain, do
+    # not change anything." (2026-10-27, GLM) is a question with an explicit no-change
+    # instruction, not a change request wrapped in a preservation.
+    if not change or re.match(r"^\s*(?:please\s+)?(?:what|which|why|how|where|when|who|explain|describe|could|can|would|should|is|are|does|do)\b",
+                              text, re.I) or re.search(r"\b(?:just|only|simply)\s+(?:explain|tell|describe|answer)\b|\bexplain only\b", text, re.I):
         return None
     wanted = change.group(0).strip().rstrip(",")
     return (f"You asked me to keep the whole view unchanged and also to {wanted[0].lower() + wanted[1:]}. "
@@ -533,10 +644,34 @@ _WHERE = re.compile(
     r"|wo\s+(?:finde|sehe|kann)\b)", re.I)
 
 
+_CODE_REQUEST = re.compile(
+    r"\b(?:write|give|generate|produce|create|make|show|send|draft)\b[^.!?]{0,40}?\b(?:(?:python|r|julia|matlab|bash|shell|sql)\s+)?"
+    r"(?:script|code|snippet|function|notebook|program|pipeline code|ggplot|matplotlib|seaborn|plotly)\b"
+    r"|\b(?:in|as|using)\s+(?:python|r|ggplot2?|matplotlib|seaborn|plotly|pandas)\b[^.!?]{0,40}?\b(?:reproduce|recreate|re-?make|replot|plot|code)\b"
+    r"|\b(?:reproduce|recreate|re-?make)\b[^.!?]{0,60}?\b(?:in|with|using)\s+(?:python|r|ggplot2?|matplotlib|seaborn|plotly)\b", re.I)
+
+
+def code_request(question: str) -> bool:
+    """The user asks the assistant to write analysis or plotting code.
+
+    The human decided (2026-10-27) that the assistant does not write its own code
+    for plots or analyses: reproduction outside the app goes through Export
+    notebook and the bundled examples, which are reviewed and match the app.
+    """
+    return bool(_CODE_REQUEST.search(question.replace("’", "'")))
+
+
 def where_request(question: str) -> bool:
     """"Where can I see X?" asks for a place in the application, not a result.
 
     The owner's goal for the assistant includes showing users around. These
     questions used to be answered with method text or current-plot evidence.
     """
-    return bool(_WHERE.search(question)) and not re.search(r"\b(?:where\s+(?:is|are)\s+the\s+(?:highest|lowest|largest|smallest))\b", question, re.I)
+    # Only a self-contained location question may skip the planner. A later
+    # "where" clause must not swallow a question about results or processing.
+    text = question.strip()
+    if not _WHERE.match(text):
+        return False
+    if re.search(r"[.!?;]\s*\S|\b(?:and|then)\s+(?:explain|tell|why|how|what|are|is|did|does|do)\b", text, re.I):
+        return False
+    return not re.search(r"\bwhere\s+(?:is|are)\s+the\s+(?:highest|lowest|largest|smallest)\b", text, re.I)

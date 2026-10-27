@@ -660,7 +660,11 @@ def test_plot_catalogue_has_explicit_evidence_coverage_gaps():
     gaps = set()
     assert modules - set(_MODULE_SPECIFIC_AI_FUNCTIONS) == gaps
     assert set(_MODULE_SPECIFIC_AI_FUNCTIONS) <= modules
-    assert set(METHODS) == set(_MODULE_SPECIFIC_AI_FUNCTIONS)
+    assert set(_MODULE_SPECIFIC_AI_FUNCTIONS) <= set(METHODS)
+    assert set(METHODS) - set(_MODULE_SPECIFIC_AI_FUNCTIONS) == {
+        "data.translator", "data.conditionPalette", "external.gonetView",
+        "external.peptideCollapse", "summary.text", "summary.tables", "summary.report",
+    }
     for functions in _MODULE_SPECIFIC_AI_FUNCTIONS.values():
         # A tool is named after its renderer; its context function is `*_context` (CONTEXT_TOOL_FUNCTIONS).
         assert functions and all(

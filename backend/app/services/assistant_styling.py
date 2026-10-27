@@ -39,7 +39,14 @@ design only, no claims about the data). A user's explicit wish always wins over 
 You change presentation only: never data, selections, statistical settings, thresholds or what is shown.
 If plotParts shows that the part the user describes does not match (e.g. "the red bars" but the bars are
 grey and the reference line is red), ask with clarification=control instead of guessing, and put your
-own short question in question: what you found and what you need to know."""
+own short question in question: what you found and what you need to know.
+An identified part with no supported setting is a capability limit, not missing user intent.
+For independent requested edits, apply the supported edits and use designNote to state plainly
+which requested appearance change is unavailable. Do not ask again for already-authorized edits,
+and do not invent a setting or substitute a different visual part. A single apply_styles call can
+carry both the supported edits and that designNote. Once the catalogue or preview establishes a
+setting is unavailable, do not keep searching synonyms for it. Clarify only a genuine ambiguity
+or dependency that prevents choosing the supported edits safely."""
 LOOKUPS = """Before planning you may ask up to {rounds} round(s) of read-only lookups with task=lookup:
 preset (query = preset key: the exact edits it makes here), preview (styles: what they would change and any
 problem, nothing is applied), evidence (the current plot's numerical summary), settings (query = a word:
@@ -73,6 +80,8 @@ def catalogue(request: AssistantRequest, keep: list[int] | None = None, narrow: 
         elif element == "frame" and re.search(r"\b(?:border|frame|spine)\b", message): named.add(row["element"])
         elif element in {"x ticks", "x label"} and re.search(r"\bx[- ]?axis|\bx (?:tick|label)|\bxlabel", message): named.add(row["element"])
         elif element in {"y ticks", "y label"} and re.search(r"\by[- ]?axis|\by (?:tick|label)|\bylabel", message): named.add(row["element"])
+        elif element in {"x label", "y label"} and re.search(r"\b(?:axis|axes)[ -]+labels?\b", message): named.add(row["element"])
+        elif element in {"x ticks", "y ticks"} and re.search(r"\btick(?:[ -]+labels?)?s?\b", message) and not re.search(r"\b[xy][- ]?axis|\b[xy] ticks?", message): named.add(row["element"])
         elif element == "title" and re.search(r"\b(?:call|name|rename)\s+(?:(?:the|this|my)\s+)?(?:plot|chart|figure)\b", message): named.add(row["element"])
     # Explicit elements narrow the menu; broad themes/all-text requests retain it.
     if named and not re.search(r"\b(?:all|every|theme|style|font|typeface)\b", message):
@@ -160,8 +169,7 @@ def resolve(request: AssistantRequest, edits: list[StyleEdit]) -> list[UiAction]
             if control.min is not None and number < control.min or control.max is not None and number > control.max:
                 raise ValueError(f"The requested value is outside the bounds for {control.label}.")
         elif control.type == "checkbox":
-            # "true"/"false" as strings are the same choice; models that stringify every
-            # value otherwise require an unnecessary correction round.
+            # Accept stringified booleans as the same explicit checkbox choice.
             if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
                 value = value.strip().lower() == "true"
             if not isinstance(value, bool): raise ValueError("Visibility requires true or false.")

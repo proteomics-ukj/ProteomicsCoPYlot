@@ -131,6 +131,7 @@ export type AssistantView = {
 };
 
 export type AssistantResult = {
+  trace?: import("./assistantLog").LogEvent[];
   usedEvidenceFallback?: boolean;
   stoppedEarly?: boolean;
   explainAfterChanges?: boolean;
@@ -144,6 +145,24 @@ export type AssistantResult = {
   evidence: { tool: string; status: string; text: string }[];
 };
 
+/** Recovery is best-effort and bounded, including reading the response body. */
+export async function getAssistantPartialTrace(traceId: string): Promise<import("./assistantLog").LogEvent[]> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never[]>(resolve => {
+    timer = setTimeout(() => { controller.abort(); resolve([]); }, 2000);
+  });
+  try {
+    const request = fetch(`${API_BASE}/api/chat/assistant-trace/${encodeURIComponent(traceId)}`, { signal: controller.signal })
+      .then(response => response.ok ? response.json() : { trace: [] })
+      .then(data => Array.isArray(data.trace) ? data.trace : [])
+      .catch(() => []);
+    return await Promise.race([request, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // A progress poll never raises: a missed poll only leaves the previous line on screen.
 export function getAssistantProgress(progressId: string): Promise<{ phase: string; tokens: number; seconds: number; calls: number }> {
   const unknown = { phase: "unknown", tokens: 0, seconds: 0, calls: 0 };
@@ -153,13 +172,15 @@ export function getAssistantProgress(progressId: string): Promise<{ phase: strin
 }
 
 export async function assistantStep(
-  payload: { message: string; messages?: ChatMessage[]; provider?: ChatProvider; model?: string; gpuEnabled?: boolean; apiKey?: string; ollamaUrl?: string; localServerUrl?: string; assistantLevel?: "auto" | "basic" | "standard" | "advanced"; plotImage?: string; progressId?: string; reviewing?: boolean; savedStyles?: string[]; view: AssistantView; receipts: string[]; notes?: string[]; answerOnly?: boolean; conversationState?: import("./assistantConversation").ConversationState | null },
+  payload: { message: string; messages?: ChatMessage[]; provider?: ChatProvider; model?: string; gpuEnabled?: boolean; apiKey?: string; ollamaUrl?: string; localServerUrl?: string; assistantLevel?: "auto" | "basic" | "standard" | "advanced"; plotImage?: string; progressId?: string; traceId?: string; reviewing?: boolean; savedStyles?: string[]; view: AssistantView; receipts: string[]; notes?: string[]; answerOnly?: boolean; conversationState?: import("./assistantConversation").ConversationState | null },
   signal: AbortSignal,
+  trace?: (kind: string, data: unknown) => void,
 ): Promise<AssistantResult> {
   const response = await fetch(`${API_BASE}/api/chat/assistant`, {
     method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify(payload),
   });
   const data = await response.json();
+  if (Array.isArray(data.trace)) trace?.("Server functions", data.trace);
   if (response.status === 428 && data.detail?.code === "cloud_ai_consent_required") {
     throw new CloudAiConsentRequiredError(normalizeCloudAiConsentStatus(data.detail));
   }
@@ -1432,14 +1453,23 @@ export async function runSimulationAnalysis(
   return data as SimulationResultResponse;
 }
 
+export type SingleProteinCarry = { identifier: "workflow" | "genes"; names: string[] };
+
 export async function getSingleProteinOptions(
   kind: AnnotationKind,
   tab: "boxplot" | "lineplot" | "heatmap",
   identifier: "workflow" | "genes" = "workflow",
   dataSource: DataSource = "data",
-  requestOptions: ApiRequestOptions = {}
+  requestOptions: ApiRequestOptions & { carry?: SingleProteinCarry | null } = {}
 ): Promise<SingleProteinOptionsResponse> {
-  const data = await requestUrl(buildPlotUrl(`/api/plots/single-protein/${kind}/options`, { tab, identifier, dataSource }), {
+  // The selection made under the previous identifier, so the reply can carry it
+  // over (`carried`) instead of the page falling back to the first entries.
+  const params: Record<string, string> = { tab, identifier, dataSource };
+  if (requestOptions.carry && requestOptions.carry.names.length > 0 && requestOptions.carry.identifier !== identifier) {
+    params.carry = JSON.stringify(requestOptions.carry.names.slice(0, 50));
+    params.carryIdentifier = requestOptions.carry.identifier;
+  }
+  const data = await requestUrl(buildPlotUrl(`/api/plots/single-protein/${kind}/options`, params), {
     signal: requestOptions.signal,
     fallback: "Failed to load single-protein options",
   });

@@ -24,6 +24,7 @@ from app.schemas.chat import (
 )
 from app.schemas.assistant import AssistantProgressResponse, AssistantRequest, AssistantResponse, AssistantTraceResponse
 from app.services.assistant_trace import Trace, take_partial
+from app.services.assistant_errors import public_assistant_error
 from app.services import assistant_progress
 from app.services.scientific_assistant import assistant_step
 from app.services.chat_tools import (
@@ -91,7 +92,7 @@ async def scientific_assistant_route(payload: AssistantRequest, request: Request
         return JSONResponse(status_code=428, content={"detail": exc.detail(), "trace": trace.events})
     except ValueError as exc:
         trace.finish()
-        return JSONResponse(status_code=400, content={"detail": str(exc), "trace": trace.events})
+        return JSONResponse(status_code=400, content={"detail": public_assistant_error(exc), "trace": trace.events})
     except Exception:
         LOGGER.exception("Scientific assistant failed")
         trace.finish()

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from app.services.assistant_trace import Trace, traced
+from app.services.assistant_errors import DEFAULT_ERROR, public_assistant_error
 
 
 @traced
@@ -24,6 +25,7 @@ def test_trace_captures_order_and_redacts_nested_results_and_errors():
     encoded = json.dumps(trace.events)
     assert "hello [redacted]" in encoded
     assert "error [redacted]" in encoded
+    assert trace.events[-1]["data"]["error"] == DEFAULT_ERROR
     assert all(secret not in encoded for secret in ["test-credential", "hidden", "pixels"])
     assert "private" in encoded  # provider-returned thinking is retained
     operation("outside")
@@ -143,3 +145,52 @@ def test_recovery_is_session_scoped_and_expires(monkeypatch):
         assert assistant_trace.take_partial("shared-trace-id") == []
     finally:
         session_context.reset_session_id(token)
+
+
+@pytest.mark.parametrize("exception_type", [ValueError, RuntimeError])
+def test_internal_exception_details_never_reach_response_or_recovered_trace(monkeypatch, exception_type):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.api import routes_chat
+
+    internal = "parser failed at /srv/private/patient.tsv with credential=unregistered-secret"
+
+    @traced
+    def fail_inside_library():
+        raise exception_type(internal)
+
+    monkeypatch.setattr(routes_chat, "ai_mode_enabled", lambda: True)
+    monkeypatch.setattr(routes_chat, "assistant_step", lambda *args: fail_inside_library())
+    with TestClient(app) as client:
+        response = client.post("/api/chat/assistant", json={
+            "message": "Explain this plot", "traceId": "private-error-123",
+            "view": {"module": "qc.coverage"},
+        })
+        assert response.status_code == (400 if exception_type is ValueError else 500)
+        assert response.json()["trace"][-1]["data"]["error"] == DEFAULT_ERROR
+        recovered = client.get("/api/chat/assistant-trace/private-error-123")
+        assert recovered.json()["trace"] == response.json()["trace"]
+        for body in (response.text, recovered.text):
+            assert "patient.tsv" not in body
+            assert "unregistered-secret" not in body
+            assert "parser failed" not in body
+
+
+@pytest.mark.parametrize("message", [
+    "The analysis changed while the assistant was working. Please retry.",
+    "The assistant request was cancelled.",
+    "OpenAI request failed (HTTP 401).",
+])
+def test_approved_errors_remain_useful_but_cannot_carry_extra_details(message):
+    assert public_assistant_error(ValueError(message)) == message
+    assert public_assistant_error(ValueError(message + " /srv/private/patient.tsv")) == DEFAULT_ERROR
+    assert public_assistant_error(ValueError(message, "private detail")) == DEFAULT_ERROR
+    assert public_assistant_error(RuntimeError(message)) == DEFAULT_ERROR
+
+
+def test_provider_timeouts_remain_actionable_without_copying_exception_text():
+    from app.services.local_ai_server import _timeout_message
+    assert "COPYLOT_LOCAL_AI_TIMEOUT" in public_assistant_error(ValueError(_timeout_message()))
+    assert "retained" in public_assistant_error(ValueError(
+        "Anthropic did not answer within 300 seconds; this step was stopped. Earlier completed actions are retained."
+    ))

@@ -14,6 +14,7 @@ import time
 from time import monotonic
 
 from pydantic import BaseModel
+from app.services.assistant_errors import public_assistant_error
 
 _active = ContextVar("assistant_trace", default=None)
 _private = re.compile(r"api.?key|authorization|password|secret|credential|signature", re.I)
@@ -150,7 +151,7 @@ def traced(function):
             result = function(*args, **kwargs)
         except Exception as exc:
             trace.record("function failed", {"id": call_id, "function": function.__name__,
-                         "error": str(exc), "seconds": monotonic() - start})
+                         "error": public_assistant_error(exc), "seconds": monotonic() - start})
             raise
         trace.record("function returned", {"id": call_id, "function": function.__name__,
                      "result": result, "seconds": monotonic() - start})

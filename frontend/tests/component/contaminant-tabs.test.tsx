@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import * as api from "../../src/lib/api";
 import AnnotationPage from "../../src/features/metadata/AnnotationPage";
@@ -10,7 +10,9 @@ it("does not carry protein contaminant settings into a new phospho annotation", 
   silenceNetwork();
   serveDatasets(api);
   vi.mocked(api.getCurrentAnnotation).mockRejectedValue(new Error("No annotation"));
-  render(<AnnotationPage />);
+  // Flush dataset loading and its filter-reset effect before interacting.
+  // The dataset selector can become enabled before that effect has settled.
+  await act(async () => { render(<AnnotationPage />); });
   await waitFor(() => expect((screen.getByLabelText("Dataset level") as HTMLSelectElement).disabled).toBe(false));
   fireEvent.click(screen.getByLabelText("Filter contaminants"));
   expect((screen.getByLabelText("Filter contaminants") as HTMLInputElement).checked).toBe(true);

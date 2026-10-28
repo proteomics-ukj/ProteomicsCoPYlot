@@ -2527,6 +2527,18 @@
             "title": "Savedstyles",
             "type": "array"
           },
+          "traceId": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9-]{8,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traceid"
+          },
           "view": {
             "$ref": "#/components/schemas/AssistantView"
           }
@@ -2597,6 +2609,16 @@
             "title": "Stoppedearly",
             "type": "boolean"
           },
+          "trace": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "title": "Trace",
+            "type": "array"
+          },
           "usedEvidenceFallback": {
             "default": false,
             "title": "Usedevidencefallback",
@@ -2608,6 +2630,23 @@
           "revision"
         ],
         "title": "AssistantResponse",
+        "type": "object"
+      },
+      "AssistantTraceResponse": {
+        "description": "Snapshot of a running or completed step; empty when absent or expired.",
+        "properties": {
+          "trace": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "title": "Trace",
+            "type": "array"
+          }
+        },
+        "title": "AssistantTraceResponse",
         "type": "object"
       },
       "AssistantView": {
@@ -8045,6 +8084,49 @@
           }
         },
         "summary": "Assistant Progress Route",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/chat/assistant-trace/{progress_id}": {
+      "get": {
+        "description": "A session-scoped snapshot, retained briefly even after the step returns.\nReading it does not delete events or prevent later recovery.",
+        "operationId": "assistant_trace_route_api_chat_assistant_trace__progress_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "progress_id",
+            "required": true,
+            "schema": {
+              "title": "Progress Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantTraceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assistant Trace Route",
         "tags": [
           "chat"
         ]
@@ -16105,6 +16187,45 @@
               ],
               "title": "Datasource",
               "type": "string"
+            }
+          },
+          {
+            "description": "JSON list of names selected under carryIdentifier",
+            "in": "query",
+            "name": "carry",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "JSON list of names selected under carryIdentifier",
+              "title": "Carry"
+            }
+          },
+          {
+            "in": "query",
+            "name": "carryIdentifier",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "workflow",
+                    "genes"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Carryidentifier"
             }
           }
         ],

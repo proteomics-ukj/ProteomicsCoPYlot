@@ -686,11 +686,54 @@ def _heatmap_matrix(
     return matrix, cbar_label
 
 
+def carry_selection(
+    frame: pd.DataFrame,
+    old_col: str,
+    old_identifier: str,
+    new_col: str,
+    new_identifier: str,
+    names: list[str],
+    choices: list[str],
+) -> dict[str, str]:
+    """The same rows' names under another identifier: ``{old name: new name}``.
+
+    Switching the Identifier select (entry names <-> gene names) used to clear
+    the selection to the first entries, and whoever made the switch had to find
+    the protein again under its other name (2026-10-27: a model spent its whole
+    time budget on that). Mapping is by row: a selected name's rows, read in the
+    other column, with the first name that is an offered choice. Names with no
+    row or no offered counterpart are left out, so the caller keeps nothing stale.
+    """
+    wanted = {str(name).strip() for name in names if str(name).strip()}
+    if not wanted or old_col not in frame.columns or new_col not in frame.columns:
+        return {}
+    offered = set(choices)
+    carried: dict[str, str] = {}
+    old_values = frame[old_col].astype(object)
+    new_values = frame[new_col].astype(object)
+    for old_cell, new_cell in zip(old_values.tolist(), new_values.tolist()):
+        old_tokens = _gene_tokens(old_cell) if old_identifier == "genes" else [str(old_cell).strip()]
+        hits = [token for token in old_tokens if token in wanted and token not in carried]
+        if not hits:
+            continue
+        new_tokens = _gene_tokens(new_cell) if new_identifier == "genes" else [str(new_cell).strip()]
+        target = next((token for token in new_tokens if token in offered), None)
+        if target is None:
+            continue
+        for token in hits:
+            carried[token] = target
+        if len(carried) == len(wanted):
+            break
+    return carried
+
+
 def single_protein_options(
     kind: AnnotationKind,
     tab: str = "boxplot",
     identifier: str = "workflow",
     data_source: str = "data",
+    carry: list[str] | None = None,
+    carry_identifier: str | None = None,
 ) -> dict[str, object]:
     availability = data_source_options(kind)
     requested_source = str(data_source or "data").strip().lower()
@@ -728,6 +771,17 @@ def single_protein_options(
         key_col = _line_box_key_column_for_identifier(kind, frame, identifier=resolved_identifier)
 
     proteins = _feature_options(frame, key_col, kind, resolved_identifier)
+    carried: dict[str, str] = {}
+    if carry and carry_identifier:
+        old_identifier = _normalize_identifier(carry_identifier)
+        if old_identifier != resolved_identifier and old_identifier in available_identifier_keys:
+            try:
+                old_col = (_heatmap_key_column_for_identifier(frame, identifier=old_identifier)
+                           if tab_normalized == "heatmap"
+                           else _line_box_key_column_for_identifier(kind, frame, identifier=old_identifier))
+                carried = carry_selection(frame, old_col, old_identifier, key_col, resolved_identifier, carry, proteins)
+            except ValueError:
+                carried = {}
     conditions = (
         meta["condition"]
         .dropna()
@@ -746,6 +800,7 @@ def single_protein_options(
         "identifier": resolved_identifier,
         "availableIdentifiers": available_identifiers,
         "dataSource": requested_source,
+        "carried": carried,
         **availability,
     }
 

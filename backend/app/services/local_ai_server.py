@@ -276,9 +276,24 @@ def _post(url: str, body: dict, api_key: str, progress_id: str | None = None) ->
         finally:
             exc.close()
         return exc.code, None, text
-    if not body.get("stream"):
-        return 200, read_json_response(response, "The local AI server returned invalid JSON."), ""
-    return 200, _read_stream(response, progress_id), ""
+    except TimeoutError:
+        raise ValueError(_timeout_message()) from None
+    try:
+        if not body.get("stream"):
+            return 200, read_json_response(response, "The local AI server returned invalid JSON."), ""
+        return 200, _read_stream(response, progress_id), ""
+    except TimeoutError:
+        # A socket read timeout while the server is silent (2026-10-27, GLM: 300 s of
+        # "Waiting for the model…" then a bare TimeoutError, shown to the user as "The
+        # assistant could not complete this step."). Say what happened instead.
+        raise ValueError(_timeout_message()) from None
+
+
+def _timeout_message() -> str:
+    limit = int(request_timeout())
+    return (f"The local AI server did not answer within {limit} seconds, so this step was stopped. "
+            "Earlier completed actions are retained. Try again, ask for one thing at a time, "
+            "or raise COPYLOT_LOCAL_AI_TIMEOUT if the server is slow.")
 
 
 def _read_stream(response, progress_id: str | None) -> dict:
@@ -286,7 +301,7 @@ def _read_stream(response, progress_id: str | None) -> dict:
     from app.services import assistant_progress
 
     content: list[str] = []
-    reasoning = 0
+    reasoning: list[str] = []
     produced = 0
     finish = None
     usage = None
@@ -316,7 +331,9 @@ def _read_stream(response, progress_id: str | None) -> dict:
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta") or {}
                 if delta.get("reasoning_content"):
-                    reasoning += 1
+                    reasoning.append(str(delta["reasoning_content"]))
+                elif delta.get("reasoning"):
+                    reasoning.append(str(delta["reasoning"]))
                 if delta.get("content"):
                     content.append(str(delta["content"]))
                 for call in delta.get("tool_calls") or []:
@@ -331,7 +348,7 @@ def _read_stream(response, progress_id: str | None) -> dict:
             produced += 1
             assistant_progress.update(progress_id, "answering" if content or calls else "thinking", produced)
     message: dict = {"role": "assistant", "content": "".join(content),
-                     "reasoning_content": "x" if reasoning else ""}
+                     "reasoning_content": "".join(reasoning)}
     if calls:
         message["tool_calls"] = [calls[index] for index in sorted(calls)]
     return {"choices": [{"index": 0, "finish_reason": finish, "message": message}], "usage": usage}
@@ -416,6 +433,8 @@ def chat_message(payload: ChatRequest, messages: list[dict], *, model: str, sche
         if tools and status == 400 and "tool" in lowered:
             raise ToolsUnsupported(error[:300])
         raise ValueError(f"The local AI server request failed (HTTP {status}).")
+    from app.services.assistant_trace import record_provider_reasoning
+    record_provider_reasoning(parsed)
     choices = parsed.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         raise ValueError("The local AI server's answer contained no choices.")

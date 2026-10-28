@@ -25,7 +25,7 @@ export default function AssistantChangeLog() {
   return (
     <details className="mb-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
       <summary className="cursor-pointer font-medium">
-        Changes made by the assistant ({changes.length})
+        Changes made by the assistant ({all.length} recorded; {changes.length} this request)
       </summary>
       {changes.length ? (
         <ol className="mt-2 max-h-40 space-y-1 overflow-y-auto" aria-label="Assistant changes">

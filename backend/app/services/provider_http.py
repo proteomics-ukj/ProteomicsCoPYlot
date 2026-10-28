@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 
 from app.services.env_settings import env_int
+from app.services.assistant_trace import record_provider_reasoning
 from app.services.workload_manager import provider_deadline
 
 
@@ -141,6 +142,8 @@ def open_provider_request(request, *, timeout, provider="Ollama"):
         raise ValueError(f"{provider} request failed (HTTP {status}).") from None
     except urllib.error.URLError:
         raise ValueError(f"Could not reach {provider}. Check the endpoint and connection.") from None
+    except TimeoutError:
+        raise ValueError(f"{provider} did not answer within {int(timeout)} seconds; this step was stopped. Earlier completed actions are retained.") from None
 
 
 def openai_content_to_text(content: object) -> str:
@@ -170,6 +173,7 @@ def read_json_response(response, invalid_json_message: str) -> dict[str, object]
         raise ValueError(invalid_json_message) from exc
     if not isinstance(parsed, dict):
         raise ValueError(invalid_json_message)
+    record_provider_reasoning(parsed)
     return parsed
 
 

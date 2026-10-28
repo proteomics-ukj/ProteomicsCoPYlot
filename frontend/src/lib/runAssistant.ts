@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { assistantStep, CloudAiConsentRequiredError, getAssistantProgress, hasPendingUiRequests, type AssistantView, type AssistantResult } from "./api";
+import { assistantStep, CloudAiConsentRequiredError, getAssistantPartialTrace, getAssistantProgress, hasPendingUiRequests, type AssistantView, type AssistantResult } from "./api";
 import { applyAssistantControls, receiptDisplayValues, assistantConfirmation, readAssistantControls, assistantSurfaceReady, searchAssistantOptions, assistantButtonConfirmation, activateAssistantButton, addCanvasTiles, assistantFeatureChoices } from "./assistantControls";
 import { stableSnapshot, unsavedAnalysis } from "./unsavedAnalysis";
 import { AssistantConversation } from "./assistantConversation";
@@ -87,6 +87,7 @@ export function readableReceipt(receipt: string): string {
 }
 
 export type AssistantRunOptions = {
+  trace?: (kind: string, data: unknown) => void;
   // The rendered plot for Advanced models that read images; captured fresh before every step.
   plotImage?: () => Promise<string | undefined>;
   // A model that thinks before answering: tell the user a step may take a while.
@@ -108,6 +109,16 @@ export async function runAssistant(
   options: AssistantRunOptions = {},
 ): Promise<AssistantResult> {
   const receipts: string[] = [];
+  const trace = options.trace ?? (() => {});
+  const recordReceipt = (...items: string[]) => {
+    items.forEach(item => trace("Applied action / search result", item));
+    return receipts.push(...items);
+  };
+  const confirm = (message: string) => {
+    const approved = window.confirm(message);
+    trace("User approval", { message, approved });
+    return approved;
+  };
   // Changes allowed in this request; the backend sets it from the model's
   // assistant level (8 for Basic and Standard, more for Advanced).
   let budget = 8;
@@ -156,6 +167,7 @@ export async function runAssistant(
   const checkAbort = () => { if (signal.aborted) throw new DOMException("Aborted", "AbortError"); };
   let previousConversation = conversation.read(revision.revision);
   const remember = (status: Parameters<AssistantConversation["record"]>[4]) => {
+    trace("Request state", { status, receipts: [...receipts], notes: [...notes] });
     const now = unsavedAnalysis.capture(null);
     if (now.pending || now.revision !== revision.revision) conversation.clear();
     else conversation.record(revision.revision, payload.message, readView(), receipts, status);
@@ -173,18 +185,29 @@ export async function runAssistant(
   try {
     for (let step = 0; step < 9; step++) {
       if (step === 8 && !answerOnly) break;
+      const settleStarted = performance.now();
+      trace("View readiness started", { step: step + 1, module: readLocation().module, answerOnly });
       let previous = "";
       let stable = 0;
+      let waitingShown = false;
       for (let attempt = 0; attempt < 100; attempt++) {
         await new Promise(resolve => window.setTimeout(resolve, 200));
         checkAbort();
+        if (!waitingShown && performance.now() - settleStarted >= 1000) {
+          progress([...receipts.map(readableReceipt), ...notes, "Waiting for the current plot and controls to finish updating…"].join("\n"));
+          waitingShown = true;
+        }
         const current = stableSnapshot(readView());
         stable = current === previous ? stable + 1 : 0;
         // Before an explanation, wait a little longer for loading results.
         if (stable >= (answerOnly ? 3 : 1) && !hasPendingUiRequests() && assistantSurfaceReady(readLocation().module)) break;
-        if (attempt === 99) throw new Error("The plot is still updating. Please retry once it has finished.");
+        if (attempt === 99) {
+          trace("View readiness timed out", { step: step + 1, module: readLocation().module, seconds: (performance.now() - settleStarted) / 1000 });
+          throw new Error("The plot is still updating. Please retry once it has finished.");
+        }
         previous = current;
       }
+      trace("View readiness completed", { step: step + 1, module: readLocation().module, seconds: (performance.now() - settleStarted) / 1000 });
       const view = readView();
       const snapshot = stableSnapshot(view);
       if (previousActions.length) attemptedSteps.add(stepIdentity(view, previousActions));
@@ -196,12 +219,14 @@ export async function runAssistant(
         : options.slow ? "Thinking about your request… a large model can take a minute or two." : "Inspecting the request…"].join("\n"));
       const plotImage = options.plotImage && !answerOnly ? await options.plotImage().catch(() => undefined) : undefined;
       checkAbort();
-      // A slow model reports how far it is (thinking, tokens, seconds) while the step runs.
-      const progressId = options.slow && typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : undefined;
+      // Trace correlation must not change which providers use streaming.
+      const traceId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : undefined;
+      const progressId = options.slow ? traceId : undefined;
       const waiting = [...receipts.map(readableReceipt), ...notes].join("\n");
-      const poll = progressId ? window.setInterval(() => {
+      let progressActive = true;
+      const poll = progressId && options.slow ? window.setInterval(() => {
         void getAssistantProgress(progressId).then(state => {
-          if (signal.aborted || state.phase === "unknown") return;
+          if (!progressActive || signal.aborted || state.phase === "unknown") return;
           const what = reviewing ? "Checking the rendered plot" : state.phase === "answering" ? "Writing the answer"
             : state.phase === "thinking" ? "Thinking" : "Waiting for the model";
           const detail = [state.tokens ? `${state.tokens} tokens` : "", `${state.seconds} s`].filter(Boolean).join(", ");
@@ -209,11 +234,32 @@ export async function runAssistant(
         }).catch(() => {});
       }, 1500) : undefined;
       let result: AssistantResult;
+      let receivedServerTrace = false;
       try {
+        trace("Step request", { ...payload, messages: previousConversation ? payload.messages : [], view, receipts: [...receipts], notes: [...notes], answerOnly, conversationState: previousConversation, reviewing, plotImageIncluded: Boolean(plotImage), progressId, traceId });
         result = await assistantStep({ ...payload, messages: previousConversation ? payload.messages : [], view, receipts, notes, answerOnly,
-          conversationState: previousConversation, ...(plotImage ? { plotImage } : {}), ...(progressId ? { progressId } : {}),
-          ...(reviewing ? { reviewing } : {}) }, signal);
+          conversationState: previousConversation, ...(plotImage ? { plotImage } : {}), ...(progressId ? { progressId } : {}), ...(traceId ? { traceId } : {}),
+          ...(reviewing ? { reviewing } : {}) }, signal, (kind, data) => {
+            if (kind === "Server functions") receivedServerTrace = true;
+            trace(kind, data);
+          });
+        const { trace: serverTrace, ...proposal } = result;
+        void serverTrace;
+        trace("Step response / proposed actions", proposal);
+      } catch (error) {
+        // The response never arrived (stopped, disconnected, network): collect
+        // what the server recorded before that, so the log is not blind there.
+        if (traceId && options.trace && !receivedServerTrace) {
+          // Diagnostics must never delay Stop or replace the original error.
+          void getAssistantPartialTrace(traceId).then(partial => {
+            if (partial.length) trace("Server functions (recovered snapshot)", partial);
+          });
+        }
+        throw error;
       } finally {
+        // Clearing the interval does not cancel a poll already in flight.
+        // Ignore late responses so they cannot overwrite the answer or next step.
+        progressActive = false;
         if (poll !== undefined) window.clearInterval(poll);
       }
       checkAbort();
@@ -264,7 +310,7 @@ export async function runAssistant(
       }
       if (actions.every(action => action.type === "set_control")) {
         const changes = assistantConfirmation(actions);
-        if (changes.length && !window.confirm(`Approve these analysis-view changes? They may recalculate the results.\n\n${changes.join("\n")}\n\nUploaded data and processing settings will not be changed.`)) {
+        if (changes.length && !confirm(`Approve these analysis-view changes? They may recalculate the results.\n\n${changes.join("\n")}\n\nUploaded data and processing settings will not be changed.`)) {
           remember("declined");
           return { ...result, actions: [], answer: [...receipts.map(readableReceipt), ...notes, "Requested changes were declined. No further actions were applied."].join("\n") };
         }
@@ -273,7 +319,7 @@ export async function runAssistant(
         if (approvedState.pending || approvedState.revision !== revision.revision || stableSnapshot(readView()) !== snapshot) {
           throw new Error("The view changed before approval. Please retry.");
         }
-        applyAssistantControls(actions, receipt => receipts.push(receipt), changes);
+        applyAssistantControls(actions, receipt => recordReceipt(receipt), changes);
       } else if (actions.length === 1 && actions[0].type === "search_options") {
         const action = actions[0];
         const query = searchAssistantOptions(action.target, action.value);
@@ -283,7 +329,7 @@ export async function runAssistant(
         if (attemptedSearches.has(searchKey)) return stopRepeatedStep(result, true);
         attemptedSearches.add(searchKey);
         searches[action.target] = query;
-        receipts.push(`Searched selection options for ${JSON.stringify(searches[action.target])}; no view changed.`);
+        recordReceipt(`Searched selection options for ${JSON.stringify(searches[action.target])}; no view changed.`);
         const choices = assistantFeatureChoices(action.target, query, payload.message);
         if (choices) {
           remember("needs_clarification");
@@ -296,7 +342,7 @@ export async function runAssistant(
         const approval = assistantButtonConfirmation(target);
         const repeatedAddition = !approval && activatedButtons.has(target);
         const confirmation = approval || (repeatedAddition ? "The assistant already added a plot in this request. Add another plot?" : "");
-        if (confirmation && !window.confirm(confirmation)) {
+        if (confirmation && !confirm(confirmation)) {
           remember("declined");
           return { ...result, actions: [], answer: [...receipts.map(readableReceipt), repeatedAddition ? "Another plot was declined. Existing plots were kept." : "Tile removal was declined."].join("\n") };
         }
@@ -305,11 +351,11 @@ export async function runAssistant(
         if (stableSnapshot(readView()) !== snapshot || approvedState.pending || approvedState.revision !== revision.revision) {
           throw new Error("The view changed before approval. Please retry.");
         }
-        receipts.push(activateAssistantButton(target, approval));
+        recordReceipt(activateAssistantButton(target, approval));
         activatedButtons.add(target);
       } else if (actions.length === 1 && actions[0].type === "add_canvas_tiles") {
         if (view.module !== "analysis.canvas") throw new Error("Open the canvas before adding plots.");
-        const answer = addCanvasTiles(actions[0].value, budget - receipts.length, receipt => receipts.push(receipt));
+        const answer = addCanvasTiles(actions[0].value, budget - receipts.length, receipt => recordReceipt(receipt));
         if (explanationPending) {
           answerOnly = true;
           continue;
@@ -321,7 +367,7 @@ export async function runAssistant(
         let receipt = "";
         flushSync(() => { receipt = focusCanvas(actions[0].value); });
         if (result.answer) receipt = `${result.answer}\n${receipt}`;
-        receipts.push(receipt);
+        recordReceipt(receipt);
         if (explanationPending) {
           answerOnly = true;
           continue;
@@ -340,13 +386,13 @@ export async function runAssistant(
           };
         }
         flushSync(() => navigate(destination));
-        receipts.push(`Opened ${view.destinations[destination]}.`);
+        recordReceipt(`Opened ${view.destinations[destination]}.`);
       } else if (actions.length === 1 && actions[0].type === "save_style") {
-        receipts.push(saveStyle(String(actions[0].value)));
+        recordReceipt(saveStyle(String(actions[0].value)));
       } else if (actions.length === 1 && actions[0].type === "apply_style") {
         // Only appearance settings move between plots (lib/plotStyles.ts).
         const request = JSON.parse(String(actions[0].value)) as { name?: string; scope?: "this" | "all" };
-        receipts.push(applyStyle(String(request.name ?? ""), request.scope === "all" ? "all" : "this"));
+        recordReceipt(applyStyle(String(request.name ?? ""), request.scope === "all" ? "all" : "this"));
       } else throw new Error("The assistant requested an unsupported action.");
       progress([...receipts.map(readableReceipt), ...notes].join("\n"));
       if (result.finished && result.reviewAfter && options.plotImage && !reviewed && !explanationPending) {

@@ -100,6 +100,17 @@ def test_advanced_models_use_presets_and_their_own_edits(advanced):
     assert "Never invent journal requirements" not in record["instruction"]
 
 
+def test_a_colour_named_in_the_users_language_is_the_users_choice(advanced):
+    # 2026-10-26: "mach GRK dunkelgrün" → the model planned #006400 and the
+    # palette rule refused it, because only English colour words counted as
+    # the user naming a colour. The rule still applies when no colour is named.
+    plan = {"task": "ui", "styles": [{"element": "condition:B", "property": "color", "value": "#006400"}]}
+    result = advanced.run([json.dumps(plan)], message="mach die punkte größer und B dunkelgrün", view=_coverage_view())
+    assert _targets(result) == {"cb": "#006400"} and "colour-blind-safe" not in result.answer
+    result = advanced.run([json.dumps(plan)], message="make B whatever looks best", view=_coverage_view())
+    assert "cb" not in _targets(result) and "colour-blind-safe" in result.answer
+
+
 def test_advanced_free_design_keeps_colours_colour_blind_safe(advanced):
     plan = {"task": "ui", "styles": [
         {"element": "all text", "property": "font family", "value": "helvetica"},

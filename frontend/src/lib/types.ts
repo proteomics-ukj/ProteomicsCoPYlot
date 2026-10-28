@@ -625,6 +625,9 @@ export type SingleProteinOptionsResponse = {
   dataSource: DataSource;
   availableDataSources: DataSource[];
   defaultDataSource: DataSource;
+  // Present when the request carried a selection from another identifier:
+  // old name -> the same row's name under this identifier.
+  carried?: Record<string, string>;
 };
 
 export type SingleProteinIdentifier = "workflow" | "genes";

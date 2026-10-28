@@ -17,6 +17,7 @@ VIEWER_ALLOWED_OPERATIONS = frozenset({
     ('GET', '/api/annotations/metadata/current/{kind}'),
     ('POST', '/api/chat/assistant'),
     ('GET', '/api/chat/assistant-progress/{progress_id}'),
+    ('GET', '/api/chat/assistant-trace/{progress_id}'),
     ('GET', '/api/chat/cloud-consent/{provider}'),
     ('POST', '/api/chat/cloud-consent/{provider}/grant'),
     ('POST', '/api/chat/cloud-consent/{provider}/revoke'),

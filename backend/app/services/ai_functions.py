@@ -17,6 +17,7 @@ from app.services.condition_palette_store import build_condition_color_map
 from app.services.completeness_tools import completeness_tables as _completeness_tables
 from app.services import plot_images as _plot_images
 from app.services import stats_tools as _stats_tools
+from app.services.reference_db import reference_release as _reference_release
 from app.services import single_protein_tools as _single_protein_tools
 from app.services import comparison_tools as _comparison_tools
 from app.services import phospho_tools as _phospho_tools
@@ -652,6 +653,80 @@ def _completeness_tables_payload(
     return overall_missing, sample_count, sample_rows, feature_rows, outliers, None
 
 
+
+def _completeness_measurement_line(features: int, samples: int, missing: int) -> str:
+    """Expose aggregate counts from returned completeness summaries, not new analysis."""
+    total = features * samples
+    return (
+        f"missing_measurements|features={features}|samples={samples}"
+        f"|total_measurement_cells={total}|missing_values={missing}|observed_values={total - missing}"
+        "|scope=returned_completeness_tables_excluding_all_missing_features"
+    )
+
+
+def _sample_condition_lookup(kind: str) -> dict[str, str]:
+    """Sample -> condition from the loaded annotation metadata (empty when none is loaded)."""
+    try:
+        annotation = get_annotation(kind)  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    if annotation is None or annotation.metadata.empty:
+        return {}
+    metadata = annotation.metadata
+    if "sample" not in metadata.columns or "condition" not in metadata.columns:
+        return {}
+    lookup: dict[str, str] = {}
+    for sample, condition in zip(metadata["sample"].astype(str), metadata["condition"].astype(str)):
+        sample_key = sample.strip()
+        condition_key = condition.strip()
+        if sample_key and condition_key and sample_key not in lookup:
+            lookup[sample_key] = condition_key
+    return lookup
+
+
+def _sample_condition(sample: str, lookup: dict[str, str]) -> str:
+    """Annotation condition when the sample is annotated, otherwise the name heuristic."""
+    return lookup.get(str(sample).strip()) or _extract_condition_from_sample(sample)
+
+
+def _completeness_condition_lines(
+    prefix: str,
+    kind: str,
+    sample_rows: list[dict[str, Any]],
+    feature_count: int,
+) -> list[str]:
+    """Per-condition sums of the returned per-sample missing counts; no new calculation.
+
+    `missing_percent` is the condition's missing cells over its measurement cells
+    (samples x returned features), the same denominator as the per-sample percentages.
+    """
+    lookup = _sample_condition_lookup(kind)
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in sample_rows:
+        sample = str(row.get("Sample", "")).strip() or "unknown"
+        groups.setdefault(_sample_condition(sample, lookup), []).append(row)
+    if len(groups) < 2 and not lookup:
+        return []
+    lines = [
+        f"{prefix}_condition_source|"
+        + ("mapping=annotation_metadata" if lookup else "mapping=sample_name_prefix_before_underscore|annotation_metadata=not_loaded")
+        + "|aggregation=sum_of_returned_per_sample_missing_counts|no_statistical_test=true"
+    ]
+    for condition, rows in groups.items():
+        counts = [int(value) for value in (pd.to_numeric(row.get("Counts"), errors="coerce") for row in rows) if pd.notna(value)]
+        percents = [float(value) for value in (pd.to_numeric(row.get("%_missing_values"), errors="coerce") for row in rows) if pd.notna(value)]
+        total_cells = len(rows) * int(feature_count)
+        missing_total = sum(counts)
+        percent_text = _fmt_value(100.0 * missing_total / total_cells) if total_cells > 0 else "unknown"
+        lines.append(
+            f"{prefix}_condition|condition={_safe_context_text(condition)}|samples={len(rows)}|"
+            f"missing_count={missing_total}|missing_percent={percent_text}|"
+            f"sample_missing_percent_min={_fmt_value(min(percents)) if percents else 'unknown'}|"
+            f"sample_missing_percent_max={_fmt_value(max(percents)) if percents else 'unknown'}"
+        )
+    return lines
+
+
 def _normalize_stats_kind(workflow: str, mode: ContextMode | None = None) -> str:
     mode_pairs = _mode_fields(mode)
     requested = str(
@@ -736,7 +811,7 @@ def _parse_pca_mode(mode: ContextMode | None) -> tuple[str, str, str]:
     if plot_dim not in {"2D", "3D"}:
         plot_dim = "2D"
     data_source = str(fields.get("datasource", fields.get("data_source", "data"))).strip().lower()
-    return method, plot_dim, "imputed" if data_source == "imputed" else "data"
+    return method, plot_dim, data_source if data_source in {"data", "filtered", "imputed"} else "data"
 
 
 def _pca_variance_lines(
@@ -818,14 +893,6 @@ def _pca_variance_lines(
         scores = pca_scores.copy()
         scores["condition"] = scores["condition"].astype(str)
         scores["display_sample"] = condition_sample_labels(scores)
-        for _, row in scores.iterrows():
-            coordinates = "|".join(
-                f"{column}={_fmt_value(float(row[column]))}" for column in component_columns
-            )
-            lines.append(
-                f"pca_sample_score|sample={_safe_context_text(row['display_sample'])}|condition={_safe_context_text(row['condition'])}|{coordinates}"
-            )
-
         condition_summaries: dict[str, tuple[list[float], float]] = {}
         for condition, subset in scores.groupby("condition", sort=False):
             centroid = [float(subset[column].mean()) for column in component_columns]
@@ -864,6 +931,15 @@ def _pca_variance_lines(
         lines.append(
             "pca_geometry_rule|centroid_to_within_ratio_is_descriptive_only|no_universal_clean_separation_cutoff_is_assumed"
         )
+
+        # Keep group summaries ahead of sample details in the bounded assistant evidence.
+        for _, row in scores.iterrows():
+            coordinates = "|".join(
+                f"{column}={_fmt_value(float(row[column]))}" for column in component_columns
+            )
+            lines.append(
+                f"pca_sample_score|sample={_safe_context_text(row['display_sample'])}|condition={_safe_context_text(row['condition'])}|{coordinates}"
+            )
 
     return lines
 
@@ -1024,6 +1100,24 @@ def _correlation_data_lines(workflow: str, *, limit: int = 6) -> list[str]:
             f"median_r={float(values.median()):.4f}|min_r={float(values.min()):.4f}|max_r={float(values.max()):.4f}"
         )
 
+    # Summarize the same matrix by shared condition and include the highest pairs.
+    for condition in dict.fromkeys(condition_by_display.values()):
+        values = pd.Series([pair["r"] for pair in pairs if pair["within"] and condition_by_display.get(pair["left"]) == condition], dtype=float)
+        if values.empty:
+            continue
+        lines.append(
+            "correlation_condition_summary|"
+            f"condition={_safe_context_text(condition)}|group=within_condition|pair_count={int(values.shape[0])}|mean_r={float(values.mean()):.4f}|"
+            f"median_r={float(values.median()):.4f}|min_r={float(values.min()):.4f}|max_r={float(values.max()):.4f}"
+        )
+    for rank, pair in enumerate(sorted(pairs, key=lambda item: item["r"], reverse=True)[:3], start=1):
+        lines.append(
+            "correlation_high_pair|"
+            f"rank={rank}|"
+            f"left={_safe_context_text(pair['left'])}|right={_safe_context_text(pair['right'])}|"
+            f"pearson_r={float(pair['r']):.4f}|pairwise_complete_proteins={pair['overlap']}|"
+            f"relationship={'within_condition' if pair['within'] else 'between_condition'}"
+        )
     sorted_pairs = sorted(pairs, key=lambda item: item["r"])
     for rank, pair in enumerate(sorted_pairs[: max(1, int(limit))], start=1):
         lines.append(
@@ -1416,7 +1510,38 @@ def _annotation_normalization(kind) -> str:
     return str(getattr(config, "normalization", "") or "none").strip().lower() or "none"
 
 
-def qc_cov_plot(workflow: str = "protein") -> dict[str, Any]:
+def _cv_outlier_counts(kind) -> dict[str, tuple[int, int, int, float]]:
+    """Per condition: (features with a CV, outliers beyond the 1.5 x IQR fences, of
+    which above the upper fence, highest CV). The same values and the same matplotlib
+    rule the CV plot uses, so the count equals the dots the plot draws when the
+    outlier toggle is on. "Are outliers shown?" (human feedback deck, 2026-10-19) had
+    no number to answer with; now it has one. Read-only; the plot is unchanged.
+    """
+    from matplotlib.cbook import boxplot_stats
+    from app.services.functions import condition_cvs, raw_zero_to_nan
+
+    try:
+        frame = _table_functions.linear_qc_frame(kind)
+        sample_columns = _table_functions._get_sample_columns(kind, frame)
+        frame = raw_zero_to_nan(frame, sample_columns)
+        meta = _table_functions._metadata_for_kind(kind, frame, sample_columns)
+        numeric = frame[sample_columns].apply(pd.to_numeric, errors="coerce")
+        counts: dict[str, tuple[int, int, int, float]] = {}
+        for condition, cv in condition_cvs(numeric, meta):
+            values = np.asarray(cv, dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                continue
+            stats = boxplot_stats(values, whis=1.5)[0]
+            fliers = np.asarray(stats["fliers"], dtype=float)
+            counts[str(condition)] = (int(values.size), int(fliers.size),
+                                      int((fliers > float(stats["whishi"])).sum()), float(values.max()))
+        return counts
+    except Exception:  # noqa: BLE001 - the summary rows still answer without the counts
+        return {}
+
+
+def qc_cov_plot(workflow: str = "protein", mode: ContextMode | None = None) -> dict[str, Any]:
     workflow_key = _normalize_coverage_workflow(workflow)
     _, entity_plural = _workflow_entity_labels(workflow_key)
 
@@ -1460,6 +1585,25 @@ def qc_cov_plot(workflow: str = "protein") -> dict[str, Any]:
     lines.append(
         "cov_boxplot_definition|median=50th_percentile|IQR=Q3-Q1|whiskers=outermost_observed_values_within_the_1.5_IQR_fences|fences=Q1-1.5xIQR_to_Q3+1.5xIQR|outliers=observations_outside_the_fences"
     )
+    mode_fields = _mode_fields(mode)
+    outlier_display = str(mode_fields.get("boxplotoutliers", mode_fields.get("outliers", ""))).strip().lower()
+    if outlier_display in {"true", "false"}:
+        lines.append(f"cov_active_view|outlier_points_enabled={outlier_display}")
+    else:
+        lines.append("cov_active_view|outlier_points_enabled=unknown")
+    lines.append(
+        "cov_display_control|page=QC Pipeline / CV Plot|section=Options|label=Toggle Outliers|"
+        "operation=manual_only|checked=show_outlier_markers|unchecked=hide_outlier_markers|"
+        "guidance=The user can tick this checkbox to see the markers. Its absence from assistant controls "
+        "does not mean the UI lacks it; do not propose changing it through the assistant."
+    )
+    lines.append(
+        "cov_inference_rule|The outlier toggle controls display only; hiding points does not remove observations. "
+        "Quartiles and whiskers alone do not establish whether any outliers exist. "
+        "Each cov_condition line below carries outliers_beyond_fences, the number of features the plot draws as "
+        "individual points when the toggle is on (the same 1.5 x IQR rule); there is no rendered-image evidence, "
+        "so distinguish the display setting from the count, and never claim dots were visually inspected."
+    )
 
     if table.empty:
         lines.append("cov_data|status=empty")
@@ -1480,13 +1624,19 @@ def qc_cov_plot(workflow: str = "protein") -> dict[str, Any]:
     condition_count = int(data["Condition"].nunique())
     lines.append(f"cov_conditions|count={condition_count}")
 
+    outlier_counts = _cv_outlier_counts(_workflow_kind(workflow_key))
     for _, row in data.iterrows():
         condition = str(row.get("Condition", "")).strip() or "unknown"
+        counts = outlier_counts.get(condition)
+        count_text = (f"|features_with_cv={counts[0]}|outliers_beyond_fences={counts[1]}"
+                      f"|outliers_above_upper_fence={counts[2]}|highest_cv={_fmt_value(counts[3])}"
+                      if counts else "|outliers_beyond_fences=not_available")
         lines.append(
             "cov_condition|"
             f"name={condition}|mean_cv={_fmt_value(row.get('mean', 0.0))}|median_cv={_fmt_value(row.get('median', 0.0))}|"
             f"Q1_cv={_fmt_value(row.get('Q1', 0.0))}|Q3_cv={_fmt_value(row.get('Q3', 0.0))}|"
             f"lower_whisker_cv={_fmt_value(row.get('lower_whisker', 0.0))}|upper_whisker_cv={_fmt_value(row.get('upper_whisker', 0.0))}"
+            + count_text
         )
 
     median_rows = data.dropna(subset=["median"])
@@ -1531,6 +1681,16 @@ def qc_pca_plot_context(workflow: str = "protein", mode: ContextMode | None = No
     lines.append(
         f"pca_active_view|method={method_clean}|plot_dim={plot_dim}|data_source={data_source}|random_state={random_state}"
     )
+    # Put calculated results before general guidance in bounded assistant evidence.
+    lines.extend(
+        _pca_variance_lines(
+            workflow_key,
+            method=method,
+            plot_dim=plot_dim,
+            data_source=data_source,
+            scaling=mode_pairs.get("scaling", "auto"),
+        )
+    )
     lines.append(
         "pca_description|goal=reduce_dimensionality_and_visualize_relationships_between_samples_based_on_measured_entities"
     )
@@ -1564,15 +1724,7 @@ def qc_pca_plot_context(workflow: str = "protein", mode: ContextMode | None = No
     lines.append(
         "pca_usage|supports=identify_outliers_assess_condition_separation_evaluate_overall_dataset_structure"
     )
-    lines.extend(
-        _pca_variance_lines(
-            workflow_key,
-            method=method,
-            plot_dim=plot_dim,
-            data_source=data_source,
-            scaling=mode_pairs.get("scaling", "auto"),
-        )
-    )
+
 
     conditions = _conditions_for_workflow(workflow_key)
     lines.append(f"pca_conditions|count={len(conditions)}")
@@ -1771,8 +1923,14 @@ def peptide_rt_plot_context(workflow: str = "peptide", mode: ContextMode | None 
     predicted_col = _predicted_rt_column(frame)
     actual_col = _actual_rt_column(frame)
     if predicted_col is None or actual_col is None:
+        missing = []
+        if predicted_col is None:
+            missing.append("Predicted.RT (predicted retention time)")
+        if actual_col is None:
+            missing.append("RT (observed retention time)")
         lines.append(
-            "peptide_rt_data|status=error|detail=missing_required_columns_for_rt_plot"
+            "peptide_rt_data|status=error|detail=Missing retention-time columns: "
+            + _safe_context_text(", ".join(missing)) + "."
         )
         return _text_payload("peptide_rt_plot", "\n".join(lines))
 
@@ -2263,6 +2421,10 @@ def completeness_missing_value_plot_context(workflow: str = "protein", mode: Con
             f"no_value_in_any_selected_sample={_excluded_all_missing_count(kind, include_id=True)}|"
             "excluded_from=plot,heatmap,tables"
         )
+        lines.append(_completeness_measurement_line(
+            sum(int(count) for _, count, _ in feature_rows), sample_count,
+            sum(int(missing) * int(count) for missing, count, _ in feature_rows),
+        ))
         lines.append(f"missing_tables_samples|count={sample_count}")
         lines.append(f"missing_tables_feature_distribution|rows={len(feature_rows)}")
         for missing_count, feature_count, percent_value in feature_rows:
@@ -2327,6 +2489,14 @@ def completeness_missing_value_heatmap_context(workflow: str = "protein", mode: 
             f"status=available|overall_missing_values_percent={_fmt_value(overall_missing if overall_missing is not None else 0.0)}|"
             f"sample_count={sample_count}|feature_missingness_bins={len(feature_rows)}"
         )
+        lines.append(_completeness_measurement_line(
+            sum(int(row["Counts"]) for row in feature_rows), sample_count,
+            sum(int(row["Counts"]) for row in sample_rows),
+        ))
+        lines.extend(_completeness_condition_lines(
+            "missing_heatmap", kind, sample_rows, sum(int(row["Counts"]) for row in feature_rows),
+        ))
+        condition_lookup = _sample_condition_lookup(kind)
         ranked_samples = sorted(
             sample_rows,
             key=lambda row: float(pd.to_numeric(row.get("%_missing_values"), errors="coerce"))
@@ -2338,7 +2508,7 @@ def completeness_missing_value_heatmap_context(workflow: str = "protein", mode: 
             sample = str(row.get("Sample", "")).strip() or "unknown"
             lines.append(
                 "missing_heatmap_high_missing_sample|"
-                f"sample={_safe_context_text(sample)}|condition={_safe_context_text(_extract_condition_from_sample(sample))}|"
+                f"sample={_safe_context_text(sample)}|condition={_safe_context_text(_sample_condition(sample, condition_lookup))}|"
                 f"missing_count={_safe_context_text(row.get('Counts'))}|missing_percent={_safe_context_text(row.get('%_missing_values'))}"
             )
         lines.append(
@@ -2404,10 +2574,18 @@ def completeness_missing_value_tables(workflow: str = "protein", mode: ContextMo
             f"no_value_in_any_selected_sample={_excluded_all_missing_count(kind, include_id=include_id)}|"
             "excluded_from=plot,heatmap,tables"
         )
+        lines.append(_completeness_measurement_line(
+            sum(int(row["Counts"]) for row in feature_rows), sample_count,
+            sum(int(row["Counts"]) for row in sample_rows),
+        ))
         lines.append(f"missing_tables_samples|count={sample_count}|rows={len(sample_rows)}")
+        lines.extend(_completeness_condition_lines(
+            "missing_tables", kind, sample_rows, sum(int(row["Counts"]) for row in feature_rows),
+        ))
+        condition_lookup = _sample_condition_lookup(kind)
         for row in sample_rows:
             sample_name = str(row.get("Sample", "")).strip() or "unknown"
-            condition = _extract_condition_from_sample(sample_name)
+            condition = _sample_condition(sample_name, condition_lookup)
             missing_count = row.get("Counts")
             missing_percent = row.get("%_missing_values")
             lines.append(
@@ -2466,7 +2644,13 @@ def data_distribution_summary(workflow: str = "protein", mode: ContextMode | Non
     lines = [f"distribution_overview|workflow={workflow}|source_used={result.sourceUsed}|aggregation=all_sample_values_pooled",
              "distribution_answer_summary|" + "|".join(f"{key}={_safe_context_text(value) if value is not None else 'NA'}" for key, value in result.stats.model_dump().items()),
              f"distribution_missingness|rows_with_missing={result.rowsWithMissing}|rows_without_missing={result.rowsWithoutMissing}",
-             "distribution_inference_rule|std=population_standard_deviation|summary_is_not_a_normality_test|QQ_shape_not_supplied|raw_or_filtered_source_does_not_establish_scale"]
+             f"distribution_measurements|observed_values={result.stats.count}|missing_values={result.stats.missingCount}"
+             f"|total_measurement_cells={result.stats.count + result.stats.missingCount}",
+             f"distribution_scope|rows={result.rowsWithMissing + result.rowsWithoutMissing}|samples={len(result.sampleColumns)}"
+             "|matrix=annotated_input_before_valid_value_and_contaminant_filtering_and_imputation"
+             "|phosphosite_localization_cutoff_still_applies_when_relevant",
+             "distribution_scope_guidance|State this source when quoting missingness. These are not counts of gaps remaining in the filtered matrix; do not describe them as post-filter counts.",
+             "distribution_inference_rule|count_is_observed_nonmissing_values_not_total_cells|std=population_standard_deviation|summary_is_not_a_normality_test|QQ_shape_not_supplied|raw_or_filtered_source_does_not_establish_scale"]
     lines.extend(f"distribution_warning|message={_safe_context_text(w)}" for w in result.warnings)
     return _text_payload("data_distribution_summary", "\n".join(lines))
 
@@ -2490,9 +2674,51 @@ def stats_simulation_plot(workflow: str = "protein", mode: ContextMode | None = 
         fields["selected_pval_meaning"] = metric
         lines.append("simulation_term|" + "|".join(f"{k}={_safe_context_text(v) if v is not None else 'NA'}" for k, v in fields.items()))
     if len(result.rows) > 5:
-        lines.append("simulation_data|status=partial|reason=first_five_rows_only")
+        lines.append("simulation_data|status=partial|scope=row_sample_only|reason=first_five_rows_only")
     lines.extend(f"simulation_warning|message={_safe_context_text(w)}" for w in result.warnings)
     return _text_payload("stats_simulation_plot", "\n".join(lines))
+
+
+def _ksea_input_summary_lines(table: pd.DataFrame, settings: dict[str, Any]) -> list[str]:
+    """Counts over the existing Kinase Library input table at the selected thresholds.
+
+    `significance` is the volcano class already computed with the selected p-value
+    metric and thresholds; nothing is re-tested or re-thresholded here.
+    """
+    if table is None or table.empty:
+        return ["ksea_input_summary|rows=0|status=empty_export_table"]
+    lines: list[str] = []
+    thresholds = (
+        f"p_threshold={_safe_context_text(settings.get('p_value_threshold'))}|"
+        f"log2fc_threshold={_safe_context_text(settings.get('log2fc_threshold'))}|"
+        f"use_uncorrected={_safe_context_text(settings.get('use_uncorrected'))}"
+    )
+    if "significance" in table.columns:
+        classes = table["significance"].astype(str).str.strip().value_counts()
+        parts = "|".join(
+            f"{_safe_context_text(label).lower().replace(' ', '_')}={int(count)}"
+            for label, count in classes.items()
+        )
+        lines.append(
+            f"ksea_input_significance|rows={len(table)}|{parts}|{thresholds}|"
+            "class_source=selected_volcano_thresholds_not_kinase_activity"
+        )
+    if "log2FC" in table.columns:
+        fc = pd.to_numeric(table["log2FC"], errors="coerce").dropna()
+        if not fc.empty:
+            lines.append(
+                f"ksea_input_log2fc|rows_with_value={int(fc.size)}|min={_fmt_value(fc.min())}|"
+                f"median={_fmt_value(fc.median())}|max={_fmt_value(fc.max())}|"
+                f"positive={int((fc > 0).sum())}|negative={int((fc < 0).sum())}"
+            )
+    if "window_source" in table.columns:
+        sources = table["window_source"].astype(str).str.strip().value_counts()
+        parts = "|".join(f"{_safe_context_text(label)}={int(count)}" for label, count in sources.items())
+        lines.append(f"ksea_input_window_source|{parts}|meaning_protein=window_read_from_fasta_sequence|meaning_peptide=window_from_peptide_only")
+    if "Site" in table.columns:
+        sites = table["Site"].astype(str).str.strip()
+        lines.append(f"ksea_input_sites|rows_with_site={int((sites != '').sum())}|rows_without_site={int((sites == '').sum())}")
+    return lines
 
 
 def phospho_ksea_export(workflow: str = "phosphosite", mode: ContextMode | None = None) -> dict[str, Any]:
@@ -2520,10 +2746,11 @@ def phospho_ksea_export(workflow: str = "phosphosite", mode: ContextMode | None 
              f"ksea_answer_summary|export_rows={len(table)}|selected_p_metric={metric}|all_testable_sites_not_only_significant=true",
              "ksea_inference_rule|export_contains_site_fold_changes_not_kinase_activity|kinase_scores_substrate_counts_and_external_significance_not_available|uploaded_external_plot_not_parsed_by_this_adapter"]
     lines.append(f"ksea_external_view|browser_reports_plot_present={_safe_context_text(pairs.get('externalplotpresent', 'unknown'))}|external_result_values_not_supplied=true")
+    lines.extend(_ksea_input_summary_lines(table, settings))
     for row in table.head(5).to_dict(orient="records"):
         lines.append("ksea_export_row|" + "|".join(f"{k}={_safe_context_text(row[k])}" for k in ("UPD_seq", "Site", "window_source", "log2FC", "pval", "adj_pval", "significance") if k in row))
     if len(table) > 5:
-        lines.append("ksea_data|status=partial|reason=first_five_export_rows_only")
+        lines.append("ksea_data|status=partial|scope=row_sample_only|reason=first_five_export_rows_only")
     return _text_payload("phospho_ksea_export", "\n".join(lines))
 
 
@@ -2587,7 +2814,7 @@ def stats_anova_plot(workflow: str = "protein", mode: ContextMode | None = None)
     lines.append(f"anova_evidence_limit|reported_rows={min(5, len(selected_rows))}|selected_view_rows={len(selected_rows)}|"
                  "row_order=application_table_order|no_heatmap_pattern_or_pairwise_claims_without_supporting_evidence")
     if len(selected_rows) > 5:
-        lines.append("anova_data|status=partial|reason=only_first_five_selected_rows_included")
+        lines.append("anova_data|status=partial|scope=row_sample_only|reason=only_first_five_selected_rows_included")
     for warning in result.warnings:
         lines.append(f"anova_warning|message={_safe_context_text(warning)}")
     return _text_payload("stats_anova_plot", "\n".join(lines))
@@ -3067,6 +3294,13 @@ def stats_ora_plot(workflow: str = "protein", mode: ContextMode | None = None) -
     lines.append(
         f"ora_parameters|source={source}|data_source={data_source}|test_type={test_type}|p_value_threshold={_fmt_value(p_value_threshold)}|log2fc_threshold={_fmt_value(log2fc_threshold)}|use_uncorrected={'true' if use_uncorrected else 'false'}|background_mode={background_mode}|organism={_safe_context_text(organism)}"
     )
+    gaf = {"human": "goa_human.gaf.gz", "mouse": "mgi.gaf.gz"}.get(organism, "")
+    lines.append(
+        f"ora_database|organism={_safe_context_text(organism)}|go_annotation_release={_safe_context_text(_reference_release(gaf) or 'not recorded')}"
+        f"|go_ontology_release={_safe_context_text(_reference_release('go-basic.obo.gz') or 'not recorded')}"
+        "|source=Gene Ontology Consortium GAF + go-basic.obo, bundled table built by tools/build_reference_databases.py (data/db/README.md)"
+        "|citation=state the GO release date; Gene Ontology Consortium, Genetics 224, iyad031 (2023) and Ashburner et al., Nat Genet 25, 25-29 (2000); check geneontology.org/docs/go-citation-policy"
+    )
     lines.append(
         f"ora_comparison|condition1={_safe_context_text(condition1)}|condition2={_safe_context_text(condition2)}"
     )
@@ -3471,7 +3705,7 @@ def comparison_pearson_correlation(workflow: str = "protein", mode: ContextMode 
             condition2=condition2,
             alias1=alias1,
             alias2=alias2,
-            data_source=data_source,
+            # pearson_correlation_table takes no data source either (see the Venn note).
         ).copy()
     except Exception as exc:
         lines.append(f"comparison_pearson_data|status=error|detail={_safe_context_text(exc)}")
@@ -3537,6 +3771,11 @@ def comparison_venn_diagram(workflow: str = "protein", mode: ContextMode | None 
     if data_source not in {"data", "filtered", "imputed"}:
         data_source = "data"
 
+    try:
+        min_present = max(1, int(mode_pairs.get("minpresent", "1")))
+    except (TypeError, ValueError, OverflowError):
+        min_present = 1
+
     mode_raw = str(mode_pairs.get("mode", "Single")).strip().lower()
     if mode_raw in {"condition", "mean"}:
         selected_mode = "Mean"
@@ -3585,7 +3824,7 @@ def comparison_venn_diagram(workflow: str = "protein", mode: ContextMode | None 
         )
     else:
         lines.append(
-            "comparison_venn_mode|selected=Mean|comparison_level=condition_vs_condition_or_condition_triplet|presence_rule=entity_is_present_if_detected_in_at_least_one_replicate_within_each_selected_condition"
+            f"comparison_venn_mode|selected=Mean|comparison_level=condition_vs_condition_or_condition_triplet|min_present={min_present}|presence_rule=entity_is_present_if_detected_in_at_least_{min_present}_replicates_within_each_selected_condition"
         )
     lines.append(
         f"comparison_venn_selection|level={level_text}|first={_safe_context_text(label1)}|second={_safe_context_text(label2)}|third={_safe_context_text(label3 if has_third else 'not_selected')}"
@@ -3608,7 +3847,10 @@ def comparison_venn_diagram(workflow: str = "protein", mode: ContextMode | None 
             alias1=alias1,
             alias2=alias2,
             alias3=alias3,
-            data_source=data_source,
+            min_present=min_present,
+            # venn_table takes no data source: the Venn sets come from the analysis
+            # context (2026-10-27: every Venn question failed with "unexpected keyword
+            # argument 'data_source'" and the assistant reported no result).
         ).copy()
     except Exception as exc:
         lines.append(f"comparison_venn_data|status=error|detail={_safe_context_text(exc)}")
@@ -3847,6 +4089,11 @@ def phospho_phosphosite_coverage_plot(workflow: str = "phosphosite", mode: Conte
             class_vals = subset["Class I"].astype(float)
             not_vals = subset["Not Class I"].astype(float)
             total_vals = subset["Total"].astype(float)
+            lines.append(
+                "phospho_coverage_answer_summary|"
+                f"name={_safe_context_text(condition)}|class_i_mean={_fmt_value(class_vals.mean())}|"
+                f"not_class_i_mean={_fmt_value(not_vals.mean())}|total_mean={_fmt_value(total_vals.mean())}"
+            )
             lines.append(
                 "phospho_coverage_condition|"
                 f"name={_safe_context_text(condition)}|sample_count={len(sample_names)}|samples={_safe_context_text(','.join(sample_names))}|"

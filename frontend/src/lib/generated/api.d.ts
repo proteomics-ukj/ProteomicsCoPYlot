@@ -279,6 +279,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/assistant-trace/{progress_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Assistant Trace Route
+         * @description A session-scoped snapshot, retained briefly even after the step returns.
+         *     Reading it does not delete events or prevent later recovery.
+         */
+        get: operations["assistant_trace_route_api_chat_assistant_trace__progress_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat/cloud-consent/{provider}": {
         parameters: {
             query?: never;
@@ -3449,6 +3470,8 @@ export interface components {
             reviewing?: boolean;
             /** Savedstyles */
             savedStyles?: string[];
+            /** Traceid */
+            traceId?: string | null;
             view: components["schemas"]["AssistantView"];
         };
         /** AssistantResponse */
@@ -3496,11 +3519,25 @@ export interface components {
              * @default false
              */
             stoppedEarly?: boolean;
+            /** Trace */
+            trace?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
             /**
              * Usedevidencefallback
              * @default false
              */
             usedEvidenceFallback?: boolean;
+        };
+        /**
+         * AssistantTraceResponse
+         * @description Snapshot of a running or completed step; empty when absent or expired.
+         */
+        AssistantTraceResponse: {
+            /** Trace */
+            trace?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
         };
         /** AssistantView */
         AssistantView: {
@@ -6057,6 +6094,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssistantProgressResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assistant_trace_route_api_chat_assistant_trace__progress_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                progress_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTraceResponse"];
                 };
             };
             /** @description Validation Error */
@@ -9340,6 +9408,9 @@ export interface operations {
                 tab?: "boxplot" | "lineplot" | "heatmap";
                 identifier?: "workflow" | "genes";
                 dataSource?: "data" | "filtered" | "imputed";
+                /** @description JSON list of names selected under carryIdentifier */
+                carry?: string | null;
+                carryIdentifier?: ("workflow" | "genes") | null;
             };
             header?: never;
             path: {

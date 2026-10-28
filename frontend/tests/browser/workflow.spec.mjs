@@ -984,7 +984,8 @@ test('assistant changes are logged and the last one can be undone', { tag: '@ai'
   await expect(page.getByText('Highlight selection updated.', { exact: false })).toBeVisible({ timeout: 45000 });
   await expect(highlight).toHaveValue('G1');
 
-  const log = page.locator('details').filter({ hasText: 'Changes made by the assistant (1)' });
+  const log = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Changes made by the assistant' }) });
+  await expect(log.locator('summary')).toHaveText('Changes made by the assistant (1 recorded; 1 this request)');
   await log.locator('summary').click();
   await expect(log.getByRole('list', { name: 'Assistant changes' })).toContainText('Highlight terms: empty → G1');
 
@@ -1000,7 +1001,7 @@ test('assistant changes are logged and the last one can be undone', { tag: '@ai'
   await highlight.press('Tab');
   await log.getByRole('button', { name: 'Undo last change', exact: true }).click();
   await expect(highlight).toHaveValue('');
-  await expect(page.getByText('Changes made by the assistant (0)')).toBeVisible();
+  await expect(log.locator('summary')).toHaveText('Changes made by the assistant (0 recorded; 0 this request)');
   await expect(page.getByRole('status').filter({ hasText: 'Set Highlight terms back to ""' })).toBeVisible();
 });
 

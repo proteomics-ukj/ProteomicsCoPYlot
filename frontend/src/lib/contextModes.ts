@@ -8,7 +8,7 @@ import type { ContextMode } from "./types";
  * page can hold several (each QC plot reports its own).
  */
 export const CONTEXT_SLOTS = [
-  "qc:boxplot", "qc:pca", "qc:abundance", "qc:coverage",
+  "qc:boxplot", "qc:cv", "qc:pca", "qc:abundance", "qc:coverage",
   "completeness",
   "stats:volcano", "stats:anova", "stats:ora", "stats:pathwayHeatmap", "stats:simulation",
   "peptide", "singleProtein", "comparison", "phospho", "phospho:ksea",
@@ -31,7 +31,7 @@ export type Navigation = {
 };
 
 const QC_SLOTS: Record<string, ContextSlot> = {
-  boxplot: "qc:boxplot", pca: "qc:pca", abundance: "qc:abundance", coverage: "qc:coverage",
+  boxplot: "qc:boxplot", cv: "qc:cv", pca: "qc:pca", abundance: "qc:abundance", coverage: "qc:coverage",
 };
 const STATS_SLOTS: Record<string, ContextSlot> = {
   volcano: "stats:volcano", anova: "stats:anova", ora: "stats:ora",

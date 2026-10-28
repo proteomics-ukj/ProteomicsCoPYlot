@@ -83,6 +83,8 @@ class AssistantRequest(ChatRequest):
     plotImage: str | None = Field(default=None, max_length=3_000_000)
     # A random id for this step; the browser polls its progress while it runs.
     progressId: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{8,64}$")
+    # Diagnostic correlation only; does not enable provider streaming.
+    traceId: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{8,64}$")
     # The step after an Advanced batch: the model looks at the rendered result once.
     reviewing: bool = False
     # Names of the plot styles saved in this browser session (lib/plotStyles.ts).
@@ -183,6 +185,7 @@ class WrittenAnswer(StrictModel):
 
 
 class AssistantResponse(StrictModel):
+    trace: list[dict[str, JsonValue]] = Field(default_factory=list)
     usedEvidenceFallback: bool = False
     # Changes allowed in this user request at this model's level.
     actionBudget: int = 8
@@ -209,3 +212,8 @@ class AssistantProgressResponse(BaseModel):
     tokens: int = 0
     seconds: int = 0
     calls: int = 0
+
+
+class AssistantTraceResponse(BaseModel):
+    """Snapshot of a running or completed step; empty when absent or expired."""
+    trace: list[dict[str, JsonValue]] = Field(default_factory=list)

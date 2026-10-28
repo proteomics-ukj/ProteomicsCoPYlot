@@ -77,6 +77,9 @@ def evidence_context(text: str) -> dict[str, dict[str, str]]:
 def _field_meaning(label: str, name: str, context: dict) -> dict[str, str]:
     if label in {"cov_condition", "cov_answer_summary"} and name.endswith("_cv"):
         return {"metric": "coefficient of variation", "summary": name[:-3], "unit": "percent"}
+    if label.startswith("missing_") and name == "missing_percent":
+        # Per-sample and per-condition completeness lines carry a percentage.
+        return {"metric": "share of missing measurements", "unit": "percent"}
     if label == "volcano_term":
         selected = context.get("volcano_selected_p_metric", {})
         if name == "log2FC":
@@ -244,6 +247,12 @@ def render_hypotheses(hypotheses: list[str], entity_names: set[str] | frozenset[
     return result
 
 
+def partial_qualification(item: Evidence) -> str:
+    if item.context.get("partial_scope", {}).get("scope") == "row_sample_only":
+        return "The overall counts cover the returned result; only the individual-row examples are limited to a sample."
+    return "I read part of the result here, not every row of it, so take this as a read of what is shown rather than a complete assessment."
+
+
 def evidence_qualifications(evidence: list[Evidence], used: set[int] | None = None) -> list[str]:
     """Caveats a person needs, for the evidence the answer actually used.
 
@@ -261,7 +270,16 @@ def evidence_qualifications(evidence: list[Evidence], used: set[int] | None = No
             if line.startswith(("Requested module uses default settings", "Entity lookup uses the application's data source")) or "default module settings (not current UI selections)" in line:
                 qualifications.append(line)
         if item.status == "partial":
-            qualifications.append("I read part of the result here, not every row of it, so take this as a read of what is shown rather than a complete assessment.")
+            qualifications.append(partial_qualification(item))
         if item.status == "unavailable":
-            qualifications.append("Some of what you asked about is not available for this selection.")
+            details = []
+            for line in item.text.splitlines():
+                if "status=error" not in line and "status=incomplete_parameters" not in line:
+                    continue
+                fields = dict(part.split("=", 1) for part in line.split("|")[1:] if "=" in part)
+                detail = fields.get("detail", "").strip().rstrip(".")
+                if detail:
+                    details.append(detail[:220])
+            qualifications.append("The requested result is unavailable: " + details[0] + "."
+                                  if details else "Some of what you asked about is not available for this selection.")
     return list(dict.fromkeys(qualifications))

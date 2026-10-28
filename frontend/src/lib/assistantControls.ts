@@ -112,7 +112,7 @@ export function undoLastAssistantRequest(): string {
 let surfaceModule = "";
 export function assistantSurfaceReady(module: string) {
   // Canvas image loads add export controls; include them before taking a view snapshot.
-  return surfaceModule === module && !document.querySelector('[data-assistant-tile] [aria-busy="true"]');
+  return surfaceModule === module && !document.querySelector('[data-assistant-pending="true"], [data-assistant-tile] [aria-busy="true"]');
 }
 export function useAssistantSurface(module: string) {
   useLayoutEffect(() => {
@@ -252,13 +252,13 @@ export function readAssistantControls(question = "", searches: Record<string, st
     const selected = Array.isArray(control.value) ? control.value : [String(control.value)];
     return [{ ...control, options: Array.from(new Set([...selected, ...relevant, ...control.options])).slice(0, 40) }];
   }).sort((a, b) => Number(searches[b.id] !== undefined) - Number(searches[a.id] !== undefined)
-    || Number(words.some(w => b.label.toLowerCase().includes(w))) - Number(words.some(w => a.label.toLowerCase().includes(w)))
     // The appearance panel is registered even while the user keeps it closed,
     // so its ~100 settings could push a selection control past the transport
-    // cap. Cosmetics the question does not name yield to the analysis controls,
+    // cap. Cosmetics yield to the analysis controls before matching question words,
     // and grouped settings (the per-condition colours of a 16-condition project)
     // yield to the page's own selectors, whatever the question says (GRK, 2026-10-14).
     || Number(!!a.appearance) - Number(!!b.appearance)
+    || Number(words.some(w => b.label.toLowerCase().includes(w))) - Number(words.some(w => a.label.toLowerCase().includes(w)))
     || Number(isGroupedSetting(a.label)) - Number(isGroupedSetting(b.label))
     || a.id.localeCompare(b.id)).slice(0, 100);
 }

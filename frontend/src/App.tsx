@@ -1048,6 +1048,7 @@ export default function App() {
           activeTab={activeQcTab}
           onWorkflowScopeChange={setQcWorkflowScope}
           onBoxplotContextModeChange={reportContextMode["qc:boxplot"]}
+          onCvContextModeChange={reportContextMode["qc:cv"]}
           onPcaContextModeChange={reportContextMode["qc:pca"]}
           onAbundanceContextModeChange={reportContextMode["qc:abundance"]}
           onCoverageContextModeChange={reportContextMode["qc:coverage"]}

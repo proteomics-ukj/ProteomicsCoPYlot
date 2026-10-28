@@ -55,6 +55,7 @@ type Props = {
   activeTab: QcTab;
   onWorkflowScopeChange?: (workflow: string) => void;
   onBoxplotContextModeChange?: (mode: ContextMode | null) => void;
+  onCvContextModeChange?: (mode: ContextMode | null) => void;
   onPcaContextModeChange?: (mode: ContextMode | null) => void;
   onAbundanceContextModeChange?: (mode: ContextMode | null) => void;
   onCoverageContextModeChange?: (mode: ContextMode | null) => void;
@@ -97,6 +98,7 @@ export default function QCPipelinePage({
   activeTab,
   onWorkflowScopeChange,
   onBoxplotContextModeChange,
+  onCvContextModeChange,
   onPcaContextModeChange,
   onAbundanceContextModeChange,
   onCoverageContextModeChange,
@@ -125,7 +127,9 @@ export default function QCPipelinePage({
     if (value === "protein" || value === "phospho" || value === "phosprot" || value === "peptide" || value === "precursor") return value;
     return "protein";
   });
-  const { datasets, availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
+  const { datasets, availableKinds, kindOptions, loading: datasetsLoading } = useCurrentDatasetsSnapshot();
+  const [qcOptionsReadyKind, setQcOptionsReadyKind] = useState<QcKind | null>(null);
+  const pcaContextPending = datasetsLoading || (isAnnotationKind(kind) && availableKinds.includes(kind) && qcOptionsReadyKind !== kind);
   // Rebuilds plot and table requests when the phosphosite localization cutoff changes.
   const plotSignal = useAdvancedPlotSignal();
   const [conditionOptions, setConditionOptions] = useState<string[]>([]);
@@ -387,8 +391,12 @@ export default function QCPipelinePage({
   }, [activeTab, box.mode, onBoxplotContextModeChange]);
 
   useEffect(() => {
+    onCvContextModeChange?.(activeTab === "cv" ? { kind, outliers: cv.outliers } : null);
+  }, [activeTab, kind, cv.outliers, onCvContextModeChange]);
+
+  useEffect(() => {
     if (!onPcaContextModeChange) return;
-    if (activeTab !== "pca") {
+    if (activeTab !== "pca" || pcaContextPending) {
       onPcaContextModeChange(null);
       return;
     }
@@ -403,7 +411,7 @@ export default function QCPipelinePage({
       scaling: pca.scaling,
     };
     onPcaContextModeChange(mode);
-  }, [activeTab, pca.dataSource, pca.method, pca.plotDim, pca.type, pca.scaling, onPcaContextModeChange]);
+  }, [activeTab, pcaContextPending, pca.dataSource, pca.method, pca.plotDim, pca.type, pca.scaling, onPcaContextModeChange]);
 
   const [pcaFeatures, setPcaFeatures] = useState<QcPcaFeatureSummary | null>(null);
 
@@ -478,8 +486,11 @@ export default function QCPipelinePage({
       return;
     }
     const controller = new AbortController();
+    setQcOptionsReadyKind(null);
     getQcPlotOptions(kind, { signal: controller.signal })
       .then((payload) => {
+        if (controller.signal.aborted) return;
+        setQcOptionsReadyKind(kind);
         const unique = Array.from(new Set(payload.conditions.map((value) => value.trim()).filter(Boolean)));
         setConditionOptions(unique);
         const samples = Array.from(new Set((payload.samples ?? []).map((value) => value.trim()).filter(Boolean)));
@@ -504,7 +515,8 @@ export default function QCPipelinePage({
         });
       })
       .catch((error) => {
-        if (isAbortError(error)) return;
+        if (isAbortError(error) || controller.signal.aborted) return;
+        setQcOptionsReadyKind(kind);
         setConditionOptions([]);
         setSampleOptions([]);
         setSampleDisplayLabels({});
@@ -877,7 +889,7 @@ export default function QCPipelinePage({
 
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-assistant-pending={activeTab === "pca" && pcaContextPending ? "true" : undefined}>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">QC Pipeline</h2>
         <div className="mt-4 max-w-xs">

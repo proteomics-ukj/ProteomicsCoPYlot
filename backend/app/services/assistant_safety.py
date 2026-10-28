@@ -23,7 +23,7 @@ from app.schemas.assistant import AssistantRequest
 PIPELINE_CONTROL = re.compile(
     r"\b(?:contaminant\w*|contaminants_\w*|matchAccessions|also match exact protein accessions when available|laboratory proteins|dust/contact proteins|molecular weight markers/standard proteins|sigma-aldrich universal protein standard|common viral contaminants|normali[sz]\w*|imput\w*|filter\w*|transform\w*|localization probability|valid values?)\b", re.I)
 REFUSAL = ("The assistant never changes how data are filtered, normalized, imputed or transformed, "
-           "or the localization cutoff. Change those yourself on their pages. Nothing was changed.")
+           "or the localization cutoff. Use the analysis app to change processing settings manually. No data-processing settings were changed.")
 
 
 def is_pipeline_control(label: str) -> bool:

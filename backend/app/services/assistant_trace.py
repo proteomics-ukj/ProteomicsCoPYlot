@@ -99,7 +99,7 @@ def clean(value, secrets=()):
 
 class Trace:
     def __init__(self, *secrets, trace_id: str | None = None):
-        self.events = []
+        self.events: list[dict[str, object]] = []
         self.secrets = secrets
         self.trace_id = trace_id
 

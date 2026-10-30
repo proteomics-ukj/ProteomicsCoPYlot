@@ -138,6 +138,28 @@ does not reset or show this analysis warning.
 
 ## Notebook package
 
+The pip package provides Python analysis and plotting functions for scripts and
+notebooks. The browser application is distributed separately through GitHub Releases.
+Python 3.11 or newer is required; Python 3.11–3.13 are tested.
+
+Once Beta 2 is published to PyPI, install that exact release with:
+
+```bash
+python -m pip install "proteomicscopylot[bio]==1.0.0b2"
+```
+
+The version pin selects the beta explicitly; an unpinned install normally selects
+the latest stable release. Omit `[bio]` if FASTA parsing is not needed.
+
+```python
+from proteomicscopylot import notebook_functions as copylot
+
+data = copylot.load_example_data("protein")
+metadata = copylot.load_example_data("protein_metadata")
+filtered = copylot.filter_data(data, metadata, 3, "per_group")
+results = copylot.volcano_data_f(filtered, metadata, "WT", "GRK")
+```
+
 Install the Python package from a checkout of this repository:
 
 ```bash

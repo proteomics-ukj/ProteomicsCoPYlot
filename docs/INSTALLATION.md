@@ -261,6 +261,19 @@ editions.
 
 ## Python package
 
+The pip package contains notebook-facing analysis functions, bundled example data,
+and reference tables. Install the browser application separately from GitHub Releases.
+Python 3.11 or newer is required; Python 3.11–3.13 are tested.
+
+After Beta 2 is published to PyPI, select it explicitly:
+
+```bash
+python -m pip install "proteomicscopylot[bio]==1.0.0b2"
+```
+
+An unpinned install normally selects a stable release. The explicit version above
+selects Beta 2 without changing prerelease selection for unrelated packages.
+
 Install the notebook-facing package from a checkout of this repository:
 
 ```bash

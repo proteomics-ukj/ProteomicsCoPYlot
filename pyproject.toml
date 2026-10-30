@@ -15,6 +15,7 @@ authors = [
 ]
 keywords = ["proteomics", "phosphoproteomics", "plotting", "notebooks"]
 classifiers = [
+  "Development Status :: 4 - Beta",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
@@ -40,6 +41,11 @@ dependencies = [
   "matplotlib-venn>=1.0,<2",
   "plotly>=5.15,<8",
 ]
+
+[project.urls]
+Homepage = "https://github.com/proteomics-ukj/ProteomicsCoPYlot"
+Documentation = "https://github.com/proteomics-ukj/ProteomicsCoPYlot/blob/main/docs/INSTALLATION.md"
+Issues = "https://github.com/proteomics-ukj/ProteomicsCoPYlot/issues"
 
 [project.optional-dependencies]
 bio = [

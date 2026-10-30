@@ -157,7 +157,7 @@ rm(.copylot_source_file)
   paste0(
     text, " of ", noun, " dropped for ", purpose,
     " (", format(dropped, big.mark = ","), " of ", format(total, big.mark = ","), ")",
-    " \u2014 not observed in every sample"
+    ", not observed in every sample"
   )
 }
 
@@ -1081,7 +1081,7 @@ transform_phosprot <- function(
   output
 }
 
-qqnorm_plot <- function(data, meta, seed = 187) {
+qqnorm_plot <- function(data, meta, seed = 1) {
   values <- as.vector(.numeric_matrix(data, meta$sample))
   values <- values[is.finite(values)]
 
@@ -1112,7 +1112,7 @@ qqnorm_plot <- function(data, meta, seed = 187) {
 # the collapsed matrix. Retain the non-imputed site matrix for coverage checks;
 # aggregate imputed log2 values with data_scale="log2".
 # This generic helper cannot infer biological dataset level from an arbitrary frame.
-impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TRUE, seed=1337, method="quantile", down_shift=1.8, width=0.3) {
+impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TRUE, seed=1, method="quantile", down_shift=1.8, width=0.3) {
   .validate_meta_samples(meta)
   .validate_sample_values(data, meta)
   method <- tolower(trimws(method))
@@ -1404,7 +1404,7 @@ coverage_plot_summary <- function(
     dpi = 300,
     text = FALSE,
     text_size = 9,
-    seed = 69,
+    seed = 1,
     data_scale = "log2"
 ) {
   data <- .prepare_intensity_data(data, meta$sample, data_scale)
@@ -5481,14 +5481,14 @@ phosprot_regulation <- function(data, meta, condition1, condition2, in_pval=0.05
 
 rt_vs_pred_rt_plot <- function(
     data_path,
-    method = "Hexbin Plot",
+    method = "Scatter Plot",
     add_line = FALSE,
-    bins = 1000,
+    bins = 100,
     header = TRUE,
     width = 8,
     height = 6,
     dpi = 100,
-    seed = 69
+    seed = 1
 ) {
   data <- read_data(data_path)
   if (!all(c("Predicted.RT", "RT") %in% names(data))) {
@@ -5970,7 +5970,7 @@ single_protein_values <- function(data, meta, protein) {
   table
 }
 
-boxplot_int_single_prot <- function(data, meta, protein, outliers=FALSE, dots=FALSE, header=TRUE, legend=TRUE, plot_colors=NULL, width=8, height=6, dpi=100, seed=69) {
+boxplot_int_single_prot <- function(data, meta, protein, outliers=FALSE, dots=FALSE, header=TRUE, legend=TRUE, plot_colors=NULL, width=8, height=6, dpi=100, seed=1) {
   table <- single_protein_values(data, meta, protein)
   conditions <- unique(meta$condition)
   intensities <- lapply(conditions, function(condition) {
@@ -6256,7 +6256,7 @@ sty_plot <- function(data, localization_cutoff=0) {
   .plot_result()
 }
 
-phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI="blue", color_notclassI="orange", seed=69, is_log2=TRUE, localization_cutoff=0) {
+phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI="blue", color_notclassI="orange", seed=1, is_log2=TRUE, localization_cutoff=0) {
   data <- filter_localization(data, localization_cutoff)
   counts <- .phossite_coverage_counts(data, meta, is_log2)
   if (!any(counts["Unclassified", ] > 0)) counts <- counts[1:2, , drop=FALSE]

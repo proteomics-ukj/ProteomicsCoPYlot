@@ -448,7 +448,7 @@ def get_active_profile(*, package_name: str | None = None) -> str:
     return _active_profile_by_package().get(package, DEFAULT_METADATA_PROFILE_NAME)
 
 
-def list_profiles(*, package_name: str | None = None) -> list[str]:
+def list_profiles(*, package_name: str | None = None, active_first: bool = True) -> list[str]:
     package = _ensure_package(package_name)
     active = get_active_profile(package_name=package)
     names = list(_uploaded_metadata_by_package()[package].keys())
@@ -457,7 +457,7 @@ def list_profiles(*, package_name: str | None = None) -> list[str]:
         state = _uploaded_metadata_by_package()[package][DEFAULT_METADATA_PROFILE_NAME]
         if all(value is None for value in state.values()) and active != DEFAULT_METADATA_PROFILE_NAME:
             names = [name for name in names if name != DEFAULT_METADATA_PROFILE_NAME]
-    if active in names:
+    if active_first and active in names:
         return [active] + [name for name in names if name != active]
     return names
 

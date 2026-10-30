@@ -950,7 +950,7 @@ def single_protein_boxplot_plot(
     identifier: str = "workflow",
     outliers: bool = False,
     dots: bool = False,
-    random_seed: int = 69,
+    random_seed: int = 1,
     header: bool = True,
     legend: bool = True,
     width_cm: float = 20,

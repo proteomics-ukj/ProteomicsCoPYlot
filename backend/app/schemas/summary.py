@@ -20,6 +20,7 @@ class SummaryMetadataTable(BaseModel):
 class SummaryTablesResponse(BaseModel):
     protein: SummaryMetadataTable
     phospho: SummaryMetadataTable
+    sampleNames: list[str] = Field(default_factory=list)
 
 
 class SummaryVolcanoEntry(BaseModel):
@@ -68,6 +69,8 @@ class SummaryReportRequest(BaseModel):
     title: str = ""
     author: str = ""
     textEntries: dict[str, str] = Field(default_factory=dict)
+    includeSampleLabels: bool = False
+    sampleLabels: dict[str, str] = Field(default_factory=dict)
     reportContext: SummaryReportContext | None = None
 
 

@@ -11,7 +11,7 @@ def heatmap_notice(total: int, used: int, *, noun: str = "features") -> str:
     message = f"Heatmap-usable {noun}: {used:,} of {total:,} ({percent:.1f}%)"
     if used < total:
         message += (
-            f" — {total - used:,} excluded because of missing or undefined values "
+            f"; {total - used:,} excluded because of missing or undefined values "
             "in the selected samples after preprocessing"
         )
     return message
@@ -67,7 +67,7 @@ def completeness_message(
         return None
     return (
         f"{_percent_text(report.percent)} of {noun} dropped for {purpose} "
-        f"({report.dropped:,} of {report.total:,}) — not observed in every sample"
+        f"({report.dropped:,} of {report.total:,}), not observed in every sample"
     )
 
 

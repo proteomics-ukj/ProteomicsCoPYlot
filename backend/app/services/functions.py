@@ -924,7 +924,7 @@ def impute_values_with_diagnostics(
     sample_columns: list[str],
     q: float = 0.01,
     adj_std: float = 0.3,
-    seed: int = 1337,
+    seed: int = 1,
     sample_wise: bool = True,
     method="quantile",
     down_shift=1.8,
@@ -1329,7 +1329,7 @@ the plot the user sees and the sentence that describes it cannot disagree.
 def qqnorm_plot_data(
     values: np.ndarray,
     max_points: int = QQ_MAX_POINTS,
-    seed: int = 187,
+    seed: int = 1,
 ) -> dict[str, list[tuple[float, float]]]:
     """Sample quantiles against normal quantiles, on whatever scale is passed.
 

@@ -64,12 +64,10 @@
     "Number of phosphoproteins, phosphopeptides and phosphosite rows in the dataset. Phosphosite rows are counted by collapse key, so a multiply phosphorylated peptide contributes one row per site; phosphopeptides are counted as distinct peptide sequences regardless of which residue carries the phosphate, so two sites on the same peptide count as one phosphopeptide."
   ],
   "Coverage(Number)Phos": [
-    "Identification of phosphosites is a measure of the number of non-missing measurements by replicate; each sample's bar is split by localization class (Class I, Not Class I, Unclassified).",
-    "Low phosphosite counts in a sample / LC-MS/MS run may suggest technical variability, low enrichment efficiency, or sample processing issues that should be considered before downstream statistical analysis.",
-    "Ideally, the numbers of phosphosite identifications, and the share of confidently localized (Class I) sites among them, are high and comparable across all samples in the dataset."
+    "Coverage counts quantified phosphosites in each sample, grouped by experimental condition. The QC coverage settings determine whether replicate counts or condition summaries are shown."
   ],
   "Coverage(Quality)Phos": [
-    "The same counts by localization class, summarised per condition: one bar per class with the mean over the condition's samples and the standard deviation as error bar."
+    "Localization coverage distinguishes Class I phosphosites from other quantified sites. The selected phosphosite coverage view shows individual samples or condition summaries with replicate values and standard deviations."
   ],
   "MissingValuePhos": [
     "The amount of missing values can be affected by biological regulation of phosphorylation or by technical factors during sample processing and MS-measurements, and it can vary substantially between experiments. The plot counts, for each phosphosite, in how many samples it is missing, and shows how many phosphosites fall into each count.",

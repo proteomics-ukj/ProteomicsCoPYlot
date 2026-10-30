@@ -48,32 +48,34 @@ export default function LocalizationCutoffField({ kind, className }: Props) {
   return (
     <div className={`block text-sm ${className ?? ""}`}>
       <label htmlFor={inputId} className="mb-2 block font-medium text-slate-700">Localization probability cutoff</label>
-      <AssistantInput
-        id={inputId}
-        type="text"
-        lang="en-US"
-        inputMode="decimal"
-        value={draft}
-        disabled={disabled}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commit();
-          }
-        }}
-        aria-invalid={invalid}
-        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
-      />
+      <div>
+        <AssistantInput
+          id={inputId}
+          type="text"
+          lang="en-US"
+          inputMode="decimal"
+          value={draft}
+          disabled={disabled}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+          }}
+          aria-invalid={invalid}
+          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
+        />
+        {available && cutoff < 0.75 && belowClassOne > 0 ? (
+          <span className="mt-1 block text-xs text-amber-700">
+            Non-class I sites included ({belowClassOne.toLocaleString()} of {sites.toLocaleString()} retained sites below 0.75 localization probability).
+          </span>
+        ) : null}
+      </div>
       {invalid || error ? (
         <span className="mt-1 block text-xs text-red-700">
           {invalid ? "Enter a value between 0.00 and 1.00." : error}
-        </span>
-      ) : null}
-      {available && cutoff < 0.75 && belowClassOne > 0 ? (
-        <span className="mt-1 block text-xs text-amber-700">
-          Non-class I sites included ({belowClassOne.toLocaleString()} of {sites.toLocaleString()} retained sites below 0.75 localization probability).
         </span>
       ) : null}
     </div>

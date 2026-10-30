@@ -156,8 +156,10 @@ COPYLOT_ALLOWED_HOSTS=proteomics.institute.example
 ```
 
 **Large datasets.** Analysis runs in memory, so available RAM can limit dataset
-size even when an upload is accepted. Upload, restore and notebook-export limits
-are configurable in [Environment variables](ENVIRONMENT.md). Match your reverse
+size even when an upload is accepted. Notebook exports have no fixed size cap;
+their cache targets control eviction of older snapshots, not export eligibility.
+Available RAM still constrains generation. Upload and restore limits and notebook
+cache targets are configurable in [Environment variables](ENVIRONMENT.md). Match your reverse
 proxy's request limit to the upload limit, allowing for multipart overhead.
 
 ## Frontend modes

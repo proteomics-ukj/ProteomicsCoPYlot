@@ -200,6 +200,6 @@ def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, s
         # Never publish provenance captured across a concurrent dataset edit.
         token = capture_notebook(get_session_id(), recipe) if runtime_cache_version() == revision else ""
     except ValueError:
-        # Snapshot memory limits must not break an otherwise valid plot.
+        # A preprocessing/provenance error must not break an otherwise valid plot.
         token = ""
     return content, token

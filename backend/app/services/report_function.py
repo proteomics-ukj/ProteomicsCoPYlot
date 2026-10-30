@@ -191,6 +191,8 @@ def _sample_mapping_rows_html(frame: pd.DataFrame, *, show_pairs: bool) -> str:
     header = ["Plot label", "Original sample name", "Condition"]
     if show_pairs:
         header.append("Pair")
+    if "custom_label" in frame:
+        header.append("Custom label")
     head = "".join(f"<th>{html.escape(name)}</th>" for name in header)
 
     body_rows: list[str] = []
@@ -205,6 +207,8 @@ def _sample_mapping_rows_html(frame: pd.DataFrame, *, show_pairs: bool) -> str:
         ]
         if show_pairs:
             cells.append(f"<td>{html.escape(str(row.pair_id))}</td>")
+        if "custom_label" in frame:
+            cells.append(f"<td>{html.escape(str(row.custom_label))}</td>")
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
     return (
@@ -254,6 +258,7 @@ def _sample_mapping_html(
     *,
     levels: list[tuple[str, pd.DataFrame | None]],
     warnings: list[str],
+    custom_labels: dict[str, str] | None = None,
 ) -> str:
     """Per-level tables mapping original run names to their plot labels."""
     parts: list[str] = [
@@ -268,6 +273,8 @@ def _sample_mapping_html(
             continue
         try:
             mapping = sample_label_frame(metadata)
+            if custom_labels is not None:
+                mapping["custom_label"] = mapping["sample"].map(lambda sample: custom_labels.get(str(sample), ""))
         except Exception as exc:  # pragma: no cover - defensive runtime behavior
             _report_failure(warnings, f"Sample mapping ({level_name})", exc)
             continue
@@ -1187,7 +1194,7 @@ def _pca_plot_options(settings: Mapping[str, Any]) -> dict[str, Any]:
         "color_by": _to_str(settings.get("colorBy"), "Condition"),
         "dbscan_eps_factor": _to_float(settings.get("dbscanEpsFactor"), 0.5, minimum=1e-6, maximum=1000.0),
         "dbscan_min_samples": _to_int(settings.get("dbscanMinSamples"), 2, minimum=1, maximum=500),
-        "random_state": _to_int(settings.get("randomState"), 42, minimum=0, maximum=10_000_000),
+        "random_state": _to_int(settings.get("randomState"), 1, minimum=0, maximum=10_000_000),
         "width_cm": _to_float(settings.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
     }
 
@@ -1233,7 +1240,7 @@ def _pca_parameters_html(kind: str, data_source: str, options: Mapping[str, Any]
                 cluster_method="DBSCAN",
                 dbscan_eps_factor=factor,
                 dbscan_min_samples=min_samples,
-                random_state=int(options.get("random_state", 42)),
+                random_state=int(options.get("random_state", 1)),
             )
             resolved = summary.get("dbscan") or {}
             if resolved.get("epsEffective"):
@@ -1416,8 +1423,8 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             [
                 f"<p class='toc-group'>{phospho_block}. Phosphosite Level Plots</p>",
                 f"<p class='toc-item'>{phospho_block}.1 Overview Phosphosites</p>",
-                f"<p class='toc-item'>{phospho_block}.2 Coverage Plot (per sample)</p>",
-                f"<p class='toc-item'>{phospho_block}.3 Coverage Plot (per condition)</p>",
+                f"<p class='toc-item'>{phospho_block}.2 Coverage Plot (per condition)</p>",
+                f"<p class='toc-item'>{phospho_block}.3 Coverage Plot (localization)</p>",
                 f"<p class='toc-item'>{phospho_block}.4 Missing Value Plot</p>",
                 f"<p class='toc-item'>{phospho_block}.5 Histogram Intensity</p>",
                 f"<p class='toc-item'>{phospho_block}.6 Boxplot Intensity</p>",
@@ -1445,6 +1452,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                 ),
             ],
             warnings=warnings,
+            custom_labels=payload.sampleLabels if payload.includeSampleLabels else None,
         )
     )
 
@@ -1498,12 +1506,12 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             text_key="RT",
             content_html=_safe_png(
                 renderer=lambda: report_plot(peptide_rt_plot,
-                    method=_to_str(peptide_rt.get("method"), "Hexbin Plot"),
+                    method=_to_str(peptide_rt.get("method"), "Scatter Plot"),
                     add_line=_to_bool(peptide_rt.get("addLine"), False),
-                    bins=_to_int(peptide_rt.get("bins"), 1000, minimum=10, maximum=2000),
+                    bins=_to_int(peptide_rt.get("bins"), 100, minimum=10, maximum=2000),
                     header=_to_bool(peptide_rt.get("header"), True),
                     sampling_seed=_to_int(
-                        peptide_rt.get("randomSeed"), 69, minimum=0, maximum=2_147_483_647
+                        peptide_rt.get("randomSeed"), 1, minimum=0, maximum=2_147_483_647
                     ),
                     width_cm=_to_float(peptide_rt.get("widthCm"), 20.0, minimum=5.0, maximum=60.0),
                     height_cm=_to_float(peptide_rt.get("heightCm"), 15.0, minimum=5.0, maximum=60.0),
@@ -1598,7 +1606,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                         text_size=_to_int(protein_coverage.get("textSize"), 9, minimum=6, maximum=24),
                         random_seed=_to_int(
                             protein_coverage.get("randomSeed"),
-                            187,
+                            1,
                             minimum=0,
                             maximum=2_147_483_647,
                         ),
@@ -1841,17 +1849,14 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             html_parts.append(filter_paragraphs["phospho"])
         phospho_coverage = _module_settings(report_context, "phospho", "coverage")
         # The Phospho-specific page's own coverage settings (include-ID, the
-        # conditions shown, colours, point jitter), saved for the report.
+        # colours and point jitter), saved for the report. All conditions are included.
         site_coverage = _module_settings(report_context, "phospho", "phosphoCoverage")
-        site_coverage_conditions = [
-            str(condition) for condition in site_coverage.get("conditions", []) or [] if str(condition).strip()
-        ] if isinstance(site_coverage.get("conditions"), list) else []
         site_coverage_options = dict(
             include_id=_to_bool(site_coverage.get("includeId"), False),
-            conditions=site_coverage_conditions or None,
+            conditions=None,
             color_class_i=_to_str(site_coverage.get("colorClassI"), "#2563eb"),
             color_not_class_i=_to_str(site_coverage.get("colorNotClassI"), "#f59e0b"),
-            random_seed=_to_int(site_coverage.get("randomSeed"), 69, minimum=0, maximum=2_147_483_647),
+            random_seed=_to_int(site_coverage.get("randomSeed"), 1, minimum=0, maximum=2_147_483_647),
         )
         phospho_hist = _module_settings(report_context, "phospho", "hist")
         phospho_box = _module_settings(report_context, "phospho", "box")
@@ -1877,18 +1882,28 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         _append_plot_section(
             html_parts=html_parts,
             section_id=f"{phospho_block}.2",
-            title="Coverage Plot (per sample)",
+            title="Coverage Plot (per condition)",
             description=None,
             general_comment_key="Coverage(Number)Phos",
-            comments_override=[*GENERAL_COMMENTS.get("Coverage(Number)Phos", []), CLASS_I_SENTENCE],
+            comments_override=GENERAL_COMMENTS.get("Coverage(Number)Phos", []),
             text_entries=text_entries,
             text_key="Coverage(Number)Phos",
             content_html=(
                 _safe_png(
-                    renderer=lambda: report_plot(phospho_coverage_png,
-                        mode="Normal",
-                        **site_coverage_options,
-                        advanced=phospho_coverage_advanced,
+                    renderer=lambda: report_plot(qc_coverage_plot,
+                        kind="phospho",
+                        include_id=_to_bool(phospho_coverage.get("includeId"), False),
+                        header=_to_bool(phospho_coverage.get("header"), True),
+                        legend=_to_bool(phospho_coverage.get("legend"), True),
+                        summary=_to_bool(phospho_coverage.get("summary"), False),
+                        text=_to_bool(phospho_coverage.get("text"), False),
+                        text_size=_to_int(phospho_coverage.get("textSize"), 9, minimum=6, maximum=24),
+                        random_seed=_to_int(phospho_coverage.get("randomSeed"), 1, minimum=0, maximum=2_147_483_647),
+                        width_cm=_to_float(phospho_coverage.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
+                        height_cm=_to_float(phospho_coverage.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
+                        dpi=_to_int(phospho_coverage.get("dpi"), 300, minimum=72, maximum=1200),
+                        reference_line=_to_bool(phospho_coverage.get("referenceLine"), True),
+                        advanced=qc_coverage_advanced,
                     ),
                     fallback_title="Phospho Coverage Number Plot",
                     warnings=warnings,
@@ -1907,7 +1922,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         _append_plot_section(
             html_parts=html_parts,
             section_id=f"{phospho_block}.3",
-            title="Coverage Plot (per condition)",
+            title="Coverage Plot (localization)",
             description=None,
             general_comment_key="Coverage(Quality)Phos",
             comments_override=[*GENERAL_COMMENTS.get("Coverage(Quality)Phos", []), CLASS_I_SENTENCE],
@@ -1915,7 +1930,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             text_key="Coverage(Quality)Phos",
             content_html=_safe_png(
                 renderer=lambda: report_plot(phospho_coverage_png,
-                    mode="Summary",
+                    mode=_to_str(site_coverage.get("mode"), "Normal"),
                     **site_coverage_options,
                     advanced=phospho_coverage_advanced,
                 ),

@@ -300,7 +300,7 @@ def phospho_coverage_png(
     mode: str = "Normal",
     color_class_i: str = "#2563eb",
     color_not_class_i: str = "#f59e0b",
-    random_seed: int = 69,
+    random_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,

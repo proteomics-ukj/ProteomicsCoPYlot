@@ -12,9 +12,6 @@ export default function ContaminantFilter({ value = DEFAULT_CONTAMINANTS, onChan
       Filter contaminants
     </label>
     {value.enabled && <div className="mt-3 space-y-3 text-sm text-slate-700">
-      <p>Cambridge cRAP: all categories are selected by default. Choose any combination below.
-        Rows are removed after the valid-value filter only when every protein in the group matches.
-        Mixed groups and missing identifiers stay. Gene names are never matched.</p>
       <fieldset className="space-y-2">
         <legend className="mb-2 font-medium">Contaminant categories</legend>
         {CONTAMINANT_CATEGORIES.map(([id, label]) => <label key={id} className="flex items-center gap-2">
@@ -32,12 +29,7 @@ export default function ContaminantFilter({ value = DEFAULT_CONTAMINANTS, onChan
             onChange={(e) => onChange({ ...value, matchAccessions: e.target.checked })} />
           Also match exact protein accessions when available
         </label>
-        <p className="mt-2">Uses protein entry names or full protein names, with accessions as an additional
-          match or fallback. MaxQuant CON__ and FragPipe contam_ prefixes are ignored for matching;
-          search-engine flags alone do not remove rows. No partial matches or automatic isoform merging.</p>
       </details>
-      <p>Protein settings also apply to peptide parent proteins. Phosphosite settings are independent.
-        Review the selected categories: some listed proteins may be genuine components of your sample.</p>
     </div>}
   </div>;
 }

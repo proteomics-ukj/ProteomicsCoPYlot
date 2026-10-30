@@ -691,6 +691,8 @@ export type SummaryReportRequest = {
   title: string;
   author: string;
   textEntries: Record<string, string>;
+  includeSampleLabels?: boolean;
+  sampleLabels?: Record<string, string>;
   reportContext?: SummaryReportContext;
 };
 

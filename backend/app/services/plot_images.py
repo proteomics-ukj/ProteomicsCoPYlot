@@ -463,7 +463,7 @@ def _imputation_density_histogram_spec(
 
 def distribution_qqnorm_plot(
     kind: AnnotationKind,
-    random_seed: int = 187,
+    random_seed: int = 1,
     advanced: dict[str, Any] | None = None,
 ) -> bytes:
     plt = _get_plt()
@@ -510,7 +510,7 @@ def qc_coverage_plot(
     summary: bool = False,
     text: bool = False,
     text_size: int = 9,
-    random_seed: int = 187,
+    random_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
@@ -1258,7 +1258,7 @@ def qc_pca_feature_summary(
     umap_min_dist: float = 0.1,
     tsne_perplexity: float = 30.0,
     tsne_learning_rate: float = 200.0,
-    random_state: int = 42,
+    random_state: int = 1,
 ) -> dict[str, object]:
     """How many features the PCA projection is actually built from.
 
@@ -1357,7 +1357,7 @@ def _pca_projection(
     umap_min_dist: float = 0.1,
     tsne_perplexity: float = 30.0,
     tsne_learning_rate: float = 200.0,
-    random_state: int = 42,
+    random_state: int = 1,
     scaling: str = "auto",
 ) -> tuple[pd.DataFrame, np.ndarray | None, str]:
     _, frame, _ = select_matrix(kind, data_source)
@@ -1507,7 +1507,7 @@ def _compute_cluster_labels(
     cluster_count: int = 3,
     dbscan_eps_factor: float = 0.5,
     dbscan_min_samples: int = 2,
-    random_state: int = 42,
+    random_state: int = 1,
 ) -> np.ndarray | None:
     method_key = resolve_cluster_method(cluster_method)
     if method_key in {"none", "", "off"}:
@@ -1633,7 +1633,7 @@ def qc_pca_plot(
     tsne_learning_rate: float = 200.0,
     dbscan_eps_factor: float = 0.5,
     dbscan_min_samples: int = 2,
-    random_state: int = 42,
+    random_state: int = 1,
     scaling: str = "auto",
     width_cm: float = 20,
     height_cm: float = 10,
@@ -1796,7 +1796,7 @@ def qc_pca_interactive_html(
     tsne_learning_rate: float = 200.0,
     dbscan_eps_factor: float = 0.5,
     dbscan_min_samples: int = 2,
-    random_state: int = 42,
+    random_state: int = 1,
     scaling: str = "auto",
     width_cm: float = 20,
     height_cm: float = 10,

@@ -547,7 +547,7 @@ export function VolcanoPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="Volcano Plot">
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={kindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>
@@ -709,7 +709,7 @@ export function VolcanoPanel({
       ) : null}
       {canRun && result && displayedResult ? (
         <>
-          <SummarySection items={[{ label: "Rows", value: String(displayedResult.totalRows) }, { label: "Upregulated", value: String(displayedResult.upregulatedCount) }, { label: "Downregulated", value: String(displayedResult.downregulatedCount) }, { label: "Not Significant", value: String(displayedResult.notSignificantCount) }, { label: "No p-value", value: String(displayedResult.unavailableCount ?? 0) }]} />
+          <SummarySection items={[{ label: "Rows", value: String(displayedResult.totalRows) }, { label: "Upregulated", value: String(displayedResult.upregulatedCount) }, { label: "Downregulated", value: String(displayedResult.downregulatedCount) }, { label: "Not Significant", value: String(displayedResult.notSignificantCount) }]} />
           {renderType === "Normal" ? (
             <ImageSection
               title="Volcano Plot"

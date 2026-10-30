@@ -14,7 +14,11 @@ def sequence_source():
     original = module_source('peptide_tools.py')
     function = function_definition(original, 'peptide_sequence_coverage')
     function = replace_once(function, 'def peptide_sequence_coverage(\n    *,', 'def calculate(data, database, *,')
-    function = replace_once(function, '    frame = get_peptide_frame()', '    frame = data')
+    function = replace_once(function,
+        "    from app.services.peptide_preparation_cache import cached_peptide_preparation\n"
+        "    peptide_index = cached_peptide_preparation('protein-peptide-index', (), _protein_peptide_index)\n"
+        "    peptides = peptide_index.get(protein, [])",
+        "    peptides = _protein_peptides(data, protein)")
     function = replace_once(function, '    db = _load_fasta_dataframe(species)', '    db = database')
     # The notebook carries the selected record itself; no bundled file is consulted on a miss.
     function = replace_once(function, '    sequence = _fasta_sequence(db, protein, species)', '    sequence = _fasta_sequence(db, protein)')

@@ -54,7 +54,7 @@ def qc_coverage_route(
     summary: bool = False,
     text: bool = False,
     textSize: int = 9,
-    randomSeed: int = 187,
+    randomSeed: int = 1,
     widthCm: float = 20,
     heightCm: float = 10,
     dpi: int = 300,
@@ -155,7 +155,7 @@ def qc_pca_features_route(
     umapMinDist: float = 0.1,
     tsnePerplexity: float = 30.0,
     tsneLearningRate: float = 200.0,
-    randomState: int = 42,
+    randomState: int = 1,
 ) -> dict[str, object]:
     # The ellipse notice needs the same projection the figure was drawn from, so
     # this route takes every control that moves a point.
@@ -358,7 +358,7 @@ def qc_pca_route(
     tsneLearningRate: float = 200.0,
     dbscanEpsFactor: float = 0.5,
     dbscanMinSamples: int = 2,
-    randomState: int = 42,
+    randomState: int = 1,
     scaling: FeatureScaling = "auto",
     widthCm: float = 20,
     heightCm: float = 10,
@@ -414,7 +414,7 @@ def qc_pca_interactive_route(
     tsneLearningRate: float = 200.0,
     dbscanEpsFactor: float = 0.5,
     dbscanMinSamples: int = 2,
-    randomState: int = 42,
+    randomState: int = 1,
     scaling: FeatureScaling = "auto",
     widthCm: float = 20,
     heightCm: float = 10,

@@ -4,7 +4,7 @@ import OptionsLayout from "../../components/OptionsLayout";
 import InteractivePlot from "../../components/InteractivePlot";
 import NotebookDownload, { type RenderedNotebook } from "../../components/NotebookDownload";
 import { restorePlotDimensionCm, restorePlotDpi } from "../../lib/plotLimits";
-import { SizeRow, MultiSelectField } from "../../components/PlotFields";
+import { SizeRow } from "../../components/PlotFields";
 import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { collectColumns } from "../../lib/tableData";
@@ -103,10 +103,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     mode: String(persistedCoverage.mode ?? "Normal"),
     colorClassI: String(persistedCoverage.colorClassI ?? "#2563eb"),
     colorNotClassI: String(persistedCoverage.colorNotClassI ?? "#f59e0b"),
-    randomSeed: Number(persistedCoverage.randomSeed ?? 69),
-    conditions: Array.isArray(persistedCoverage.conditions)
-      ? persistedCoverage.conditions.map((value) => String(value ?? ""))
-      : ([] as string[]),
+    randomSeed: Number(persistedCoverage.randomSeed ?? 1),
     widthCm: restorePlotDimensionCm(persistedCoverage.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedCoverage.heightCm, 10),
     dpi: restorePlotDpi(persistedCoverage.dpi, 300),
@@ -184,14 +181,14 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
   useEffect(() => {
     saveQcReportSettings("phospho", {
       phosphoCoverage: {
+        mode: coverage.mode,
         includeId: coverage.includeId,
-        conditions: coverage.conditions,
         colorClassI: coverage.colorClassI,
         colorNotClassI: coverage.colorNotClassI,
         randomSeed: coverage.randomSeed,
       },
     });
-  }, [coverage.includeId, coverage.conditions, coverage.colorClassI, coverage.colorNotClassI, coverage.randomSeed]);
+  }, [coverage.mode, coverage.includeId, coverage.colorClassI, coverage.colorNotClassI, coverage.randomSeed]);
 
   useEffect(() => {
     if (!hasPhosphoDataset) {
@@ -222,15 +219,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
       controller.abort();
     };
   }, [hasPhosphoDataset, applyDataSourceChoices]);
-
-  useEffect(() => {
-    const conditionOptions = options?.conditions ?? [];
-    setCoverage((prev) => {
-      const filtered = prev.conditions.filter((value) => conditionOptions.includes(value));
-      const nextConditions = filtered.length > 0 ? filtered : [...conditionOptions];
-      return { ...prev, conditions: nextConditions };
-    });
-  }, [options]);
 
   useEffect(() => {
     const conditionOptions = options?.conditions ?? [];
@@ -283,7 +271,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
           widthCm: debouncedCoverage.widthCm,
           heightCm: debouncedCoverage.heightCm,
           dpi: debouncedCoverage.dpi,
-          conditions: JSON.stringify(debouncedCoverage.conditions),
         }),
       };
     }
@@ -381,7 +368,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
       const params: Record<string, string | number | boolean> = {
         includeId: debouncedCoverage.includeId,
         mode: debouncedCoverage.mode,
-        conditions: JSON.stringify(debouncedCoverage.conditions),
       };
       return {
         tab: "coverage",
@@ -430,7 +416,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     activeTab,
     debouncedCoverage.includeId,
     debouncedCoverage.mode,
-    debouncedCoverage.conditions,
     debouncedDistribution.cutoff,
     debouncedDataSource,
     debouncedPhosprotRegulation,
@@ -521,7 +506,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
             mode: coverage.mode,
             includeId: coverage.includeId,
             randomSeed: coverage.randomSeed,
-            conditions: coverage.conditions,
           };
     onContextModeChange(mode);
   }, [
@@ -542,7 +526,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     coverage.mode,
     coverage.includeId,
     coverage.randomSeed,
-    coverage.conditions,
   ]);
 
   const tableCsvUrl = useMemo(() => {
@@ -699,13 +682,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
               value={coverage.mode}
               options={["Normal", "Summary"]}
               onChange={(value) => setCoverage({ ...coverage, mode: value })}
-            />,
-            <MultiSelectField
-              key="conditions"
-              label="Conditions"
-              value={coverage.conditions}
-              options={conditionOptions}
-              onChange={(value) => setCoverage({ ...coverage, conditions: value })}
             />,
             ...(coverage.mode === "Summary"
               ? [

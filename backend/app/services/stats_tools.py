@@ -1894,6 +1894,7 @@ def _anova_heatmap_figure(
     # the cluster strip -- in a column of their own, sized to the longest label,
     # so they never run into the colour bar.
     row_label_texts: list[str] = []
+    row_label_indices = np.array([], dtype=int)
     row_label_size = 0.0
     row_label_width = 0.0
     if clustered and row_labels:
@@ -1902,8 +1903,19 @@ def _anova_heatmap_figure(
         else:
             row_label_texts = [str(value) for value in plot_df.index.tolist()]
         heatmap_height_pt = 9.2 * 72 * 0.62
-        auto_size = min(7.0, max(2.0, 0.8 * heatmap_height_pt / max(len(row_label_texts), 1)))
+        auto_size = min(7.0, max(6.0, 0.8 * heatmap_height_pt / max(len(row_label_texts), 1)))
         row_label_size = advanced_number(advanced, "rowLabelSize", 0.0) or auto_size
+        # Drawing thousands of overlapping ticks repeatedly during auto-layout
+        # can take minutes. Space only the labels, never remove heatmap rows.
+        label_capacity = max(1, min(250, int(heatmap_height_pt / max(1.3 * row_label_size, 1))))
+        row_label_indices = np.linspace(0, len(row_label_texts) - 1,
+            min(len(row_label_texts), label_capacity), dtype=int)
+        if len(row_label_indices) < len(row_label_texts):
+            fig._copylot_notice += (
+                f". Showing {len(row_label_indices):,} of {len(row_label_texts):,} row labels for readability; "
+                "all rows remain in the heatmap and result table. Select a smaller cluster to see more names."
+            )
+        row_label_texts = [row_label_texts[index] for index in row_label_indices]
         longest = max((len(text) for text in row_label_texts), default=0)
         row_label_width = min(0.6, max(0.04, longest * row_label_size * 0.6 / 72 / 9.0))
 
@@ -1974,7 +1986,7 @@ def _anova_heatmap_figure(
     ax.set_xticklabels(x_labels, rotation=90, fontsize=5)
     if row_label_texts:
         ax.yaxis.tick_right()
-        ax.set_yticks(np.arange(len(row_label_texts)))
+        ax.set_yticks(row_label_indices)
         ax.set_yticklabels(
             row_label_texts,
             fontsize=row_label_size,

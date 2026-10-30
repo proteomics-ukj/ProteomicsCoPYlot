@@ -37,7 +37,7 @@ def coverage_data():
 
 
 @pytest.mark.parametrize("options", [
-    {}, {"include_id": True}, {"summary": True}, {"summary": True, "text": True},
+    {}, {"random_seed": 23}, {"include_id": True}, {"summary": True}, {"summary": True, "text": True},
     {"legend": False, "header": False, "reference_line": False},
     {"width_cm": 24, "height_cm": 12, "dpi": 90, "text": True},
     {"advanced": {"titleElement": {"text": "A custom title", "size": 17, "bold": True},
@@ -50,7 +50,7 @@ def test_portable_coverage_matches_ui_png_exactly(coverage_data, options):
     assert bytes(actual) == bytes(expected)
     recipe = snapshots.get(get_session_id(), token)
     assert recipe.resources["original.png"] == actual
-    assert recipe.settings["random_seed"] == options.get("random_seed", 187)
+    assert recipe.settings["random_seed"] == options.get("random_seed", 1)
     assert recipe.provenance["dataSource"] == "data"
     assert not recipe.uses_imputed_input
     expected_table = qc_coverage_table("protein", summary=options.get("summary", False))

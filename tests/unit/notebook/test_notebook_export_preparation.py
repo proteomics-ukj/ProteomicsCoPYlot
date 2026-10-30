@@ -18,6 +18,26 @@ from app.services.notebook_snapshots import snapshots
 from app.services.notebook_snapshots import PendingRecipe
 
 
+@pytest.mark.parametrize('plot', ['boxplot', 'cv', 'intensity-histogram'])
+def test_plot_download_exceeds_cache_targets_without_being_rejected(client, monkeypatch, plot):
+    import io
+    from zipfile import ZipFile
+
+    monkeypatch.setattr(snapshots, 'max_bytes', 1)
+    monkeypatch.setattr(snapshots, 'max_total_bytes', 2)
+    response = client.get(f'/api/plots/qc/protein/{plot}.png')
+    assert response.status_code == 200
+    token = response.headers['x-copylot-notebook']
+    assert isinstance(snapshots._entries[token].recipe, PendingRecipe)
+    download = client.get(f'/api/plots/notebooks/{token}.zip')
+    assert download.status_code == 200
+    with ZipFile(io.BytesIO(download.content)) as archive:
+        assert any(name.endswith('.ipynb') for name in archive.namelist())
+        assert 'manifest.json' in archive.namelist()
+    assert snapshots._entries[token].size > snapshots.max_total_bytes
+    assert client.get(f'/api/plots/notebooks/{token}.zip').content == download.content
+
+
 def test_a_render_binds_the_replay_and_the_download_runs_it(client, monkeypatch):
     calls = []
     original = notebook_preprocessing.preprocessing_source

@@ -28,7 +28,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<DistributionSummaryResponse | null>(null);
-  const [randomSeed, setRandomSeed] = useState(() => Number(persisted.randomSeed ?? 187));
+  const [randomSeed, setRandomSeed] = useState(() => Number(persisted.randomSeed ?? 1));
   useEffect(() => {
     onContextModeChange?.({ kind, randomSeed });
   }, [onContextModeChange, kind, randomSeed]);
@@ -84,7 +84,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Distribution</h2>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField
             label="Dataset level"
             value={kindOptions.length === 0 ? "" : kind}
@@ -162,7 +162,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
             </div>
             <dl className="mt-5 space-y-4 text-sm text-slate-700">
               <div>
-                <dt className="font-semibold text-slate-900">A straight line — normal</dt>
+                <dt className="font-semibold text-slate-900">A straight line, normal</dt>
                 <dd className="mt-1">
                   Values approximately following the line are compatible with a normal distribution.
                   Log transformation often reduces intensity skewness, but does not guarantee a normal
@@ -170,7 +170,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
                 </dd>
               </div>
               <div>
-                <dt className="font-semibold text-slate-900">A curve — skewed</dt>
+                <dt className="font-semibold text-slate-900">A curve, skewed</dt>
                 <dd className="mt-1">
                   Upward curvature indicates right-skewed intensities. Check the declared data scale,
                   but the curve alone does not establish a scale error or invalid p-values.
@@ -179,7 +179,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
                 </dd>
               </div>
               <div>
-                <dt className="font-semibold text-slate-900">Both ends departing — heavy tails</dt>
+                <dt className="font-semibold text-slate-900">Both ends departing, heavy tails</dt>
                 <dd className="mt-1">
                   The lower tail falls below the line and the upper tail rises above it. Inspect
                   extreme observations in their feature and sample context; their pooled rank alone

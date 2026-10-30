@@ -56,7 +56,7 @@ IMPUTATION_PARAMS = (
 
 # The tool's standard quantile settings, written out: the viewer refuses an
 # imputation mode that does not state its parameters (2026-09-24).
-QUANTILE = {"mode": "quantile", "q_value": 0.01, "adjust_std": 0.3, "seed": 1337, "sample_wise": True}
+QUANTILE = {"mode": "quantile", "q_value": 0.01, "adjust_std": 0.3, "seed": 1, "sample_wise": True}
 
 
 def _project(tmp_path: Path, **package_overrides) -> Path:

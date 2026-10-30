@@ -798,13 +798,14 @@ export async function downloadCurrentAnnotationSourceData(
 }
 
 export async function downloadCurrentAnnotationMetadataData(
-  kind: AnnotationKind
+  kind: AnnotationKind,
+  scope: "selected" | "all" = "selected"
 ): Promise<{ blob: Blob; filename: string }> {
-  const response = await requestResponse(`${API_BASE}/api/annotations/current/${kind}/metadata/download`, {
+  const response = await requestResponse(`${API_BASE}/api/annotations/current/${kind}/metadata/download?scope=${scope}`, {
     fallback: "Failed to download metadata annotation data",
   });
   const blob = await response.blob();
-  const filename = resolveDownloadFilename(response, `${kind}_metadata_full.csv`);
+  const filename = resolveDownloadFilename(response, scope === "all" ? `${kind}_metadata_all_profiles.xlsx` : `${kind}_metadata_full.csv`);
   return { blob, filename };
 }
 

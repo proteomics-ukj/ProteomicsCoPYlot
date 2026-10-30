@@ -1670,7 +1670,7 @@ def qc_pca_plot_context(workflow: str = "protein", mode: ContextMode | None = No
     method, plot_dim, data_source = _parse_pca_mode(mode)
     mode_pairs = _mode_fields(mode)
     random_state = int(
-        _float_from_mode(mode_pairs, "randomstate", "random_state", default=42.0, minimum=0.0)
+        _float_from_mode(mode_pairs, "randomstate", "random_state", default=1.0, minimum=0.0)
     )
     method_clean = _safe_context_text(method)
 
@@ -1865,12 +1865,12 @@ def peptide_rt_plot_context(workflow: str = "peptide", mode: ContextMode | None 
     workflow_key = _normalize_coverage_workflow(workflow)
     mode_pairs = _mode_fields(mode)
 
-    method = str(mode_pairs.get("method", "Hexbin Plot")).strip() or "Hexbin Plot"
+    method = str(mode_pairs.get("method", "Scatter Plot")).strip() or "Scatter Plot"
     add_line = _bool_from_mode(mode_pairs, "addline", "add_line", default=False)
     header = _bool_from_mode(mode_pairs, "header", default=True)
-    bins = int(_float_from_mode(mode_pairs, "bins", default=1000.0, minimum=10.0, maximum=2000.0))
+    bins = int(_float_from_mode(mode_pairs, "bins", default=100.0, minimum=10.0, maximum=2000.0))
     random_seed = int(
-        _float_from_mode(mode_pairs, "randomseed", "random_seed", default=69.0, minimum=0.0)
+        _float_from_mode(mode_pairs, "randomseed", "random_seed", default=1.0, minimum=0.0)
     )
     width_cm = _float_from_mode(mode_pairs, "widthcm", "width_cm", default=20.0, minimum=5.0, maximum=200.0)
     height_cm = _float_from_mode(mode_pairs, "heightcm", "height_cm", default=15.0, minimum=5.0, maximum=200.0)
@@ -4418,7 +4418,7 @@ def single_protein_boxplot(workflow: str = "protein", mode: ContextMode | None =
     outliers = _bool_from_mode(mode_pairs, "outliers", default=False)
     dots = _bool_from_mode(mode_pairs, "dots", default=False)
     random_seed = int(
-        _float_from_mode(mode_pairs, "randomseed", "random_seed", default=69.0, minimum=0.0)
+        _float_from_mode(mode_pairs, "randomseed", "random_seed", default=1.0, minimum=0.0)
     )
     header = _bool_from_mode(mode_pairs, "header", default=True)
     legend = _bool_from_mode(mode_pairs, "legend", default=True)

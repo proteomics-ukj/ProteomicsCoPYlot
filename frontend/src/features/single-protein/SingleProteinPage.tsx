@@ -98,7 +98,7 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
     conditions: Array.isArray(persistedBox.conditions) ? persistedBox.conditions.map((value) => String(value ?? "")) : ([] as string[]),
     outliers: Boolean(persistedBox.outliers ?? false),
     dots: Boolean(persistedBox.dots ?? false),
-    randomSeed: Number(persistedBox.randomSeed ?? 69),
+    randomSeed: Number(persistedBox.randomSeed ?? 1),
     header: true,
     legend: true,
     widthCm: restorePlotDimensionCm(persistedBox.widthCm, 20),

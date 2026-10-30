@@ -45,10 +45,10 @@ def anova_source():
     rendering = function_definition(original, "anova_png")
     rendering = replace_once(rendering,
         "def anova_png(payload: AnovaRequest, selected_cluster: int | None = None, advanced: dict | None = None) -> bytes:",
-        "def render_plot(data, metadata, request, condition_palette, imputation_mask=None, selected_cluster=None, advanced=None):\n    payload = SimpleNamespace(**request)")
+        "def render_plot(data, metadata, request, condition_palette, imputation_mask=None, selected_cluster=None, advanced=None, prepared=None):\n    payload = SimpleNamespace(**request)")
     rendering = replace_once(rendering,
         "_prepare_anova_plot_frame(payload, selected_cluster=selected_cluster)",
-        "_prepare_anova_plot_frame(data, metadata, request, imputation_mask, selected_cluster=selected_cluster)")
+        "prepared if prepared is not None else _prepare_anova_plot_frame(data, metadata, request, imputation_mask, selected_cluster=selected_cluster)")
     rendering = replace_once(rendering, "kind=payload.kind,", "condition_palette=condition_palette,")
     helpers = "\n\n".join(function_definition(original, name) for name in (
         "_anova_cluster_dataframe", "_condition_columns"))
@@ -88,7 +88,7 @@ def render_anova(payload, *, selected_cluster=None, advanced=None):
     from app.services.notebook_provenance import input_history
     from app.services.plot_export import plot_output_format
     from app.services.plot_styling import advanced_condition_colors
-    from app.services.runtime_cache import runtime_cache_version
+    from app.services.runtime_cache import cached_call, runtime_cache_version
     from app.services.session_context import get_session_id
     import pandas as pd
 
@@ -108,12 +108,18 @@ def render_anova(payload, *, selected_cluster=None, advanced=None):
     module = anova_module()
     palette = advanced_condition_colors(kind, module.get_plt(),
         metadata["condition"].astype(str).drop_duplicates().tolist(), advanced)
-    results = module.calculate_tables(data, metadata, request, mask)
+    # Labels/legend/dendrogram controls only change the figure. Reuse the
+    # scientific result for this session and data revision when restyling it.
+    analysis_request = {**request, "showRowLabels": False, "showLegend": False, "showDendrograms": False}
+    results, prepared = cached_call("notebook-anova-analysis",
+        {"revision": revision, "request": analysis_request, "selected_cluster": selected_cluster},
+        lambda: (module.calculate_tables(data, metadata, analysis_request, mask),
+                 module._prepare_anova_plot_frame(data, metadata, analysis_request, mask, selected_cluster=selected_cluster)))
     figure_settings = dict(selected_cluster=selected_cluster, advanced=advanced, condition_palette=palette)
     fmt = plot_output_format.get()
     format_token = module.plot_output_format.set(fmt)
     try:
-        content = module.render_plot(data, metadata, request, imputation_mask=mask, **figure_settings)
+        content = module.render_plot(data, metadata, request, imputation_mask=mask, prepared=prepared, **figure_settings)
     finally:
         module.plot_output_format.reset(format_token)
     resources = {"input.parquet": dataframe_bytes(data), "metadata.parquet": dataframe_bytes(metadata),

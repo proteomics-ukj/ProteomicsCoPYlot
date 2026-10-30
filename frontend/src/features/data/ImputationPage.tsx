@@ -36,7 +36,7 @@ function appliedFromAnnotation(info: AnnotationImputationInfo): AppliedImputatio
     adjustStd: number(info.adjustStd, 0.3),
     downShift: number(info.downShift, 1.8),
     width: number(info.width, 0.3),
-    seed: Math.round(number(info.seed, 1337)),
+    seed: Math.round(number(info.seed, 1)),
     sampleWise: Boolean(info.sampleWise),
     // `rowCount` is absent on a record written before it was stored; the
     // cards that need it are left out rather than filled with a guess.
@@ -65,7 +65,7 @@ export default function ImputationPage() {
   const [adjustStd, setAdjustStd] = useState(0.3);
   const [downShift, setDownShift] = useState(1.8);
   const [width, setWidth] = useState(0.3);
-  const [seed, setSeed] = useState(1337);
+  const [seed, setSeed] = useState(1);
   const [sampleWise, setSampleWise] = useState(true);
   const [showImputationDraw, setShowImputationDraw] = useState(true);
   const [afterNormalization, setAfterNormalization] = useState<"together" | "separate">("separate");
@@ -78,6 +78,7 @@ export default function ImputationPage() {
   const [applied, setApplied] = useState<AppliedImputation | null>(null);
   const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [filterWarning, setFilterWarning] = useState<string | null>(null);
 
   // Applying is a deliberate act. This call does not preview: it imputes and
   // stores the result as the session's imputed matrix, which every other panel
@@ -87,9 +88,9 @@ export default function ImputationPage() {
   // about to use. The plots below are the preview -- they recompute from the
   // parameters in their own URLs and never touch what is stored.
   const applyImputation = useCallback(async (signal?: AbortSignal) => {
-    if (!availableKinds.includes(kind)) {
+    if (!availableKinds.includes(kind) || !settingsReady || filterWarning) {
       setResult(null);
-      setError("Please upload a protein or phosphosite dataset first.");
+      setError(filterWarning ?? "Apply filtering in Data > Annotation before imputing values.");
       return;
     }
     try {
@@ -125,7 +126,7 @@ export default function ImputationPage() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [adjustStd, availableKinds, downShift, kind, method, qValue, sampleWise, seed, width]);
+  }, [adjustStd, availableKinds, downShift, kind, method, qValue, sampleWise, seed, width, settingsReady, filterWarning]);
   async function handleRun() {
     await applyImputation();
   }
@@ -148,6 +149,10 @@ export default function ImputationPage() {
       setSettingsReady(false);
       try {
         const annotation = await getCurrentAnnotation(kind, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setFilterWarning(annotation.filteredRows === 0
+          ? "No rows remain after filtering. Adjust the filter in Data > Annotation before imputing values."
+          : null);
         const info = annotation.imputation;
         const mode = String(info?.mode ?? "").trim().toLowerCase();
         if (info && mode && mode !== "none") {
@@ -161,7 +166,7 @@ export default function ImputationPage() {
             typeof info.downShift === "number" && Number.isFinite(info.downShift) ? info.downShift : 1.8
           );
           setWidth(typeof info.width === "number" && Number.isFinite(info.width) ? info.width : 0.3);
-          setSeed(typeof info.seed === "number" && Number.isFinite(info.seed) ? Math.round(info.seed) : 1337);
+          setSeed(typeof info.seed === "number" && Number.isFinite(info.seed) ? Math.round(info.seed) : 1);
           setSampleWise(Boolean(info.sampleWise));
         } else {
           setApplied(null);
@@ -170,18 +175,19 @@ export default function ImputationPage() {
           setAdjustStd(0.3);
           setDownShift(1.8);
           setWidth(0.3);
-          setSeed(1337);
+          setSeed(1);
           setSampleWise(true);
         }
       } catch (error) {
         if (isAbortError(error)) return;
+        setFilterWarning("Apply filtering in Data > Annotation before viewing imputation plots or imputing values.");
         setApplied(null);
         setMethod("quantile");
         setQValue(0.01);
         setAdjustStd(0.3);
         setDownShift(1.8);
         setWidth(0.3);
-        setSeed(1337);
+        setSeed(1);
         setSampleWise(true);
       } finally {
         if (!controller.signal.aborted) {
@@ -285,16 +291,12 @@ export default function ImputationPage() {
       ? `${((imputedValueCount / totalValueCount) * 100).toFixed(2)}%`
       : null;
 
-  const plotsReady = settingsReady && kindOptions.length > 0 && availableKinds.includes(kind);
+  const plotsReady = settingsReady && !filterWarning && kindOptions.length > 0 && availableKinds.includes(kind);
 
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Impute Data</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Phosphoproteins cannot be imputed directly. Impute phosphosite data here first,
-          then aggregate phosphoproteins using the imputed phosphosite source.
-        </p>
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <SelectField
@@ -365,7 +367,7 @@ export default function ImputationPage() {
           <button
             type="button"
             onClick={handleRun}
-            disabled={loading || !availableKinds.includes(kind)}
+            disabled={loading || !plotsReady}
             className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? "Updating..." : "Impute Data Values"}
@@ -382,6 +384,12 @@ export default function ImputationPage() {
       {kindOptions.length === 0 ? (
         <section className="rounded-2xl border border-sky-200 bg-sky-50 px-6 py-4 text-sm text-sky-800">
           Upload a protein or phosphosite dataset in the Data tab to enable imputation plots.
+        </section>
+      ) : null}
+
+      {settingsReady && filterWarning && kindOptions.length > 0 ? (
+        <section role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
+          {filterWarning}
         </section>
       ) : null}
 
@@ -428,13 +436,11 @@ export default function ImputationPage() {
           />
 
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900">Applied imputation</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Applied Imputation</h3>
             {applied ? (
               <>
                 <p className="mt-2 text-sm text-slate-600">
-                  The imputation this session is using: {describeSettings(applied)}. These
-                  numbers describe that run, not the preview above, and change only when
-                  you press <em>Impute Data Values</em> again.
+                  The imputation this session is using: {describeSettings(applied)}.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <SummaryCard label="Rows" value={applied.rows === null ? "--" : String(applied.rows)} />

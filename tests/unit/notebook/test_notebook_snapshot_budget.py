@@ -66,22 +66,22 @@ def test_simultaneous_downloads_prepare_once_and_recheck_access(monkeypatch, out
                 store.capture('alice', _recipe(10))
         finally:
             release.set()
-        if outcome == 'success':
+        if outcome in ('success', 'budget'):
             a, b = first.result(timeout=5), second.result(timeout=5)
-            assert a.resources == b.resources == {'input.parquet': b'x' * 100}
+            assert a.resources == b.resources == {'input.parquet': b'x' * (3000 if outcome == 'budget' else 100)}
             a.settings['changed'] = True
             assert not b.settings and not store.get('alice', token).settings
         else:
-            error = KeyboardInterrupt if outcome == 'cancel' else ValueError if outcome in ('error', 'budget') else KeyError
+            error = KeyboardInterrupt if outcome == 'cancel' else ValueError if outcome == 'error' else KeyError
             for task in (first, second):
                 with pytest.raises(error):
                     task.result(timeout=5)
     assert calls == [1]
     assert not store._preparing
-    if outcome in ('error', 'cancel', 'budget'):
+    if outcome in ('error', 'cancel'):
         pending.finish = lambda: _recipe(20)
         assert store.get('alice', token).resources['input.parquet'] == b'x' * 20
-    elif outcome != 'success':
+    elif outcome not in ('success', 'budget'):
         with pytest.raises(KeyError):
             store.get('alice', token)
 
@@ -168,11 +168,20 @@ def test_completed_recipe_is_recounted_and_evicts_older_exports():
         store.get('alice', older)
 
 
-def test_completed_recipe_cannot_bypass_either_budget():
+def test_oversized_completed_recipe_is_retained_and_older_exports_are_evicted():
     from app.services.notebook_snapshots import PendingRecipe
     store = NotebookSnapshots(max_bytes=1000, max_total_bytes=2000)
+    older = store.capture('bob', _recipe(100))
     token = store.capture('alice', PendingRecipe(_recipe(10), lambda: _recipe(3000)))
-    with pytest.raises(ValueError, match='memory limit'):
+    assert len(store.get('alice', token).resources['input.parquet']) == 3000
+    with pytest.raises(KeyError):
+        store.get('bob', older)
+    with pytest.raises(KeyError):
+        store.get('bob', token)
+    # A later render can still evict this old snapshot under normal cache policy.
+    latest = store.capture('alice', _recipe(100))
+    assert store.get('alice', latest)
+    with pytest.raises(KeyError):
         store.get('alice', token)
 
 
@@ -187,8 +196,12 @@ def test_shared_retained_frames_count_once_and_old_frames_remain_accounted_for()
     entries = list(store._entries.values())
     assert store._usage(entries) == frame_bytes + sum(entry.size for entry in entries)
     assert len(tokens) == len(entries) == 2
-    with pytest.raises(ValueError, match='memory limit'):
-        store.capture('alice', PendingRecipe(_recipe(10), RetainedReplay(lambda: _recipe(10), (pd.DataFrame({'x': range(10_000)}),))))
+    large = store.capture('alice', PendingRecipe(_recipe(10), RetainedReplay(
+        lambda: _recipe(10), (pd.DataFrame({'x': range(10_000)}),))))
+    assert store.get('alice', large)
+    for token in tokens:
+        with pytest.raises(KeyError):
+            store.get('alice', token)
 
 
 def test_defaults_scale_with_ram_and_explicit_limits_are_respected(monkeypatch):

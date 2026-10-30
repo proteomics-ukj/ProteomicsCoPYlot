@@ -17,7 +17,7 @@ test_that("the package sources from its own folder and exposes the documented AP
       "missing_value_heatmap"
     )
     stopifnot(all(vapply(required, exists, logical(1), mode = "function")))
-    stopifnot(identical(formals(coverage_plot_summary)$seed, 69))
+    stopifnot(identical(formals(coverage_plot_summary)$seed, 1))
     stopifnot(identical(bool_to_str(TRUE), "TRUE"))
     stopifnot(identical(bool_to_str(FALSE), "FALSE"))
   })

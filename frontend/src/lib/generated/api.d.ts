@@ -4274,7 +4274,7 @@ export interface components {
             sampleWise?: boolean;
             /**
              * Seed
-             * @default 1337
+             * @default 1
              */
             seed?: number;
             /**
@@ -5146,7 +5146,16 @@ export interface components {
              * @default
              */
             author?: string;
+            /**
+             * Includesamplelabels
+             * @default false
+             */
+            includeSampleLabels?: boolean;
             reportContext?: components["schemas"]["SummaryReportContext"] | null;
+            /** Samplelabels */
+            sampleLabels?: {
+                [key: string]: string;
+            };
             /** Textentries */
             textEntries?: {
                 [key: string]: string;
@@ -5176,6 +5185,8 @@ export interface components {
         SummaryTablesResponse: {
             phospho: components["schemas"]["SummaryMetadataTable"];
             protein: components["schemas"]["SummaryMetadataTable"];
+            /** Samplenames */
+            sampleNames?: string[];
         };
         /** SummaryVolcanoEntry */
         SummaryVolcanoEntry: {
@@ -5688,7 +5699,9 @@ export interface operations {
     };
     download_current_metadata_annotation_api_annotations_current__kind__metadata_download_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "selected" | "all";
+            };
             header?: never;
             path: {
                 kind: "protein" | "phospho" | "phosprot";

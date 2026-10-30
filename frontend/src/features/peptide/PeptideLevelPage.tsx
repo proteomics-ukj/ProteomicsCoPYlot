@@ -2,9 +2,8 @@ import NumberField from "../../components/NumberField";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
 import OptionsLayout from "../../components/OptionsLayout";
 import PlotImage from "../../components/PlotImage";
-import InteractivePlot from "../../components/InteractivePlot";
 import NotebookDownload, { type RenderedNotebook } from "../../components/NotebookDownload";
-import { restorePlotDimensionCm, restorePlotDpi, iframeHeightForPlot } from "../../lib/plotLimits";
+import { restorePlotDimensionCm, restorePlotDpi } from "../../lib/plotLimits";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   buildPlotUrl,
@@ -12,7 +11,6 @@ import {
   getPeptideSequenceCoverage,
   isAbortError,
 } from "../../lib/api";
-import { withoutStaticSize } from "../../lib/plotRenderType";
 import { SizeRow } from "../../components/PlotFields";
 import { saveQcReportSettings } from "../../lib/reportState";
 import {
@@ -57,12 +55,12 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
   const [error, setError] = useState<string | null>(null);
 
   const [rt, setRt] = useState({
-    type: String(persistedRt.type ?? "Normal"),
-    method: String(persistedRt.method ?? "Hexbin Plot"),
+    type: "Normal",
+    method: String(persistedRt.method ?? "Scatter Plot"),
     addLine: Boolean(persistedRt.addLine ?? false),
     header: true,
-    bins: Number(persistedRt.bins ?? 1000),
-    randomSeed: Number(persistedRt.randomSeed ?? 69),
+    bins: Number(persistedRt.bins ?? 100),
+    randomSeed: Number(persistedRt.randomSeed ?? 1),
     widthCm: restorePlotDimensionCm(persistedRt.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedRt.heightCm, 15),
     dpi: restorePlotDpi(persistedRt.dpi, 100),
@@ -270,23 +268,12 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
   const hasMetadata = Boolean(overview?.metadataLoaded);
   const showMissingDatasetInfoOnly =
     !hasDataset && error?.trim() === MISSING_PEPTIDE_DATASET_MESSAGE;
-  const [rtInteractiveSessionNonce] = useState(() => Date.now());
-
-  const rtInteractive = String(rt.type).trim().toLowerCase() === "interactive";
   const rtPlotUrl = useMemo(
     () => {
       void advancedPlotSignal;
-      const rtParams = rtInteractive
-        ? { ...withoutStaticSize(rt), _rtInteractiveV: rtInteractiveSessionNonce }
-        : rt;
-      return (
-      buildPlotUrl(
-        rtInteractive ? "/api/plots/peptide/rt-interactive.html" : "/api/plots/peptide/rt.png",
-          rtParams
-        )
-      );
+      return buildPlotUrl("/api/plots/peptide/rt.png", rt);
     },
-    [rt, rtInteractive, rtInteractiveSessionNonce, advancedPlotSignal]
+    [rt, advancedPlotSignal]
   );
   const modificationPlotUrl = useMemo(
     () => {
@@ -339,34 +326,20 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "rtPlot" ? (
         <>
           <SectionCard as="h2" title="RT Plot Options">
-            <OptionsLayout order="fields-size-toggles"
+            <OptionsLayout order="fields-toggles-size"
               fields={[
-                // `peptide_rt_interactive_html` always draws a scatter and
-                // reads neither Mode nor Bins, so neither is offered while the
-                // interactive renderer is selected: a control that changes
-                // nothing is worse than no control.
                 <SelectField
                   key="method"
                   label="Mode"
                   value={rt.method}
                   onChange={(value) => setRt({ ...rt, method: value })}
                   options={["Scatter Plot", "Hexbin Plot", "Density Plot"]}
-                  disabled={rtInteractive}
-                  disabledHint="The interactive plot always draws a scatter."
-                />,
-                <SelectField
-                  key="type"
-                  label="Type"
-                  value={rt.type}
-                  onChange={(value) => setRt({ ...rt, type: value })}
-                  options={["Normal", "Interactive"]}
                 />,
                 <NumberField
                   key="bins"
                   label="Bins"
                   value={rt.bins}
                   onChange={(value) => setRt({ ...rt, bins: Math.max(10, Math.round(value)) })}
-                  disabled={rtInteractive}
                   disabledHint="Binning applies to the hexbin and density modes only."
                 />,
                 <NumberField
@@ -377,7 +350,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
                 />,
               ]}
               size={
-                rtInteractive ? null : <SizeRow
+                <SizeRow
                   widthCm={rt.widthCm}
                   heightCm={rt.heightCm}
                   dpi={rt.dpi}
@@ -397,7 +370,6 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
             url={rtPlotUrl}
             downloadName="peptide_rt_plot.png"
             notebookEnabled
-            renderMode={rtInteractive ? "html" : "image"}
           />
         </>
       ) : null}
@@ -405,7 +377,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "modification" ? (
         <>
           <SectionCard as="h2" title="Modification Plot Options">
-            <OptionsLayout order="fields-size-toggles"
+            <OptionsLayout order="fields-toggles-size"
               fields={[]}
               size={
                 <SizeRow
@@ -434,7 +406,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "missedCleavage" ? (
         <>
           <SectionCard as="h2" title="Missed Cleavage Plot Options">
-            <OptionsLayout order="fields-size-toggles"
+            <OptionsLayout order="fields-toggles-size"
               fields={[
                 <SelectField
                   key="protease"
@@ -473,7 +445,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "sequenceCoverage" ? (
         <>
           <SectionCard as="h2" title="Sequence Coverage Options">
-            <OptionsLayout order="fields-size-toggles"
+            <OptionsLayout order="fields-toggles-size"
               fields={[
                 <SelectField
                   key="species"
@@ -590,15 +562,11 @@ function ImagePlotCard({
   title,
   url,
   downloadName,
-  renderMode = "image",
-  heightCm = 15,
   notebookEnabled = false,
 }: {
   title: string;
   url: string;
   downloadName: string;
-  renderMode?: "image" | "html";
-  heightCm?: number;
   notebookEnabled?: boolean;
 }) {
   const [downloadFormat, setDownloadFormat] = useState<PlotDownloadFormat>("png");
@@ -611,50 +579,15 @@ function ImagePlotCard({
   return (
     <SectionCard as="h2" title={title}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {renderMode === "image" ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <PlotDownloadControls label="Plot" format={downloadFormat} onFormatChange={setDownloadFormat}
-              href={downloadUrl} filename={downloadFilename} />
-            {notebookEnabled ? <NotebookDownload plotUrl={url} rendered={notebook} /> : null}
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-          >
-            Open Interactive Plot
-          </a>
+        <div className="flex flex-wrap items-center gap-2">
+          <PlotDownloadControls label="Plot" format={downloadFormat} onFormatChange={setDownloadFormat}
+            href={downloadUrl} filename={downloadFilename} />
           {notebookEnabled ? <NotebookDownload plotUrl={url} rendered={notebook} /> : null}
-          </div>
-        )}
+        </div>
       </div>
-      {renderMode === "image" ? (
-        <div className="mt-4">
-          <PlotImage url={url} alt={title} onRendered={notebookEnabled ? (renderedUrl, token) => setNotebook({ url: renderedUrl, token }) : undefined} />
-        </div>
-      ) : notebookEnabled ? (
-        <div className="mt-4">
-          <InteractivePlot url={url} title={`${title} interactive`}
-            height={`max(${cmToIframeHeight(heightCm)}px, 78vh)`}
-            onRendered={(renderedUrl, token) => setNotebook({ url: renderedUrl, token })} />
-        </div>
-      ) : (
-        <iframe
-          sandbox="allow-scripts allow-downloads"
-          key={url}
-          src={url}
-          title={`${title} interactive`}
-          className="mt-4 block w-full rounded-xl border border-slate-200"
-          style={{ height: `max(${cmToIframeHeight(heightCm)}px, 78vh)` }}
-        />
-      )}
+      <div className="mt-4">
+        <PlotImage url={url} alt={title} onRendered={notebookEnabled ? (renderedUrl, token) => setNotebook({ url: renderedUrl, token }) : undefined} />
+      </div>
     </SectionCard>
   );
-}
-
-function cmToIframeHeight(heightCm: number): number {
-  return iframeHeightForPlot(heightCm, { fallbackCm: 15, minPx: 860, paddingPx: 280 });
 }

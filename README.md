@@ -44,8 +44,8 @@ server. The browser interface connects to that server once it is ready.
 
 ## Quick start from source
 
-The current development release is **1.0.0 Beta 1** (planned GitHub tag
-`v1.0.0-beta.1`). Python metadata uses the equivalent version `1.0.0b1`.
+The current development release is **1.0.0 Beta 2** (planned GitHub tag
+`v1.0.0-beta.2`). Python metadata uses the equivalent version `1.0.0b2`.
 See [release versions](docs/RELEASING.md) for the naming convention.
 
 Install backend and frontend dependencies on Windows:
@@ -91,6 +91,8 @@ columns produce 26 derived profiles. A conventional two-column `sample,condition
 continues to populate the currently selected profile. Uploads above the five-profile limit
 are rejected before any profile is changed. Deleting a source profile also deletes its
 dependent derived profiles and frees a source-profile slot.
+
+Metadata can be converted to CoPYlot's upload format with an LLM using the [metadata conversion prompt](docs/metadata-conversion-prompt.md).
 
 ### AI providers and data handling
 

@@ -75,7 +75,7 @@ def phospho_coverage_route(
     mode: PhosphoCoverageMode = "Normal",
     colorClassI: str = "#2563eb",
     colorNotClassI: str = "#f59e0b",
-    randomSeed: int = 69,
+    randomSeed: int = 1,
     widthCm: float = 20,
     heightCm: float = 10,
     dpi: int = 300,

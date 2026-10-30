@@ -980,7 +980,7 @@ def transform_phosprot(
     return data_phosprot[[column for column in ordered if column in data_phosprot.columns]]
 
 
-def qqnorm_plot(data, meta, seed=187):
+def qqnorm_plot(data, meta, seed=1):
     sample_columns = meta['sample'].tolist()
     data_values = data[sample_columns].apply(pd.to_numeric, errors="coerce")
 
@@ -998,7 +998,7 @@ def qqnorm_plot(data, meta, seed=187):
     ax.set_ylabel("Sample Quantiles")
     return fig
 
-def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, ret=0, sample_wise=True, seed=1337, method="quantile", down_shift=1.8, width=0.3):
+def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, ret=0, sample_wise=True, seed=1, method="quantile", down_shift=1.8, width=0.3):
     """Impute missing values with a downshifted normal draw.
 
     Pass **log2 transformed** data. The model draws from a normal centred near
@@ -1243,7 +1243,7 @@ def coverage_plot(data, meta, id=True, header=True, legend=True, plot_colors=Non
 
 
 def coverage_plot_summary(data, meta, header=True, plot_colors=None, width=20, height=10, dpi=300, text=False,
-                          text_size=9, seed=69, data_scale="log2"):
+                          text_size=9, seed=1, data_scale="log2"):
     data = _prepare_intensity_data(data, meta['sample'].tolist(), data_scale)
     meta = meta.copy()
     meta["sample"] = meta["sample"].astype(str)
@@ -4920,7 +4920,7 @@ def phosprot_regulation(data: pd.DataFrame, meta: pd.DataFrame,
 
 #PEPTIDE
 
-def rt_vs_pred_rt_plot(data_path, method="Hexbin Plot", add_line=False, bins=1000, header=True, width=8, height=6, dpi=100, seed=69):
+def rt_vs_pred_rt_plot(data_path, method="Scatter Plot", add_line=False, bins=100, header=True, width=8, height=6, dpi=100, seed=1):
     data = read_data(data_path)
 
     x = data['Predicted.RT']
@@ -5367,7 +5367,7 @@ def single_protein_values(data, meta, protein):
 
 
 def boxplot_int_single_prot(data, meta, protein, outliers=False, dots=False, header=True, legend=True,
-                       plot_colors=None, width=8, height=6, dpi=100, seed=69):
+                       plot_colors=None, width=8, height=6, dpi=100, seed=1):
     values = single_protein_values(data, meta, protein)
     meta = _sample_meta(meta.copy(), id=False)
 
@@ -5643,7 +5643,7 @@ def sty_plot(data, localization_cutoff=0.0):
 def phossite_coverage_plot_summary(
     data, meta, header=True, legend=True,
     width=20, height=10, dpi=300,
-    color_classI="blue", color_notclassI="orange", seed=69, is_log2=True, localization_cutoff=0.0
+    color_classI="blue", color_notclassI="orange", seed=1, is_log2=True, localization_cutoff=0.0
 ):
     data = filter_localization(data, localization_cutoff)
     counts = _phossite_coverage_counts(data, meta, is_log2)
@@ -6224,8 +6224,8 @@ def _dropped_features_message(dropped, total, purpose="clustering", noun="featur
     else:
         text = f"{percent:.0f}%"
     return (
-        f"{text} of {noun} dropped for {purpose} ({dropped:,} of {total:,}) "
-        "\u2014 not observed in every sample"
+        f"{text} of {noun} dropped for {purpose} ({dropped:,} of {total:,}), "
+        "not observed in every sample"
     )
 
 

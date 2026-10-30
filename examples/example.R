@@ -72,7 +72,7 @@ print(filter_contaminants(contaminant_demo, enabled = TRUE, categories = c(1, 4)
 # observed values with 0.3 times their standard deviation; method = "numerical"
 # uses the Perseus downshift. R's random generator differs from numpy's, so the
 # drawn values differ from Python's with the same seed.
-imputed <- impute_values(filtered, meta, seed = 1337)
+imputed <- impute_values(filtered, meta, seed = 1)
 
 # QC -------------------------------------------------------------------------
 # QC describes the normalized, unfiltered matrix. CV and abundance are defined on

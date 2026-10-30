@@ -293,7 +293,7 @@ export function AnovaPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="One-way ANOVA">
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={kindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>
@@ -307,7 +307,7 @@ export function AnovaPanel({
             onChange={(value) => setSourceMode(value as AnovaSource)}
             options={[
               { value: "anova", label: "One-way ANOVA" },
-              { value: "anova_cluster", label: "One-way ANOVA — clusters" },
+              { value: "anova_cluster", label: "One-way ANOVA, clusters" },
             ]}
           />
           <SelectField
@@ -402,7 +402,7 @@ export function AnovaPanel({
             items={[
               { label: "Rows", value: String(result.totalRows) },
               { label: "Significant", value: String(result.significantCount) },
-              { label: "Source", value: result.source === "anova_cluster" ? "One-way ANOVA — clusters" : "One-way ANOVA" },
+              { label: "Source", value: result.source === "anova_cluster" ? "One-way ANOVA, clusters" : "One-way ANOVA" },
               { label: "Clusters", value: result.clusterCount == null ? "-" : String(result.clusterCount) },
               {
                 label: "Cluster sizes",

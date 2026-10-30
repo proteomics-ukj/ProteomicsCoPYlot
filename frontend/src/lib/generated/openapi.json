@@ -4378,7 +4378,7 @@
             "type": "boolean"
           },
           "seed": {
-            "default": 1337,
+            "default": 1,
             "maximum": 2147483647.0,
             "minimum": 0.0,
             "title": "Seed",
@@ -6368,6 +6368,11 @@
             "title": "Author",
             "type": "string"
           },
+          "includeSampleLabels": {
+            "default": false,
+            "title": "Includesamplelabels",
+            "type": "boolean"
+          },
           "reportContext": {
             "anyOf": [
               {
@@ -6377,6 +6382,13 @@
                 "type": "null"
               }
             ]
+          },
+          "sampleLabels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Samplelabels",
+            "type": "object"
           },
           "textEntries": {
             "additionalProperties": {
@@ -6455,6 +6467,13 @@
           },
           "protein": {
             "$ref": "#/components/schemas/SummaryMetadataTable"
+          },
+          "sampleNames": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Samplenames",
+            "type": "array"
           }
         },
         "required": [
@@ -7396,7 +7415,7 @@
   },
   "info": {
     "title": "Proteomics CoPYlot API",
-    "version": "1.0.0b1"
+    "version": "1.0.0b2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7548,6 +7567,20 @@
                 "phosprot"
               ],
               "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "selected",
+              "enum": [
+                "selected",
+                "all"
+              ],
+              "title": "Scope",
               "type": "string"
             }
           }
@@ -11011,7 +11044,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 187,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -11126,7 +11159,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11261,7 +11294,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11386,7 +11419,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11739,7 +11772,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -11812,7 +11845,7 @@
             "name": "method",
             "required": false,
             "schema": {
-              "default": "Hexbin Plot",
+              "default": "Scatter Plot",
               "title": "Method",
               "type": "string"
             }
@@ -11832,7 +11865,7 @@
             "name": "bins",
             "required": false,
             "schema": {
-              "default": 1000,
+              "default": 100,
               "title": "Bins",
               "type": "integer"
             }
@@ -11852,7 +11885,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -12082,7 +12115,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -13862,7 +13895,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 187,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -14484,7 +14517,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -14711,7 +14744,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -14979,7 +15012,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -15270,7 +15303,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }

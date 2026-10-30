@@ -80,35 +80,39 @@ report = importlib.import_module('app.services.report_function')
 # stripping that one keyword from the recorded call reproduces every previous
 # hash (verified for all 18 cases). The option itself is covered by
 # tests/unit/stats/test_volcano_highlight_options.py.
+# 2026-10-30: Beta 2 changes default seeds to 1, retention-time defaults to
+# scatter/100 bins, and phosphosite coverage to separate condition-count and
+# localization plots. All 24 old fingerprints were reproduced against HEAD;
+# HTML and renderer-call diffs contain only these intended changes.
 SNAPSHOTS = {
     'qc_custom:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'qc_custom:protein': '5393488d9a196b4ed576ba9a10614837b9a79ab19688f2fe758628a69de4b056',
-    'qc_custom:phospho': 'a9c2550163ee2d380d92c20ea13a4f92f96a7d94022fe94e771293b912c0de85',
-    'qc_custom:peptide,protein,phospho': '1a75d9b64edef24489bb7762413e3740a049b1835f1b9db174f7f73855e29bee',
+    'qc_custom:protein': 'a64884a1533f6944e066fb8bd3b297f1faffec8fb4d1a733fddc77384a068e38',
+    'qc_custom:phospho': '367f4408e20d3dc1388436d7947af4a92edd4e6407ca44dbf4f7513f3c338fd2',
+    'qc_custom:peptide,protein,phospho': '15d4acbeeec2e1e2fa4ee64012ff7c080219f4aac3ffe3e1b54c6c73502a3632',
     'qc_invalid:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'qc_invalid:protein': '80db568f3a627bfb83926a71fc9bdc5336a73c5ac717f770fec3ce4483f90c15',
-    'qc_invalid:phospho': '361312300bbd784e361654146e5a896544d1e928a65dc12c31035edfd5b9bfbc',
-    'qc_invalid:peptide,protein,phospho': '4f33ac6ce87429780ae697be73b3e66f9a542caec68791e45352dc125316d0b7',
+    'qc_invalid:protein': '4d5cbd7c7d81985570ce3200fbd9217221b4d4ed6e92b56d3cc6ee0f655ec581',
+    'qc_invalid:phospho': 'bcc7b12f6976395ce83ae502be54d8385097dac459b5494d3c8e335aaf345d73',
+    'qc_invalid:peptide,protein,phospho': 'f2dae8ea2068f6b6fc1d722fb6a944d87bc7f6503566b8ee53caf3445c7bd55a',
     'default:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
     # The three `default` snapshots below changed when advanced mode stopped
     # gating the appearance settings: the case's custom PCA title now reaches
     # the PCA renderer with the panel closed, as it reaches the plot on screen.
     # That forwarded title is the whole difference.
-    'default:protein': '8bb5adbfe05c6f9640e414fe927a95190b194b0529caab6e6b734e08ba5b9fb5',
-    'default:phospho': '618b320057ba891536076a333c1309b22fb1f14641ce2e352633269f16f7bd2b',
-    'default:peptide,protein,phospho': '9c93928148b483816b46bb94f8c954a6150e0a702f0569ec3fbe18e83bd2b9c5',
+    'default:protein': '3a60785f8363b0b977f4d592b0ea2f5509f93175b3ceec9544fa097e440a8d65',
+    'default:phospho': '951c73b044c230ffc3c43414ecac1b2d50a709c80e7ad77e7c99bf50d70f4e3a',
+    'default:peptide,protein,phospho': 'c895ee6c8eb1a19613b4de6b4af58ca23a0bc64b593912b73b1cb536b1645ee7',
     'custom:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'custom:protein': 'e0bbebeb6d932c0b1ca6858b36867784a0868912d309aaba9e2a04fa99dd4436',
-    'custom:phospho': 'ea3579886e1ed732bbead102e4d7ea8e22a7e00857c90362d79c39d99f0d2d54',
-    'custom:peptide,protein,phospho': '2bf1c578f2408489d4672012ba9264fb4cd47ae89b0b1b2a9034af1e2c3ae98b',
+    'custom:protein': 'cc751016fcc8ca0759bf43a54e5e3683492be44afb76ebcec4d10b3a5ff0a2dc',
+    'custom:phospho': 'dda30ee8923f2edcf1b45c77a2654b3196d7e9f61d200e646fcee9ad4ed3ca7b',
+    'custom:peptide,protein,phospho': 'ffec78fd7625d4860089f575c988acd044aff351764bf3bb277ea27024da913c',
     'interactive:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'interactive:protein': 'f666e3cbfaa3afd3f545ff88ccbbe77a1f74029a05abddb80540410a5909d154',
-    'interactive:phospho': '890ebd244775f0a5d57e584af45da2c16b47b186ef664123968701895c40ff99',
-    'interactive:peptide,protein,phospho': '582766bae196aef0c58bc3436918538d81dd889e34548d688fd272d00480efa7',
+    'interactive:protein': '9586f51b7f0ac8d4d542bbd24cebec03a47f3a93f7bfe76cb8e246a26f700346',
+    'interactive:phospho': 'c6bea371ef65439ed82accf851a72da72c4cb9f921308c5ff8b924ba3cc7bddd',
+    'interactive:peptide,protein,phospho': 'b01dd8a238fd451328f2405054613797373e0f316cd7beca3aa5c46ee0932b44',
     'failure:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'failure:protein': 'e817ef0c1b71ca8f2171bc713d4737dd7b605c14f2a1b806dab410e2eb8017df',
-    'failure:phospho': '73f9024c8137bab142058ca01f11ec2cfc9877a3f0f39a71257bbb0a35e79655',
-    'failure:peptide,protein,phospho': '8fc95bf45032c9ff92804b9769f65fe29ab1ad85e307a317cd4cc664bf216c9d',
+    'failure:protein': 'a7c5363a51694bdfb6dc138051f08da503cbbf8f347f850df1312febdd9abc5a',
+    'failure:phospho': '6391509fe752427c4ba7e45e082e15aaf0270063241233c865e8e7ac5644ad77',
+    'failure:peptide,protein,phospho': '6e7eebc844b194479e8c1af053d17ae479dbda1812f2d6363bb5cb94b58e3300',
 }
 
 

@@ -19,11 +19,11 @@ router = APIRouter()  # mounted under /api/plots by routes_plots
 
 @router.get("/peptide/rt.png")
 def peptide_rt_route(
-    method: str = "Hexbin Plot",
+    method: str = "Scatter Plot",
     addLine: bool = False,
-    bins: int = 1000,
+    bins: int = 100,
     header: bool = True,
-    randomSeed: int = 69,
+    randomSeed: int = 1,
     widthCm: float = 20,
     heightCm: float = 15,
     dpi: int = 100,
@@ -52,7 +52,7 @@ def peptide_rt_route(
 def peptide_rt_interactive_route(
     addLine: bool = False,
     header: bool = True,
-    randomSeed: int = 69,
+    randomSeed: int = 1,
     widthCm: float = 20,
     heightCm: float = 15,
     advanced: str = "",

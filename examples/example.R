@@ -147,8 +147,11 @@ fig <- phossite_on_prot_regulation(sites_filtered, meta_sites, protein_of_site, 
 # Phosphoproteins ------------------------------------------------------------
 # Sites are collapsed per protein. The default robust_site_median centres every
 # site on log2 and takes the protein median, keeping per-sample site coverage.
-phosprot <- transform_phosprot(sites, meta_sites, mode = "robust_site_median", data_scale = "log2")
+phosprot <- transform_phosprot(sites_filtered, meta_sites, mode = "robust_site_median",
+                              data_scale = "log2", coverage_data = sites_filtered)
 phosprot_filtered <- filter_data(phosprot, meta_sites, 3, mode = "per_group")
+phosprot_filtered <- filter_contaminants(phosprot_filtered, enabled = filter_phospho_contaminants,
+                                        categories = 1:5)
 cat(nrow(phosprot), "phosphoproteins,", nrow(phosprot_filtered), "after filtering\n")
 fig <- phossite_dist(phosprot, cutoff = 0.01)
 phosprot_volcano <- volcano_data_f(phosprot_filtered, meta_sites, "WT", "GRK", workflow = "Phosphoprotein")

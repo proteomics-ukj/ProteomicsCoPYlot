@@ -182,6 +182,16 @@ install.packages(c("arrow", "hexbin", "plotly", "readxl", "scatterplot3d", "Venn
 install.packages("BiocManager"); BiocManager::install(c("vsn", "limma"))
 ```
 
+**Run the Python tutorial.** Download [the example notebook](examples/example.ipynb) from the matching release checkout, or copy the exact version included in your installed Beta 2 wheel. In a new working folder:
+
+```bash
+python -m pip install jupyterlab
+python -c "from importlib.resources import files; open('example.ipynb','xb').write(files('proteomicscopylot').joinpath('example.ipynb').read_bytes())"
+python -m jupyterlab example.ipynb
+```
+
+Select your CoPYlot Python environment and run all cells for the bundled experiment. The settings cell also supports your own tables, input scales, comparison groups and an optional results folder.
+
 Examples:
 
 - `examples/example.ipynb`

@@ -274,6 +274,8 @@ python -m pip install "proteomicscopylot[bio]==1.0.0b2"
 An unpinned install normally selects a stable release. The explicit version above
 selects Beta 2 without changing prerelease selection for unrelated packages.
 
+To open the notebook included in the wheel, follow [Run the Python tutorial](../README.md#notebook-package).
+
 Install the notebook-facing package from a checkout of this repository:
 
 ```bash

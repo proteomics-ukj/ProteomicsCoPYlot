@@ -152,12 +152,12 @@ The version pin selects the beta explicitly; an unpinned install normally select
 the latest stable release. Omit `[bio]` if FASTA parsing is not needed.
 
 ```python
-from proteomicscopylot import notebook_functions as copylot
+from proteomicscopylot import notebook_functions as pcp
 
-data = copylot.load_example_data("protein")
-metadata = copylot.load_example_data("protein_metadata")
-filtered = copylot.filter_data(data, metadata, 3, "per_group")
-results = copylot.volcano_data_f(filtered, metadata, "WT", "GRK")
+data = pcp.load_example_data("protein")
+metadata = pcp.load_example_data("protein_metadata")
+filtered = pcp.filter_data(data, metadata, 3, "per_group")
+results = pcp.volcano_data_f(filtered, metadata, "WT", "GRK")
 ```
 
 Install the Python package from a checkout of this repository:

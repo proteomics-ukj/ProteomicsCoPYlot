@@ -1,6 +1,6 @@
 # ProteomicsCoPYlot R example: a complete workflow on the bundled HEK293 example
 # (WT vs GRK, five replicates each), with the same analyses as the app and the
-# Python example: completeness, normalization, filtering, imputation, QC,
+# Python example: completeness, filtering, imputation, QC,
 # differential testing, ANOVA, GO over-representation, PCA scores, the
 # phosphosite collapse and single-protein views.
 #
@@ -33,24 +33,18 @@ fig <- missing_value_plot(data, meta, data_scale = "log2")
 fig <- missing_value_heatmap(data, meta, id = FALSE, data_scale = "log2")
 print(missing_sample_table(data, meta, id = FALSE, data_scale = "log2"))
 
-# Filtering and normalization ----------------------------------------------
-# As in the app: the valid-value filter decides the rows, then the normalization
-# is fitted on those rows and applied to every row, so rows with many missing
-# values (mostly low-abundance, missing unevenly between groups) never set the
-# reference. Here at least 3 valid values in each condition, then median
-# centring. The app's default is no filter; choose your own.
-kept <- filter_data(data, meta, 3, mode = "per_group")
+# Filter proteins ----------------------------------------------------------
+# Keep at least three measured values in each condition.
+filtered <- filter_data(data, meta, 3, mode = "per_group")
 # Optional Cambridge cRAP filtering; off by default. Any nonempty combination:
 # 1 Laboratory proteins; 2 Dust/contact proteins;
 # 3 Molecular weight markers/Standard proteins;
 # 4 Sigma-Aldrich Universal Protein Standard; 5 Common viral contaminants.
 filter_protein_contaminants <- FALSE
 contaminant_categories <- 1:5
-kept <- filter_contaminants(kept, enabled = filter_protein_contaminants,
+filtered <- filter_contaminants(filtered, enabled = filter_protein_contaminants,
                            categories = contaminant_categories, match_accessions = TRUE)
-if (!nrow(kept)) stop("No rows remain for normalization; revise the filters.")
-normalized <- normalize_data(data, meta, "median", fit_rows = rownames(kept))
-filtered <- normalized[rownames(kept), ]
+if (!nrow(filtered)) stop("No proteins remain; revise the filters.")
 cat(nrow(data), "proteins,", nrow(filtered), "after filtering\n")
 
 # Exact names/accessions only, never genes. Every member must match:
@@ -75,15 +69,15 @@ print(filter_contaminants(contaminant_demo, enabled = TRUE, categories = c(1, 4)
 imputed <- impute_values(filtered, meta, seed = 1)
 
 # QC -------------------------------------------------------------------------
-# QC describes the normalized, unfiltered matrix. CV and abundance are defined on
+# QC describes the unfiltered log2 intensities. CV and abundance are defined on
 # linear intensities; correlation uses log2.
-linear <- inverse_log2_transform_data(normalized, meta)
-fig <- coverage_plot(normalized, meta, id = FALSE, data_scale = "log2")
-fig <- boxplot_int(normalized, meta)
-fig <- histo_int(normalized, meta)
+linear <- inverse_log2_transform_data(data, meta)
+fig <- coverage_plot(data, meta, id = FALSE, data_scale = "log2")
+fig <- boxplot_int(data, meta)
+fig <- histo_int(data, meta)
 fig <- cov_plot(linear, meta, data_scale = "linear")
 fig <- abundance_plot(linear, meta, workflow = "Protein", data_scale = "linear")
-fig <- corr_plot(normalized, meta, id = FALSE, data_scale = "log2")
+fig <- corr_plot(data, meta, id = FALSE, data_scale = "log2")
 fig <- pca_plot(imputed, meta)
 print(head(pca_scores(imputed, meta)))
 
@@ -120,8 +114,8 @@ by_protein <- filtered
 rownames(by_protein) <- by_protein$ProteinNames
 fig <- boxplot_int_single_prot(by_protein, meta, protein_id, dots = TRUE)
 fig <- compare_prot_line(filtered, meta, conditions, c(protein_id), workflow = "Protein", id = FALSE)
-fig <- correlation_xy_intensity(normalized, meta, "WT", "GRK")
-fig <- overlap_plot_condition(normalized, meta, "WT", "GRK", data_scale = "log2")
+fig <- correlation_xy_intensity(data, meta, "WT", "GRK")
+fig <- overlap_plot_condition(data, meta, "WT", "GRK", data_scale = "log2")
 
 # Phosphosites ---------------------------------------------------------------
 fig <- simple_phos_site_plot(sites)

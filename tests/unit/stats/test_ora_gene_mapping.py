@@ -26,26 +26,31 @@ def test_all_ora_sources_map_selection_and_background(monkeypatch, kind, column,
         _, selected, background, _ = st._anova_cluster_genes(request)
     else:
         _, selected, down, background, _ = st._different_genes(request)
-        assert down == ["B", "C"]
-    assert selected == ["A", "B"]
-    assert background == ["A", "B", "C", "D", "E"]
+        assert down == ["B"]
+    # One quantified feature is one draw: the leading member of each group
+    # (2026-11-02; every member counted before), for hits and background alike.
+    assert selected == ["A"]
+    assert background == ["A", "B", "D"]
 
 
-def test_explicit_lists_match_expanded_input_and_python_package(monkeypatch):
+def test_explicit_lists_include_all_distinct_genes_in_app_and_python_package(monkeypatch):
     database = pd.DataFrame({"ontology": ["BP"], "term": ["GO:1"],
                              "description": ["test"], "genes": ["A;B"]})
     monkeypatch.setattr(st, "load_go_db", lambda *a: database)
     monkeypatch.setattr(nb, "load_go_db", lambda *a: database)
     common = dict(minTermSize=1, maxTermSize=10, adjPValueCutoff=1.)
     grouped = st.run_enrichment_from_list(ListEnrichmentRequest(
-        genes=[" B;A;A", ""], backgroundGenes=[" A;B "], **common))
+        genes=[" B;A,A", ""], backgroundGenes=[" A,B "], **common))
     expanded = st.run_enrichment_from_list(ListEnrichmentRequest(
         genes=["A", "B"], backgroundGenes=["A", "B"], **common))
     assert grouped.model_dump() == expanded.model_dump()
     for workflow in ("Protein", "Phosphoproteome"):
-        a = nb.enrichment_data([" B;A;A"], background=[" A;B "], workflow=workflow,
+        a = nb.enrichment_data([" B;A;A"], background=[" A;B ", "B"], workflow=workflow,
                                min_num=1, max_num=10, adj_p_value_cutoff=1.)
         b = nb.enrichment_data(["A", "B"], background=["A", "B"], workflow=workflow,
                                min_num=1, max_num=10, adj_p_value_cutoff=1.)
         pd.testing.assert_frame_equal(a, b)
-    assert nb._different_gene_tokens(["B;A;A", None, ""]) == ["A", "B"]
+    assert nb._different_gene_tokens(["B;A;A", None, ""]) == ["B"]
+    assert nb._explicit_gene_tokens("TP53;BRCA1\nEGFR,TP53") == ["BRCA1", "EGFR", "TP53"]
+    # list items are atomic apart from `;`/`,`: an identifier with a space survives
+    assert nb._explicit_gene_tokens(["mERBB4/iso:JM-A CYT-2", "A;B"]) == ["A", "B", "mERBB4/iso:JM-A CYT-2"]

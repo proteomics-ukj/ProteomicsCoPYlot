@@ -44,8 +44,8 @@ server. The browser interface connects to that server once it is ready.
 
 ## Quick start from source
 
-The current development release is **1.0.0 Beta 1** (planned GitHub tag
-`v1.0.0-beta.1`). Python metadata uses the equivalent version `1.0.0b1`.
+The current development release is **1.0.0 Beta 2** (planned GitHub tag
+`v1.0.0-beta.2`). Python metadata uses the equivalent version `1.0.0b2`.
 See [release versions](docs/RELEASING.md) for the naming convention.
 
 Install backend and frontend dependencies on Windows:
@@ -92,6 +92,8 @@ continues to populate the currently selected profile. Uploads above the five-pro
 are rejected before any profile is changed. Deleting a source profile also deletes its
 dependent derived profiles and frees a source-profile slot.
 
+Metadata can be converted to CoPYlot's upload format with an LLM using the [metadata conversion prompt](docs/metadata-conversion-prompt.md).
+
 ### AI providers and data handling
 
 The chat surface runs against a local [Ollama](https://ollama.com) instance by default, in which
@@ -136,6 +138,28 @@ does not reset or show this analysis warning.
 
 ## Notebook package
 
+The pip package provides Python analysis and plotting functions for scripts and
+notebooks. The browser application is distributed separately through GitHub Releases.
+Python 3.11 or newer is required; Python 3.11–3.13 are tested.
+
+Once Beta 2 is published to PyPI, install that exact release with:
+
+```bash
+python -m pip install "proteomicscopylot[bio]==1.0.0b2"
+```
+
+The version pin selects the beta explicitly; an unpinned install normally selects
+the latest stable release. Omit `[bio]` if FASTA parsing is not needed.
+
+```python
+from proteomicscopylot import notebook_functions as pcp
+
+data = pcp.load_example_data("protein")
+metadata = pcp.load_example_data("protein_metadata")
+filtered = pcp.filter_data(data, metadata, 3, "per_group")
+results = pcp.volcano_data_f(filtered, metadata, "WT", "GRK")
+```
+
 Install the Python package from a checkout of this repository:
 
 ```bash
@@ -150,18 +174,27 @@ Load the bundled HEK293 example with `load_example_data("protein")` (also `"phos
 `"phosphoprotein"`, `"protein_metadata"` and `"phospho_metadata"`); the R functions provide
 the same `load_example_data()`.
 
+**View the HEK293 example with plots and tables** · [Python notebook](examples/rendered/python.ipynb) · [R notebook](examples/rendered/r.ipynb)
+
 Install the optional R packages the R functions use:
 
 ```r
-install.packages(c("arrow", "hexbin", "plotly", "readxl", "scatterplot3d", "VennDiagram"))
+install.packages(c("arrow", "hexbin", "plotly", "readxl", "reticulate", "scatterplot3d", "VennDiagram"))
 # VSN normalization and the moderated t-tests (optional) come from Bioconductor:
 install.packages("BiocManager"); BiocManager::install(c("vsn", "limma"))
 ```
 
-Examples:
+**Run the Python tutorial.** Download [the example notebook](examples/example.ipynb) from the matching release checkout, or copy the exact version included in your installed Beta 2 wheel. In a new working folder:
 
-- `examples/example.ipynb`
-- `examples/example.R`
+```bash
+python -m pip install jupyterlab
+python -c "from importlib.resources import files; open('example.ipynb','xb').write(files('proteomicscopylot').joinpath('example.ipynb').read_bytes())"
+python -m jupyterlab example.ipynb
+```
+
+Select your CoPYlot Python environment and run all cells for the bundled experiment. The settings cell also supports your own tables, input scales, comparison groups and an optional results folder.
+
+Run the [R example script](examples/example.R) from the checkout. For the shared table functions, set `RETICULATE_PYTHON` to the Python executable in your CoPYlot environment before starting R.
 
 The Python package, the R functions (`notebook_functions.R`, loaded with `source()`; it
 is a script, not an installable R package) and the app support the same core analysis

@@ -84,11 +84,6 @@ const PAIRS: Pair[] = [
     mount: (type) => { saved("comparison.pipeline.v1", { pearson: { type, sample1: "a1", sample2: "b1" } }); return <ComparisonPipelinePage activeTab="pearson" />; },
     path: /\/api\/plots\/comparison\/protein\/pearson\.(png|html)/,
   },
-  {
-    name: "peptide RT",
-    mount: (type) => { saved("peptide.level.v1", { rt: { type } }); return <PeptideLevelPage activeTab="rtPlot" />; },
-    path: /\/api\/plots\/peptide\/rt(-interactive)?\.(png|html)/,
-  },
 ];
 
 /** Every plot URL the page asked for or framed. */
@@ -131,5 +126,18 @@ describe("the static volcano", () => {
     await plotRequest(PAIRS[0].path);
     expect(await screen.findByLabelText("Volcano Plot download format", {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.getByText("Download Plot").getAttribute("href")).toMatch(/volcano\.png/);
+  });
+});
+
+
+describe("peptide RT", () => {
+  it("uses a static plot even when an older session saved interactive mode", async () => {
+    saved("peptide.level.v1", { rt: { type: "Interactive" } });
+    render(<PeptideLevelPage activeTab="rtPlot" />);
+    const url = await plotRequest(/\/api\/plots\/peptide\/rt(-interactive)?\.(png|html)/);
+    expect(url.pathname).toMatch(/\.png$/);
+    for (const key of SIZE_KEYS) expect(url.searchParams.has(key), key).toBe(true);
+    expect(screen.getAllByText("Width (cm)")).toHaveLength(1);
+    expect(screen.queryByRole("option", { name: "Interactive" })).toBeNull();
   });
 });

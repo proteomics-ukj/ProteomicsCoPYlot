@@ -1,10 +1,4 @@
-"""The report redraws the phospho coverage plots with the Phospho-specific page's settings.
-
-The page's include-ID, condition selection and colours used to be dropped, and
-the jitter seed was taken from the QC page. The page now saves them for the
-report (qcSettings.phospho.phosphoCoverage), the coverage sections state the
-fixed Class I threshold, and no random seed appears anywhere in the report text.
-"""
+"""QC counts and localization coverage use their own settings in reports."""
 from __future__ import annotations
 
 import importlib
@@ -42,24 +36,34 @@ def _render(monkeypatch, qc_settings):
             monkeypatch.setattr(report, name, renderer(name))
     context = SummaryReportContext(qcSettings={"phospho": qc_settings})
     result = report.report_function(SummaryReportRequest(title="t", author="a", reportContext=context))
-    return result.html, [kwargs for name, kwargs in calls if name == "phospho_coverage_png"]
+    return result.html, calls
 
 
-def test_coverage_plots_use_the_phospho_page_settings(monkeypatch):
+def test_coverage_plots_use_their_own_page_settings(monkeypatch):
     html, calls = _render(monkeypatch, {
-        "coverage": {"randomSeed": 5},  # the QC page's, not used any more
+        "coverage": {"randomSeed": 5, "includeId": False, "summary": True},
         "phosphoCoverage": {"includeId": True, "conditions": ["B"], "colorClassI": "#111111",
-                            "colorNotClassI": "#222222", "randomSeed": 7},
+                            "colorNotClassI": "#222222", "randomSeed": 7, "mode": "Summary"},
     })
-    assert [call["mode"] for call in calls] == ["Normal", "Summary"]
-    for call in calls:
-        assert call["include_id"] is True and call["conditions"] == ["B"]
-        assert (call["color_class_i"], call["color_not_class_i"]) == ("#111111", "#222222")
-        assert call["random_seed"] == 7
-    assert html.count(report.CLASS_I_SENTENCE) == 2
+    qc = [kw for name, kw in calls if name == "qc_coverage_plot"]
+    localized = [kw for name, kw in calls if name == "phospho_coverage_png"]
+    assert len(qc) == len(localized) == 1
+    assert qc[0]["kind"] == "phospho" and qc[0]["summary"] is True
+    assert qc[0]["random_seed"] == 5 and qc[0]["include_id"] is False
+    call = localized[0]
+    assert call["mode"] == "Summary"
+    assert call["include_id"] is True and call["conditions"] is None
+    assert (call["color_class_i"], call["color_not_class_i"]) == ("#111111", "#222222")
+    assert call["random_seed"] == 7
+    assert html.count(report.CLASS_I_SENTENCE) == 1
+    assert "Coverage Plot (per condition)" in html
+    assert "Coverage Plot (localization)" in html
     assert "seed" not in html.lower()
 
 
 def test_page_defaults_apply_without_saved_settings(monkeypatch):
     _, calls = _render(monkeypatch, {})
-    assert all(call["include_id"] is False and call["conditions"] is None for call in calls)
+    localized = [kw for name, kw in calls if name == "phospho_coverage_png"]
+    assert len(localized) == 1
+    assert localized[0]["mode"] == "Normal"
+    assert localized[0]["include_id"] is False and localized[0]["conditions"] is None

@@ -1,6 +1,6 @@
 # Release versions
 
-The first beta is **`v1.0.0-beta.1`**.
+The current development release is **`v1.0.0-beta.2`**.
 
 | Version | Meaning |
 | --- | --- |
@@ -11,6 +11,6 @@ The first beta is **`v1.0.0-beta.1`**.
 | `v2.0.0` | Changes that break compatibility |
 
 GitHub tags use the `v` prefix; frontend versions omit it. Python uses
-`1.0.0b1` for the same release as `1.0.0-beta.1`.
+`1.0.0b2` for the same release as `1.0.0-beta.2`.
 
 Build releases from merged `main`. See [installation and build instructions](INSTALLATION.md).

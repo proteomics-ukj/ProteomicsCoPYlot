@@ -45,8 +45,8 @@ Sizes in `..._MB` are MiB; `..._BYTES` are bytes.
 | `COPYLOT_MAX_SESSIONS` | `128` | Above this, sessions are removed for room: empty ones first, then the stalest. |
 | `COPYLOT_SERVER_MEMORY_MB` | 60 % of RAM | Budget for all sessions' data; above it, stale sessions are removed. |
 | `COPYLOT_SESSION_PROTECT_SECONDS` | `1800` | A session active within this time is never removed for room. |
-| `COPYLOT_NOTEBOOK_MEMORY_MB` | 25 % of RAM (1 GiB if unknown) | Memory for all notebook-export snapshots. |
-| `COPYLOT_NOTEBOOK_SESSION_MEMORY_MB` | half the total | Per-session share of that memory; must not exceed the total. |
+| `COPYLOT_NOTEBOOK_MEMORY_MB` | 25 % of RAM (1 GiB if unknown) | Soft cache target for notebook snapshots. Older exports are evicted first; the incoming export is retained even when larger than this target. |
+| `COPYLOT_NOTEBOOK_SESSION_MEMORY_MB` | half the total | Per-session soft cache target; must not exceed the total. Neither target limits the size of an individual notebook or report export. |
 | `COPYLOT_TEMP_FILE_MAX_AGE_SECONDS` | `604800` | Managed temporary files older than this are deleted. |
 
 ## Uploads, restore files and plots

@@ -1862,23 +1862,8 @@ test('static retention-time notebooks follow the rendered method and recover aft
   await page.unroute('**/api/plots/peptide/rt.png*');
   await page.getByLabel('Add Line', { exact: true }).uncheck();
   await expect(button).toBeEnabled();
-  await field(page, 'Type').selectOption('Interactive');
-  await expect(button).toBeEnabled();
-  await expect(page.getByRole('link', { name: 'Open Interactive Plot', exact: true })).toBeVisible();
-  const interactiveReady = page.waitForEvent('download');
-  await button.click();
-  expect((await interactiveReady).suggestedFilename()).toBe('Interactive_Peptide_Retention_Time.zip');
-  await expect(page.frameLocator('iframe[title="Retention Time Plot interactive"]').locator('.js-plotly-plot')).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('interactive-retention-notebook.png'), fullPage: true });
-  await page.route('**/api/plots/peptide/rt-interactive.html*', route => route.fulfill({
-    status: 400, contentType: 'application/json', body: JSON.stringify({ detail: 'Test interactive RT unavailable' }),
-  }));
-  await page.getByLabel('Add Line', { exact: true }).check();
-  await expect(page.getByText('Test interactive RT unavailable', { exact: false })).toBeVisible();
-  await expect(button).toBeDisabled();
-  await page.unroute('**/api/plots/peptide/rt-interactive.html*');
-  await page.getByLabel('Add Line', { exact: true }).uncheck();
-  await expect(button).toBeEnabled();
+  await expect(page.getByLabel('Type', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Interactive Plot', exact: true })).toHaveCount(0);
 });
 
 test('peptide modification and missed-cleavage notebooks follow rendered settings and recover from failure', async ({ page }, testInfo) => {
@@ -2683,7 +2668,7 @@ for (const source of ['non_imputed', 'imputed']) {
     expect(row[headers.indexOf('A1')] === '').toBe(source === 'non_imputed');
     await tab(page, 'Imputation').click();
     await expect(field(page, 'Dataset level').locator('option[value=phosprot]')).toHaveCount(0);
-    await expect(page.getByText('Phosphoproteins cannot be imputed directly.', { exact: false })).toBeVisible();
+    await expect(field(page, 'Dataset level')).toHaveValue('phospho');
     const statsResponse = page.waitForResponse(r => {
       if (!r.url().endsWith('/api/stats/volcano/run')) return false;
       const payload = r.request().postDataJSON();

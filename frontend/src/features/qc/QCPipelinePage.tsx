@@ -168,7 +168,7 @@ export default function QCPipelinePage({
     summary: Boolean(persistedCoverage.summary ?? false),
     text: Boolean(persistedCoverage.text ?? false),
     textSize: Number(persistedCoverage.textSize ?? 9),
-    randomSeed: Number(persistedCoverage.randomSeed ?? 187),
+    randomSeed: Number(persistedCoverage.randomSeed ?? 1),
     // The line at the number of features quantified in any sample. Its own
     // switch, because turning it off also gives the bars the full height.
     referenceLine: persistedCoverage.referenceLine !== false,
@@ -229,7 +229,7 @@ export default function QCPipelinePage({
     tsneLearningRate: Number(persistedPca.tsneLearningRate ?? 200),
     dbscanEpsFactor: Number(persistedPca.dbscanEpsFactor ?? 0.5),
     dbscanMinSamples: Number(persistedPca.dbscanMinSamples ?? 2),
-    randomState: Number(persistedPca.randomState ?? 42),
+    randomState: Number(persistedPca.randomState ?? 1),
     widthCm: restorePlotDimensionCm(persistedPca.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedPca.heightCm, 10),
     dpi: restorePlotDpi(persistedPca.dpi, 300),
@@ -892,7 +892,8 @@ export default function QCPipelinePage({
     <div className="space-y-6" data-assistant-pending={activeTab === "pca" && pcaContextPending ? "true" : undefined}>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">QC Pipeline</h2>
-        <div className="mt-4 max-w-xs">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
+          <div>
             <label htmlFor={kindFieldId} className="mb-2 block text-sm font-medium text-slate-700">Dataset level</label>
             <AssistantSelect
             id={kindFieldId}
@@ -912,7 +913,8 @@ export default function QCPipelinePage({
             )}
           </AssistantSelect>
         </div>
-        <LocalizationCutoffField kind={kind} className="mt-4 max-w-xs" />
+          <LocalizationCutoffField kind={kind} />
+        </div>
       </section>
 
       {activeKindOptions.length === 0 ? (
@@ -1026,7 +1028,14 @@ export default function QCPipelinePage({
                 download={`qc_${activeTab}_${kind}_summary.csv`}
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
               >
-                Download CSV
+                {activeTab === "cv" ? "Download summary CSV" : "Download CSV"}
+              </a>
+            ) : null}
+            {activeTab === "cv" && tableCsvUrl ? (
+              <a href={buildPlotUrl(`/api/plots/qc/${kind}/feature-cvs.csv`, notebookToken ? { snapshot: notebookToken } : {})}
+                download={`qc_${kind}_feature_cvs.csv`}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
+                Download feature CVs (.csv)
               </a>
             ) : null}
             {pairedNotebook && plotView ? (

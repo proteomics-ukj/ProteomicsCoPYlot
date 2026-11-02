@@ -42,6 +42,25 @@ def test_missing_translations_counts_exports_and_history(monkeypatch, suffix, se
     pd.testing.assert_frame_equal(id_translation.replay_id_translations(original, [validated]), stored.frame)
 
 
+@pytest.mark.parametrize("auto_detect", [True, False])
+def test_standalone_translation_matches_gui_with_explicit_database(monkeypatch, auto_detect):
+    from proteomicscopylot import notebook_functions as pcp
+
+    database = pd.DataFrame({"uniprot_symbol": ["P1", "P2"], "symbol": ["G1", "G2"],
+                             "ensembl_gene_id": ["E1", "E2"]})
+    frame = pd.DataFrame({"ProteinNames": ["P1", "P1;P2", None, "unknown"]})
+    original = frame.copy()
+    save_table_dataset("original.tsv", "protein", frame)
+    monkeypatch.setattr(id_translation, "load_db", lambda: database)
+    request = IdTranslationRequest(kind="protein", column="ProteinNames", outputDb="Ensembl",
+                                   inputDb="UniProt Accession", autoDetectInput=auto_detect)
+    gui, _, _, _, _ = id_translation.translated_dataframe(request)
+    monkeypatch.setattr(id_translation, "load_db", lambda: pytest.fail("unexpected GUI database lookup"))
+    notebook = pcp.translate_id_table(frame, database, "ProteinNames", "Ensembl", "UniProt Accession", auto_detect)
+    pd.testing.assert_frame_equal(notebook, gui)
+    pd.testing.assert_frame_equal(frame, original)
+
+
 def test_all_unmapped_stay_missing(monkeypatch):
     monkeypatch.setattr(id_translation, 'load_db', lambda: pd.DataFrame({'uniprot_symbol': ['P1'], 'symbol': ['G1']}))
     original = pd.DataFrame({'ProteinNames': ['unknown1', 'unknown2']})

@@ -156,8 +156,10 @@ COPYLOT_ALLOWED_HOSTS=proteomics.institute.example
 ```
 
 **Large datasets.** Analysis runs in memory, so available RAM can limit dataset
-size even when an upload is accepted. Upload, restore and notebook-export limits
-are configurable in [Environment variables](ENVIRONMENT.md). Match your reverse
+size even when an upload is accepted. Notebook exports have no fixed size cap;
+their cache targets control eviction of older snapshots, not export eligibility.
+Available RAM still constrains generation. Upload and restore limits and notebook
+cache targets are configurable in [Environment variables](ENVIRONMENT.md). Match your reverse
 proxy's request limit to the upload limit, allowing for multipart overhead.
 
 ## Frontend modes
@@ -242,8 +244,7 @@ Get-AuthenticodeSignature .\dist\*.exe | Format-Table Path, Status, StatusMessag
 The **Build macOS release** workflow builds standard and AI analysis applications
 for Apple Silicon (`arm64`, macOS 14 runner) and Intel (`x86_64`, macOS 15 runner).
 After merging the workflow, open **Actions > Build macOS release > Run workflow**.
-The default source commit matches the existing `v1.0.0-beta.1` Windows/Linux
-builds. For a later release, enter its full merged `main` commit SHA.
+Enter the full merged `main` commit SHA used for the Windows and Linux builds of this release.
 
 Each job checks the bundle hashes, source revision, startup, frontend, version
 and AI mode before uploading an artifact. Download all four artifacts within
@@ -258,6 +259,21 @@ dependencies first, then run
 editions.
 
 ## Python package
+
+The pip package contains notebook-facing analysis functions, bundled example data,
+and reference tables. Install the browser application separately from GitHub Releases.
+Python 3.11 or newer is required; Python 3.11–3.13 are tested.
+
+After Beta 2 is published to PyPI, select it explicitly:
+
+```bash
+python -m pip install "proteomicscopylot[bio]==1.0.0b2"
+```
+
+An unpinned install normally selects a stable release. The explicit version above
+selects Beta 2 without changing prerelease selection for unrelated packages.
+
+To open the notebook included in the wheel, follow [Run the Python tutorial](../README.md#notebook-package).
 
 Install the notebook-facing package from a checkout of this repository:
 

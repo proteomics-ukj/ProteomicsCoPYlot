@@ -205,10 +205,13 @@ def test_snapshots_expire_and_have_per_session_limits():
         store.get("owner", second)
 
 
-def test_oversized_snapshot_is_rejected_without_evicting_existing_data():
-    store = NotebookSnapshots(max_bytes=1)
-    with pytest.raises(ValueError, match="memory"):
-        store.capture("owner", recipe())
+def test_single_export_larger_than_cache_targets_is_still_downloadable():
+    store = NotebookSnapshots(max_bytes=1, max_total_bytes=2)
+    token = store.capture("owner", recipe())
+    name, content = build_notebook_archive(store.get("owner", token))
+    assert name == "Coverage_Plot.zip"
+    with ZipFile(io.BytesIO(content)) as archive:
+        assert 'Coverage_Plot.ipynb' in archive.namelist()
 
 
 def test_resource_reader_preserves_types_and_exits_cleanly_in_fresh_processes(tmp_path):

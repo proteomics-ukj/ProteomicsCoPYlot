@@ -25,7 +25,7 @@ _CACHE_VERSION = 0
 _GLOBAL_VERSION = 0
 _SESSION_VERSIONS: dict[str, int] = {}
 _CACHE: "OrderedDict[tuple[Any, ...], Any]" = OrderedDict()
-_IN_FLIGHT: dict[tuple[Any, ...], tuple[int, Future[tuple[Any] | None]]] = {}
+_IN_FLIGHT: dict[tuple[Any, ...], tuple[int, Future[tuple[Any] | tuple[()] | None]]] = {}
 _MAX_ENTRIES = 128
 _MAX_ENTRY_BYTES = 12 * 1024 * 1024
 
@@ -154,6 +154,15 @@ def invalidate_runtime_cache(reason: str = "", *, all_sessions: bool = False) ->
         return _CACHE_VERSION
 
 
+def discard_runtime_cache(session_id: str) -> None:
+    with _LOCK:
+        _SESSION_VERSIONS.pop(session_id, None)
+        for mapping in (_CACHE, _IN_FLIGHT):
+            for key in list(mapping):
+                if key[2] == session_id:
+                    del mapping[key]
+
+
 def runtime_cache_version() -> int:
     """Current session revision, also used to validate saved AI evidence."""
     with _LOCK:
@@ -195,7 +204,7 @@ def cached_call(
         # Nested calculations must not wait on one another (including themselves).
         nested = any(thread == get_ident() for thread, _ in _IN_FLIGHT.values())
         if pending is None:
-            future: Future[tuple[T] | None] = Future()
+            future: Future[tuple[T] | tuple[()] | None] = Future()
             _IN_FLIGHT[key] = (get_ident(), future)
         else:
             _, future = pending
@@ -204,6 +213,9 @@ def cached_call(
         if nested:
             return factory()
         shared = future.result()
+        # A disposed owner cannot admit a waiting request to a replacement session.
+        if shared == ():
+            return factory()
         if runtime_cache_version() != version:
             return cached_call(namespace, key_data, factory, copy_result=copy_result)
         # Oversized/unknown objects retain the existing uncached behavior.
@@ -215,18 +227,21 @@ def cached_call(
         result = factory()
         cacheable = _estimate_size_bytes(result) <= _MAX_ENTRY_BYTES
         with _LOCK:
-            if cacheable and _SESSION_VERSIONS.get(session_id, _GLOBAL_VERSION) == version:
+            active = _IN_FLIGHT.get(key) == (get_ident(), future)
+            if active and cacheable and _SESSION_VERSIONS.get(session_id, _GLOBAL_VERSION) == version:
                 _CACHE[key] = result
                 _CACHE.move_to_end(key)
                 while len(_CACHE) > _MAX_ENTRIES:
                     _CACHE.popitem(last=False)
-            future.set_result((result,) if cacheable else None)
+            shared = (result,) if cacheable else None
+            future.set_result(shared if active else ())
     except BaseException as exc:
         future.set_exception(exc)
         raise
     finally:
         with _LOCK:
-            _IN_FLIGHT.pop(key, None)
+            if _IN_FLIGHT.get(key) == (get_ident(), future):
+                _IN_FLIGHT.pop(key, None)
     return _copy_for_caller(result) if cacheable and copy_result else result
 
 

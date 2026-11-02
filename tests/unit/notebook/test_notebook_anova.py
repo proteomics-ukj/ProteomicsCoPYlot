@@ -17,6 +17,52 @@ from app.services.notebook_snapshots import snapshots
 from app.services.session_context import get_session_id
 
 
+def test_anova_label_toggle_reuses_analysis_but_not_the_figure(inputs, monkeypatch):
+    from app.services.runtime_cache import invalidate_runtime_cache
+    invalidate_runtime_cache('anova-label-test')
+    module = anova_module()
+    original = module.calculate_tables
+    calls = []
+    def calculate(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, 'calculate_tables', calculate)
+    payload = AnovaRequest(kind='protein', source='anova_cluster', dataSource='filtered', pValueThreshold=1, nClusters=3)
+    unlabeled, _ = render_anova(payload)
+    labeled, token = render_anova(payload.model_copy(update={'showRowLabels': True}))
+    assert len(calls) == 1
+    assert bytes(labeled) != bytes(unlabeled)
+    assert snapshots.get(get_session_id(), token).settings['request']['showRowLabels'] is True
+    render_anova(payload.model_copy(update={'nClusters': 2}))
+    assert len(calls) == 2
+    invalidate_runtime_cache('anova-label-test-changed-data')
+    render_anova(payload)
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('rows', [8, 3000])
+def test_dense_anova_labels_keep_every_heatmap_row_and_report_spacing(rows):
+    import numpy as np
+    samples = ['A1', 'A2', 'B1', 'B2']
+    frame = pd.DataFrame(np.random.default_rng(8).normal(size=(rows, 4)), columns=samples)
+    frame['ProteinNames'] = [f'P{i}' for i in range(rows)]
+    frame['cluster'] = 1
+    metadata = pd.DataFrame({'sample': samples, 'condition': ['A', 'A', 'B', 'B']})
+    fig, plt = stats_tools._anova_heatmap_figure(frame, metadata, kind='protein', advanced=None,
+        label_column='ProteinNames', p_value_threshold=1, clustered=True,
+        show_dendrograms=False, show_legend=False, row_labels=True)
+    try:
+        heatmap = next(ax for ax in fig.axes if ax.get_xlabel() == 'samples')
+        assert heatmap.images[0].get_array().shape == (rows, 4)
+        labels = heatmap.get_yticklabels()
+        assert len(labels) == rows if rows == 8 else len(labels) <= 250
+        assert labels[0].get_text() == 'P0'
+        assert labels[-1].get_text() == f'P{rows - 1}'
+        assert ('row labels for readability' in fig._copylot_notice) == (rows > 250)
+    finally:
+        plt.close(fig)
+
+
 @pytest.mark.parametrize('method', ['average', 'ward', 'complete', 'weighted', 'single'])
 @pytest.mark.parametrize('source', ['data', 'filtered', 'imputed'])
 def test_anova_calculations_match_app(inputs, method, source):

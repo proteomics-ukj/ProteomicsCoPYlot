@@ -33,7 +33,7 @@
     "In a healthy experiment, the distributions of protein quantitative mean values of all groups are similar, depicted by the same shape of the distribution curves."
   ],
   "BoxplotIntProt": [
-    "Protein intensity distributions - Depicted are the measured log2-raw protein intensities in a boxplot of each sample.",
+    "Protein intensity distributions - Depicted are the log2 protein intensities of each sample in a boxplot, after the normalization stated above (none, if none was applied) and before imputation.",
     "Missing values are not considered when creating the boxplots. Zero intensity values are considered as missing values.",
     "For a healthy experiment, we expect similar log2-intensity distributions in all samples and all conditions.",
     "Significant deviations indicate unequal peptide loading during LC-MS/MS or unequal protein amounts in the starting material. Also, major contaminants in the samples can influence accurate peptide concentration measurements and, therefore, the number of protein identifications and protein quantitative values in a given sample."
@@ -64,12 +64,10 @@
     "Number of phosphoproteins, phosphopeptides and phosphosite rows in the dataset. Phosphosite rows are counted by collapse key, so a multiply phosphorylated peptide contributes one row per site; phosphopeptides are counted as distinct peptide sequences regardless of which residue carries the phosphate, so two sites on the same peptide count as one phosphopeptide."
   ],
   "Coverage(Number)Phos": [
-    "Identification of phosphosites is a measure of the number of non-missing measurements by replicate; each sample's bar is split by localization class (Class I, Not Class I, Unclassified).",
-    "Low phosphosite counts in a sample / LC-MS/MS run may suggest technical variability, low enrichment efficiency, or sample processing issues that should be considered before downstream statistical analysis.",
-    "Ideally, the numbers of phosphosite identifications, and the share of confidently localized (Class I) sites among them, are high and comparable across all samples in the dataset."
+    "Coverage counts quantified phosphosites in each sample, grouped by experimental condition. The QC coverage settings determine whether replicate counts or condition summaries are shown."
   ],
   "Coverage(Quality)Phos": [
-    "The same counts by localization class, summarised per condition: one bar per class with the mean over the condition's samples and the standard deviation as error bar."
+    "Localization coverage distinguishes Class I phosphosites from other quantified sites. The selected phosphosite coverage view shows individual samples or condition summaries with replicate values and standard deviations."
   ],
   "MissingValuePhos": [
     "The amount of missing values can be affected by biological regulation of phosphorylation or by technical factors during sample processing and MS-measurements, and it can vary substantially between experiments. The plot counts, for each phosphosite, in how many samples it is missing, and shows how many phosphosites fall into each count.",
@@ -80,7 +78,7 @@
     "In a healthy experiment, the distributions of phosphosite quantitative mean values across all groups are expected to be similar, depicted by comparable shapes of the distribution curves."
   ],
   "BoxplotIntPhos": [
-    "Phosphosite intensity distributions - Depicted are the measured log2-raw phosphosite intensities in a boxplot of each sample.",
+    "Phosphosite intensity distributions - Depicted are the log2 phosphosite intensities of each sample in a boxplot, after the normalization stated above (none, if none was applied) and before imputation.",
     "Missing values are not considered when creating the boxplots. Zero intensity values are treated as missing values.",
     "For a healthy experiment, we expect similar log2-intensity distributions of phosphosites across all samples and experimental conditions.",
     "Significant deviations may indicate unequal peptide loading during LC-MS/MS, variability in phosphopeptide enrichment efficiency, or unequal protein amounts in the starting material. In addition, major contaminants or technical issues can influence accurate phosphosite quantification and the number of confidently localized phosphosites in a given sample."

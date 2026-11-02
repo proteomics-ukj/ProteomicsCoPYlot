@@ -51,8 +51,8 @@ def test_complete_report_replays_every_plot_and_table(report_data, tmp_path, int
         'hist': {'dpi': 72}, 'cv': {'dpi': 72}, 'correlation': {'dpi': 72},
         'pca': {'type': 'Interactive' if interactive else 'Normal', 'dpi': 72},
         'abundance': {'type': 'Interactive' if interactive else 'Normal', 'dpi': 72}}},
-        volcanoEntries=[SummaryVolcanoEntry(kind='protein', condition1='A', condition2='B',
-            renderType='Interactive' if interactive else 'Normal')])
+        volcanoEntries=[SummaryVolcanoEntry(kind='protein', condition1=first, condition2=second,
+            renderType='Interactive' if interactive else 'Normal') for first, second in [('A', 'B'), ('B', 'A')]])
     request = SummaryReportRequest(title='Reproducibility report', reportContext=context)
     result = report_with_notebook(report_function, request)
     assert result.warnings == []
@@ -61,9 +61,9 @@ def test_complete_report_replays_every_plot_and_table(report_data, tmp_path, int
     assert _active.get() is None and report_recipe_sink.get() is None
     recipe = snapshots.get(get_session_id(), result.notebookToken)
     sections = recipe.provenance['sections']
-    assert len(sections) == 10  # Mapping + eight QC figures + volcano, with paired tables.
+    assert len(sections) == 11  # Mapping + eight QC figures + two volcanoes, with paired tables.
     assert recipe.provenance['originalFiles'] == {'protein': 'example.csv'}
-    assert any(section['provenance'].get('plot') == 'volcano' for section in sections)
+    assert sum(section['provenance'].get('plot') == 'volcano' for section in sections) == 2
     _assert_replay(result, {'protein': report_data}, tmp_path)
 
 
@@ -152,7 +152,7 @@ def test_mixed_report_with_imputed_statistics_replays_all_levels(report_data, tm
     assert recipe.uses_imputed_input
     assert set(recipe.provenance['originalFiles']) == {'protein', 'phospho', 'peptide'}
     sections = recipe.provenance['sections']
-    assert len(sections) == 26  # Shared mapping, 24 figures, separate phospho QC summary.
+    assert len(sections) == 25  # Shared mapping and 24 figures; phospho QC includes its table.
     imputed = [section for section in sections if section['usesImputedInput']]
     assert len(imputed) == 1
     assert imputed[0]['provenance']['plot'] == 'volcano'
@@ -160,25 +160,76 @@ def test_mixed_report_with_imputed_statistics_replays_all_levels(report_data, tm
     _assert_replay(result, {'protein': report_data, 'phospho': site_path, 'peptide': peptide_path}, tmp_path)
 
 
-def test_a_section_that_cannot_be_exported_is_named_and_the_rest_is_still_offered(report_data, monkeypatch):
-    """One unexportable figure used to withhold the whole report notebook."""
+@pytest.mark.parametrize('failed_renderer', ['qc_cv_plot', 'volcano_png'])
+def test_export_failure_keeps_report_but_never_offers_an_incomplete_notebook(report_data, monkeypatch, failed_renderer):
     from app.services import notebook_report
     original = notebook_report._render
     def render(name, *args, **options):
-        if name == 'qc_cv_plot':
+        if name == failed_renderer:
             raise ValueError('unavailable')
         return original(name, *args, **options)
     monkeypatch.setattr(notebook_report, '_render', render)
-    context = SummaryReportContext(qcSettings={'protein': {'cv': {'dpi': 72}, 'box': {'dpi': 72}}})
+    context = SummaryReportContext(qcSettings={'protein': {'cv': {'dpi': 72}, 'box': {'dpi': 72}}},
+        volcanoEntries=[SummaryVolcanoEntry(kind='protein', condition1='A', condition2='B', renderType='Normal')])
     result = report_with_notebook(report_function, SummaryReportRequest(reportContext=context))
     assert 'data:image/png;base64,' in result.html
-    assert result.notebookToken and result.notebookError is None
-    assert result.notebookOmitted == ['Protein — Coefficient of Variation']
+    assert result.notebookToken is None
+    assert 'No partial notebook' in result.notebookError
+    assert not result.notebookOmitted
+
+
+def test_custom_sample_labels_replay_in_report_notebook(report_data, tmp_path):
+    result = report_with_notebook(report_function, SummaryReportRequest(
+        includeSampleLabels=True, sampleLabels={'run_0': 'Patient <1>'},
+        reportContext=SummaryReportContext(volcanoEntries=[
+            SummaryVolcanoEntry(kind='protein', condition1='A', condition2='B')])))
+    assert result.notebookError is None
+    assert 'Patient &lt;1&gt;' in result.html
     recipe = snapshots.get(get_session_id(), result.notebookToken)
-    assert recipe.provenance['omittedSections'] == ['Protein — Coefficient of Variation']
-    assert 'Protein — Coefficient of Variation' in recipe.input_explanation
-    names = [section['name'] for section in recipe.provenance['sections']]
-    assert any('Boxplot' in name for name in names) and not any('Variation' in name for name in names)
+    section = next(s for s in recipe.provenance['sections'] if s['provenance']['inputReplay'] == 'captured-metadata')
+    mapping = pd.read_parquet(io.BytesIO(recipe.resources[f"{section['section']}/table.parquet"]))
+    assert mapping['custom_label'].tolist() == ['Patient <1>', '', '', '', '', '']
+    _assert_replay(result, {'protein': report_data}, tmp_path)
+
+
+def test_large_report_keeps_and_replays_every_volcano(report_data, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from app.services.notebook_report import ReportRecipes
+    from app.services.notebook_snapshots import NotebookSnapshots
+    from app.services import notebook_report
+
+    # Two individually modest sections exceed the former 128 MiB aggregate cap.
+    padding = b'\0' * (65 * 1024**2)
+    original_append = ReportRecipes.append
+
+    def append(self, recipe):
+        if recipe.provenance.get('plot') == 'volcano':
+            recipe = replace(recipe, resources={**recipe.resources, 'large-reference.bin': padding})
+        original_append(self, recipe)
+
+    monkeypatch.setattr(ReportRecipes, 'append', append)
+    store = NotebookSnapshots(max_bytes=1024, max_total_bytes=2048)
+    monkeypatch.setattr(notebook_report, 'snapshots', store)
+    # The replay helper should read the same isolated store.
+    monkeypatch.setattr(sys.modules[__name__], 'snapshots', store)
+    monkeypatch.setenv('COPYLOT_NOTEBOOK_SESSION_MEMORY_MB', '1')
+    monkeypatch.setenv('COPYLOT_NOTEBOOK_MEMORY_MB', '2')
+    context = SummaryReportContext(volcanoEntries=[
+        SummaryVolcanoEntry(kind='protein', condition1='A', condition2='B'),
+        SummaryVolcanoEntry(kind='protein', condition1='B', condition2='A'),
+    ])
+    result = report_with_notebook(report_function, SummaryReportRequest(reportContext=context))
+    assert result.notebookToken and result.notebookError is None
+    assert not result.notebookOmitted
+    recipe = store.get(get_session_id(), result.notebookToken)
+    assert sum(map(len, recipe.resources.values())) > 128 * 1024**2
+    volcanoes = [s for s in recipe.provenance['sections'] if s['provenance'].get('plot') == 'volcano']
+    assert len(volcanoes) == 2
+    _assert_replay(result, {'protein': report_data}, tmp_path)
+    for section in volcanoes:
+        expected = json.loads(recipe.resources[f"{section['section']}/counts.json"])
+        actual = json.loads((tmp_path / 'export' / 'outputs' / section['section'] / 'reproduced_counts.json').read_text())
+        assert actual == expected
 
 
 def test_volcano_counts_are_reproduced_and_warnings_stay_out_of_the_export(report_data, tmp_path):

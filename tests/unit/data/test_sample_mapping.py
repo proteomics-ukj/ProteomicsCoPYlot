@@ -48,6 +48,35 @@ def test_labels_number_samples_within_their_own_condition() -> None:
     assert mapping["sample"].tolist() == LONG_NAMES
 
 
+def test_custom_labels_are_optional_shared_escaped_and_leave_missing_cells_empty():
+    metadata = _metadata()
+    original = metadata.copy(deep=True)
+    levels = [("Protein", metadata), ("Phospho", metadata.iloc[:2])]
+    plain = _sample_mapping_html(levels=levels, warnings=[])
+    assert "Custom label" not in plain
+    labeled = _sample_mapping_html(levels=levels, warnings=[], custom_labels={LONG_NAMES[0]: "<Patient & 1>"})
+    assert labeled.count("<th>Custom label</th>") == 2
+    assert labeled.count("&lt;Patient &amp; 1&gt;") == 2
+    assert "<Patient & 1>" not in labeled
+    assert labeled.count("<td></td>") == 4
+    assert "<th>Custom label</th>" in _sample_mapping_html(levels=levels, warnings=[], custom_labels={})
+    pd.testing.assert_frame_equal(metadata, original)
+
+
+@pytest.mark.parametrize('protein_loaded', [True, False])
+def test_editor_sample_names_cover_levels_without_duplicates(monkeypatch, protein_loaded):
+    from types import SimpleNamespace
+    from app.services import summary_tools
+
+    protein = SimpleNamespace(metadata=pd.DataFrame({'sample': ['shared', 'protein'], 'condition': ['A', 'A']}))
+    phospho = SimpleNamespace(metadata=pd.DataFrame({'sample': ['shared', 'phospho'], 'condition': ['A', 'A']}))
+    monkeypatch.setattr(summary_tools, 'get_annotation', lambda kind: phospho if kind == 'phospho' else protein if protein_loaded else None)
+    monkeypatch.setattr(summary_tools, 'get_current_dataset', lambda kind: protein if protein_loaded else None)
+    monkeypatch.setattr(summary_tools, 'get_peptide_metadata', lambda: SimpleNamespace(frame=pd.DataFrame({'sample': ['shared', 'peptide']})))
+    result = summary_tools.summary_tables.__wrapped__()
+    assert result.sampleNames == (['shared', 'protein', 'phospho'] if protein_loaded else ['shared', 'phospho', 'peptide'])
+
+
 def test_labels_match_the_rule_the_plot_paths_apply() -> None:
     """`plot_images` and `peptide_tools` both number with groupby/cumcount.
 

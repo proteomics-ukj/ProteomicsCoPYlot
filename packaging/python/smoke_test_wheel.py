@@ -26,6 +26,9 @@ for organism, example_gene in (("human", "TP53"), ("mouse", "Trp53")):
     assert example_gene in set(";".join(database["genes"]).split(";")), organism
 
 data_dir = resources.files("proteomicscopylot.example_data")
+assert resources.files("proteomicscopylot").joinpath("example.ipynb").read_bytes() == (
+    repository / "examples" / "example.ipynb"
+).read_bytes(), "installed tutorial differs from the checked example"
 data = nb.read_data(str(data_dir / "20260511_144120_20240822_JM_HEK293_WP_Report_PG.tsv"))
 meta = nb.read_data(str(data_dir / "protein_metadata_full.csv"))
 

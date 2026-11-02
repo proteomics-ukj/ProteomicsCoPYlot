@@ -33,6 +33,20 @@ def _frame(seed: int = 17, n_features: int = 400, missing: float = 0.15) -> pd.D
 COMMON_MEDIAN_TOLERANCE = {"median": 1e-9, "quantile": 1e-3}
 
 
+def test_quantile_preserves_endpoint_offsets_and_fractional_results():
+    from proteomicscopylot import notebook_functions as nb
+
+    meta = pd.DataFrame({"sample": ["a", "b"], "condition": ["A", "B"]})
+    for normalize in (normalize_data, nb.normalize_data):
+        data = pd.DataFrame({"a": [20, 20.001, 19, 21], "b": [10, 20, 9, 21]})
+        result = normalize(data, meta, "quantile", fit_rows=[0, 1])
+        np.testing.assert_allclose(result["a"], [15, 20.0005, 14, 20.9995])
+        integers = pd.DataFrame({"a": [1, 3, 7], "b": [2, 4, 8]})
+        for fit in (None, [0, 1]):
+            result = normalize(integers, meta, "quantile", fit_rows=fit)
+            np.testing.assert_allclose(result["a"], [1.5, 3.5, 7.5])
+
+
 @pytest.mark.parametrize("method", ["none", "median", "quantile", "vsn"])
 @pytest.mark.parametrize("log2_upload", [False, True])
 def test_cv_and_abundance_use_the_normalized_qc_matrix(monkeypatch, method, log2_upload):

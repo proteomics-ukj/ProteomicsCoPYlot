@@ -4378,7 +4378,7 @@
             "type": "boolean"
           },
           "seed": {
-            "default": 1337,
+            "default": 1,
             "maximum": 2147483647.0,
             "minimum": 0.0,
             "title": "Seed",
@@ -4430,6 +4430,15 @@
             "title": "Genes",
             "type": "array"
           },
+          "inputSource": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "list"
+            ],
+            "title": "Inputsource",
+            "type": "string"
+          },
           "maxTermSize": {
             "default": 300,
             "minimum": 1.0,
@@ -4441,6 +4450,11 @@
             "minimum": 1.0,
             "title": "Mintermsize",
             "type": "integer"
+          },
+          "namedList": {
+            "default": "",
+            "title": "Namedlist",
+            "type": "string"
           },
           "organism": {
             "default": "human",
@@ -4508,6 +4522,11 @@
             },
             "title": "Genes",
             "type": "array"
+          },
+          "notebookToken": {
+            "default": "",
+            "title": "Notebooktoken",
+            "type": "string"
           },
           "organism": {
             "default": "Homo sapiens",
@@ -6368,6 +6387,11 @@
             "title": "Author",
             "type": "string"
           },
+          "includeSampleLabels": {
+            "default": false,
+            "title": "Includesamplelabels",
+            "type": "boolean"
+          },
           "reportContext": {
             "anyOf": [
               {
@@ -6377,6 +6401,13 @@
                 "type": "null"
               }
             ]
+          },
+          "sampleLabels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Samplelabels",
+            "type": "object"
           },
           "textEntries": {
             "additionalProperties": {
@@ -6455,6 +6486,13 @@
           },
           "protein": {
             "$ref": "#/components/schemas/SummaryMetadataTable"
+          },
+          "sampleNames": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Samplenames",
+            "type": "array"
           }
         },
         "required": [
@@ -7396,7 +7434,7 @@
   },
   "info": {
     "title": "Proteomics CoPYlot API",
-    "version": "1.0.0b1"
+    "version": "1.0.0b2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7548,6 +7586,20 @@
                 "phosprot"
               ],
               "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "selected",
+              "enum": [
+                "selected",
+                "all"
+              ],
+              "title": "Scope",
               "type": "string"
             }
           }
@@ -11011,7 +11063,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 187,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -11126,7 +11178,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11183,6 +11235,87 @@
           }
         },
         "summary": "Imputation After Route",
+        "tags": [
+          "plots"
+        ]
+      }
+    },
+    "/api/plots/imputation/{kind}/applied-notebook": {
+      "get": {
+        "operationId": "applied_imputation_notebook_route_api_plots_imputation__kind__applied_notebook_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "protein",
+                "phospho",
+                "phosprot"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "normalization",
+            "required": false,
+            "schema": {
+              "default": "separate",
+              "title": "Normalization",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "showImputationDraw",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Showimputationdraw",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "advanced",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Advanced",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Applied Imputation Notebook Route Api Plots Imputation  Kind  Applied Notebook Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Applied Imputation Notebook Route",
         "tags": [
           "plots"
         ]
@@ -11261,7 +11394,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11386,7 +11519,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11739,7 +11872,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -11812,7 +11945,7 @@
             "name": "method",
             "required": false,
             "schema": {
-              "default": "Hexbin Plot",
+              "default": "Scatter Plot",
               "title": "Method",
               "type": "string"
             }
@@ -11832,7 +11965,7 @@
             "name": "bins",
             "required": false,
             "schema": {
-              "default": 1000,
+              "default": 100,
               "title": "Bins",
               "type": "integer"
             }
@@ -11852,7 +11985,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -12082,7 +12215,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -13862,7 +13995,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 187,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -14149,6 +14282,59 @@
           }
         },
         "summary": "Qc Cv Route",
+        "tags": [
+          "plots"
+        ]
+      }
+    },
+    "/api/plots/qc/{kind}/feature-cvs.csv": {
+      "get": {
+        "operationId": "qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "protein",
+                "phospho",
+                "phosprot"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshot",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Snapshot",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Qc Feature Cvs Route",
         "tags": [
           "plots"
         ]
@@ -14484,7 +14670,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -14711,7 +14897,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -14979,7 +15165,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -15270,7 +15456,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }

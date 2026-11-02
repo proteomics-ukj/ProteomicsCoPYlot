@@ -83,6 +83,42 @@ def test_overlapping_calls_share_work_and_release_waiters(monkeypatch, outcome):
     assert not runtime_cache._IN_FLIGHT
 
 
+def test_disposal_drops_revisions_and_rejects_late_cache_writes(monkeypatch):
+    from app.services import runtime_cache
+    from app.services.session_cleanup import _discard_session
+
+    monkeypatch.setenv("COPYLOT_SESSION_ISOLATION", "1")
+    entered, release = Event(), Event()
+    session = "disposed-session"
+
+    def slow():
+        entered.set()
+        assert release.wait(10)
+        return "old"
+
+    def request(factory):
+        token = set_session_id(session)
+        try:
+            return cached_call("disposal", {}, factory)
+        finally:
+            reset_session_id(token)
+
+    with ThreadPoolExecutor() as pool:
+        old = pool.submit(request, slow)
+        try:
+            assert entered.wait(10)
+            _discard_session(session)
+            assert request(lambda: "new") == "new"
+        finally:
+            release.set()
+        assert old.result() == "old"
+        assert request(lambda: "unexpected") == "new"
+    for index in range(15):
+        name = f"disposal-{index}"
+        _discard_session(name)
+        assert name not in runtime_cache._SESSION_VERSIONS
+
+
 @pytest.mark.parametrize('separation', ['key', 'session', 'format'])
 def test_unrelated_calculations_run_independently(monkeypatch, separation):
     from app.services.plot_export import plot_output_format

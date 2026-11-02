@@ -22,17 +22,11 @@ _active = ContextVar('report_notebook', default=None)
 @dataclass
 class ReportRecipes:
     recipes: list[NotebookRecipe] = field(default_factory=list)
-    size: int = 0
-    # Sections the report shows but the notebook cannot reproduce. The notebook
-    # is still offered for the rest and names these, rather than being withheld.
+    # A report notebook is offered only when every displayed section was captured.
     omitted: list[str] = field(default_factory=list)
 
     def append(self, recipe):
-        size = sum(map(len, recipe.resources.values())) + len(recipe.source.code.encode())
-        if self.size + size > 128 * 1024 * 1024:
-            raise ValueError('Report notebook exceeds the 128 MiB resource limit.')
         self.recipes.append(recipe)
-        self.size += size
 
 
 _SECTION_NAMES = {
@@ -199,6 +193,8 @@ def record_sample_mapping(title, mapping):
             input_explanation='Sample labels are regenerated from the report’s captured annotation metadata.',
             calculation="from IPython.display import display\n"
                 "table = functions.sample_label_frame(metadata)\n"
+                "if 'custom_label' in metadata:\n"
+                "    table['custom_label'] = table['sample'].map(dict(zip(metadata['sample'], metadata['custom_label'])))\n"
                 "pd.testing.assert_frame_equal(table, read_resource_table(RESOURCES / 'table.parquet'), check_exact=True)\n"
                 "table.to_csv('reproduced_table.csv', index=False)\ndisplay(table)"))
     except Exception:
@@ -217,7 +213,7 @@ def load_functions(path, name):
     return module
 
 
-def combine_report(title, recipes, omitted=()):
+def combine_report(title, recipes):
     loader = extract_notebook_source(module_source('notebook_report.py'), ('load_functions',))
     imports = tuple(sorted(set(loader.imports).union(*(recipe.source.imports for recipe in recipes))))
     resources = {'input.parquet': dataframe_bytes(pd.DataFrame()),
@@ -265,7 +261,7 @@ def combine_report(title, recipes, omitted=()):
     return NotebookRecipe(plot_name=title + ' — Report',
         source=NotebookSource(loader.code, loader.functions, imports), settings={},
         provenance={'inputReplay': 'report-sections', 'sections': provenance, 'originalFiles': inputs,
-                    'omittedSections': list(omitted)},
+                    'omittedSections': []},
         original_filename='', resources=resources, preparation=preparation, calculation='',
         uses_imputed_input=any(recipe.uses_imputed_input for recipe in recipes),
         imputation_recipe='Only sections marked usesImputedInput use captured imputation. Exact parameters and '
@@ -276,9 +272,7 @@ def combine_report(title, recipes, omitted=()):
             'Set the original-file paths below, then run from top to bottom. Each section contains its '
             'own calculation code and settings; outputs are saved in separate numbered folders. '
             'Only sections that actually use imputed values reuse their documented captured matrix. '
-            'The manifest identifies imputation separately for every section.' + (
-            '\n\nNot reproduced here, because their export could not be prepared: '
-            + '; '.join(omitted) + '.' if omitted else ''))
+            'The manifest identifies imputation separately for every section.')
 
 
 def report_with_notebook(builder, payload):
@@ -299,13 +293,14 @@ def report_with_notebook(builder, payload):
             return result  # Viewers download the report, not its notebook.
         if runtime_cache_version() != revision:
             raise ValueError('The data changed while the report was generated.')
+        if collector.omitted:
+            raise ValueError('Report sections could not be captured: ' + '; '.join(collector.omitted))
         if collector.recipes:
-            recipe = combine_report(payload.title.strip() or 'CoPYlot', collector.recipes, collector.omitted)
+            recipe = combine_report(payload.title.strip() or 'CoPYlot', collector.recipes)
             result.notebookToken = snapshots.capture(get_session_id(), recipe)
-            result.notebookOmitted = list(collector.omitted)
     except Exception:
         LOGGER.exception('Full report notebook unavailable')
-        result.notebookError = ('The full report notebook could not be captured reproducibly. '
-            'Regenerate the report after loading and annotating the original files. '
-            'Large reports may exceed the 128 MiB export limit.')
+        result.notebookError = ('The complete report notebook could not be prepared. '
+            'No partial notebook was exported. Regenerate the report; if this persists, '
+            'check the server log for the affected section.')
     return result

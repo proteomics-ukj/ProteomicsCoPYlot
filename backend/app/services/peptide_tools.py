@@ -130,24 +130,34 @@ def _peptide_dataset_path(stored=None) -> Path:
 
 
 @lru_cache(maxsize=4)
-def _load_peptide_frame_cached(path_str: str, modified_ns: int) -> pd.DataFrame:
+def _load_peptide_frame_cached(path_str: str, modified_ns: int, size: int = 0, changed_ns: int = 0) -> pd.DataFrame:
     path = Path(path_str)
     with path.open("rb") as handle:
         return read_dataframe(path.name, handle)
 
 
-def get_peptide_frame(*, apply_contaminants: bool = True) -> pd.DataFrame:
+def get_peptide_frame(*, apply_contaminants: bool = True, columns: list[str] | None = None) -> pd.DataFrame:
     # Retain the dataset while reading: session expiry must not release its file
     # between resolving the path and opening it.
     stored = get_current_dataset("peptide")
     path = _peptide_dataset_path(stored)
     stat = path.stat()
-    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns).copy()
+    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns)
     annotation = get_annotation("protein") if apply_contaminants else None
     if annotation is not None and annotation.filter_config.contaminants.enabled:
-        from app.services.contaminant_filter import filter_peptide_contaminants, contaminant_reference
-        frame = filter_peptide_contaminants(frame, annotation.filter_config.contaminants.model_dump(), contaminant_reference())
-    return frame
+        from app.services.contaminant_filter import contaminant_mask, contaminant_reference
+        from app.services.peptide_preparation_cache import cached_peptide_preparation
+        import json
+        config = annotation.filter_config.contaminants.model_dump()
+        mask = cached_peptide_preparation('contaminant-mask',
+            (str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, json.dumps(config, sort_keys=True)),
+            lambda: contaminant_mask(frame, config, contaminant_reference()))
+        if columns is not None:
+            frame = frame[[column for column in columns if column in frame.columns]]
+        return frame.loc[~mask].copy()
+    if columns is not None:
+        frame = frame[[column for column in columns if column in frame.columns]]
+    return frame.copy()
 
 
 def _require_column(frame: pd.DataFrame, column: str) -> str:
@@ -398,6 +408,11 @@ def _sample_rename_map(
 
 
 def peptide_overview() -> dict[str, object]:
+    from app.services.peptide_preparation_cache import cached_peptide_preparation
+    return cached_peptide_preparation('overview', (), _peptide_overview_uncached)
+
+
+def _peptide_overview_uncached() -> dict[str, object]:
     path = _peptide_dataset_path()
     frame = get_peptide_frame()
     warnings: list[str] = []
@@ -458,11 +473,11 @@ def peptide_overview() -> dict[str, object]:
 
 def peptide_rt_plot(
     *,
-    method: str = "Hexbin Plot",
+    method: str = "Scatter Plot",
     add_line: bool = False,
-    bins: int = 1000,
+    bins: int = 100,
     header: bool = True,
-    sampling_seed: int = 69,
+    sampling_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 15,
     dpi: int = 100,
@@ -527,7 +542,7 @@ def peptide_rt_interactive_html(
     *,
     add_line: bool = False,
     header: bool = True,
-    sampling_seed: int = 69,
+    sampling_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 15,
     advanced: dict | None = None,
@@ -950,14 +965,34 @@ def _protein_peptides(frame: pd.DataFrame, protein: str) -> list[str]:
     return frame.loc[selected, _stripped_sequence_column(frame)].dropna().astype(str).unique().tolist()
 
 
+def _protein_peptide_index() -> dict[str, list[str]]:
+    """Index quantified peptides once; preserve first-occurrence order per protein."""
+    frame = get_peptide_frame()
+    protein_col = _protein_names_column(frame)
+    seq_col = _stripped_sequence_column(frame)
+    if "Precursor.Quantity" in frame.columns:
+        quantity = pd.to_numeric(frame['Precursor.Quantity'], errors='coerce')
+        frame = frame.loc[np.isfinite(quantity) & (quantity > 0)]
+    frame = frame.loc[frame[seq_col].notna(), [protein_col, seq_col]]
+    ordered: dict[str, dict[str, None]] = {}
+    for names, peptide in zip(frame[protein_col].fillna('').astype(str), frame[seq_col].astype(str)):
+        for name in names.split(';'):
+            ordered.setdefault(name.strip(), {})[peptide] = None
+    return {name: list(peptides) for name, peptides in ordered.items()}
+
+
 def _coverage_visualization(
-    frame: pd.DataFrame,
+    frame: pd.DataFrame | None,
     db: pd.DataFrame,
     protein: str,
     chunk_size: int = 30,
     sequence: str | None = None,
+    found_sequences: list[str] | None = None,
 ) -> str:
-    found_sequences = _protein_peptides(frame, protein)
+    if found_sequences is None:
+        if frame is None:
+            raise ValueError("Peptide data is required for coverage.")
+        found_sequences = _protein_peptides(frame, protein)
 
     if sequence is None:
         sequence = _fasta_sequence(db, protein)
@@ -1033,8 +1068,9 @@ def peptide_sequence_coverage(
     if not protein.strip():
         raise ValueError("A protein must be selected for sequence coverage.")
 
-    frame = get_peptide_frame()
-    peptides = _protein_peptides(frame, protein)
+    from app.services.peptide_preparation_cache import cached_peptide_preparation
+    peptide_index = cached_peptide_preparation('protein-peptide-index', (), _protein_peptide_index)
+    peptides = peptide_index.get(protein, [])
     if not peptides:
         raise ValueError(f"No peptides were found for protein '{protein}'.")
 
@@ -1061,7 +1097,7 @@ def peptide_sequence_coverage(
                 coverage_mask[index] = 1
 
     coverage_percent = round((sum(coverage_mask) / len(sequence)) * 100.0, 2)
-    coverage_text = _coverage_visualization(frame, db, protein, chunk_size=chunk_size, sequence=sequence)
+    coverage_text = _coverage_visualization(None, db, protein, chunk_size=chunk_size, sequence=sequence, found_sequences=peptides)
 
     unmapped = sorted(unmapped)
     warnings: list[str] = []

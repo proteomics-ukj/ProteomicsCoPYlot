@@ -212,8 +212,7 @@ def prepare_cov_df(data: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
 
 def qc_coverage_table(kind: AnnotationKind, summary: bool = False) -> pd.DataFrame:
     frame = log2_qc_frame(kind)
-    sample_columns = _get_sample_columns(kind, frame)
-    meta = _metadata_for_kind(kind, frame, sample_columns)
+    meta = _metadata_for_kind(kind, frame, _get_sample_columns(kind, frame))
     if summary:
         return prepare_coverage_summary_df(frame, meta)
     return prepare_coverage_df(frame, meta)
@@ -227,6 +226,22 @@ def qc_boxplot_table(kind: AnnotationKind, mode: str = "Mean") -> pd.DataFrame:
     if str(mode).lower() == "single":
         return prepare_boxplot_single_df(numeric, meta)
     return prepare_boxplot_df(numeric, meta)
+
+
+def qc_feature_cvs(frame: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
+    samples = meta["sample"].tolist()
+    frame = frame.reset_index(drop=True)
+    values = raw_zero_to_nan(frame[samples], samples)
+    cvs = dict(condition_cvs(values, meta))
+    result = frame.drop(columns=samples).copy()
+    if result.shape[1] == 0:
+        result["Feature row"] = frame.index + 1
+    for condition in meta["condition"].astype(str).unique():
+        label = f"{condition} CV (%)"
+        while label in result.columns:
+            label += " (CV)"
+        result[label] = cvs.get(condition, np.nan)
+    return result
 
 
 def qc_cv_table(kind: AnnotationKind) -> pd.DataFrame:

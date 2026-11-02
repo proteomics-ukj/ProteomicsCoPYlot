@@ -36,8 +36,37 @@ def coverage_data():
     return frame, meta
 
 
+def test_preview_skips_serialization_and_preserves_figure(coverage_data, monkeypatch):
+    from app.services import notebook_qc
+    from app.services.plot_export import notebook_capture_allowed
+
+    expected, token = render_qc("protein", dpi=90)
+    assert token
+    monkeypatch.setattr(notebook_qc, "dataframe_bytes", lambda _: pytest.fail("serialized a preview"))
+    capture = notebook_capture_allowed.set(False)
+    try:
+        assert render_qc("protein", dpi=90) == (expected, "")
+    finally:
+        notebook_capture_allowed.reset(capture)
+
+
+def test_feature_cv_download_matches_rendered_and_live_data(coverage_data):
+    from app.api.plots_qc import qc_feature_cvs_route
+
+    _, token = render_qc("protein", plot="cv", dpi=90)
+    expected = pd.DataFrame({
+        "ProteinNames": ["P1", "P2", "P3"],
+        "A CV (%)": [100 * np.sqrt(0.5) / 1.5, np.nan, np.nan],
+        "B CV (%)": [100 * np.sqrt(72) / 10, 100 * np.sqrt(288) / 20, np.nan],
+    })
+    for snapshot in ("", token):
+        response = qc_feature_cvs_route("protein", snapshot)
+        actual = pd.read_csv(io.BytesIO(response.body))
+        pd.testing.assert_frame_equal(actual, expected)
+
+
 @pytest.mark.parametrize("options", [
-    {}, {"include_id": True}, {"summary": True}, {"summary": True, "text": True},
+    {}, {"random_seed": 23}, {"include_id": True}, {"summary": True}, {"summary": True, "text": True},
     {"legend": False, "header": False, "reference_line": False},
     {"width_cm": 24, "height_cm": 12, "dpi": 90, "text": True},
     {"advanced": {"titleElement": {"text": "A custom title", "size": 17, "bold": True},
@@ -50,7 +79,7 @@ def test_portable_coverage_matches_ui_png_exactly(coverage_data, options):
     assert bytes(actual) == bytes(expected)
     recipe = snapshots.get(get_session_id(), token)
     assert recipe.resources["original.png"] == actual
-    assert recipe.settings["random_seed"] == options.get("random_seed", 187)
+    assert recipe.settings["random_seed"] == options.get("random_seed", 1)
     assert recipe.provenance["dataSource"] == "data"
     assert not recipe.uses_imputed_input
     expected_table = qc_coverage_table("protein", summary=options.get("summary", False))
@@ -81,6 +110,9 @@ def test_ui_notebook_runs_offline_and_reproduces_plot_and_table(coverage_data, t
                                cwd=tmp_path, capture_output=True, text=True, timeout=90)
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "reproduced.png").read_bytes() == original
+    if plot == "cv":
+        from app.api.plots_qc import qc_feature_cvs_route
+        assert (tmp_path / "reproduced_feature_cvs.csv").read_bytes() == qc_feature_cvs_route("protein", token).body
     if plot in {"coverage", "boxplot", "cv"}:
         table_options = {key: value for key, value in options.items() if key in {"summary", "mode"}}
         expected = getattr(table_functions, f"qc_{plot}_table")("protein", **table_options)

@@ -247,7 +247,7 @@ export function SimulationPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="Replicate & Variance Projection">
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={kindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>

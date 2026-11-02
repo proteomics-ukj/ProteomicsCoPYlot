@@ -39,7 +39,7 @@ def imputation_before_route(
     adjustStd: float = 0.3,
     downShift: float = 1.8,
     width: float = 0.3,
-    seed: int = 1337,
+    seed: int = 1,
     sampleWise: bool = True,
     advanced: str = "",
 ) -> Response:
@@ -67,7 +67,7 @@ def imputation_overall_route(
     adjustStd: float = 0.3,
     downShift: float = 1.8,
     width: float = 0.3,
-    seed: int = 1337,
+    seed: int = 1,
     sampleWise: bool = True,
     showImputationDraw: bool = True,
     advanced: str = "",
@@ -97,7 +97,7 @@ def imputation_after_route(
     adjustStd: float = 0.3,
     downShift: float = 1.8,
     width: float = 0.3,
-    seed: int = 1337,
+    seed: int = 1,
     sampleWise: bool = True,
     normalization: str = "separate",
     advanced: str = "",
@@ -119,10 +119,20 @@ def imputation_after_route(
         )
 
 
+@router.get("/imputation/{kind}/applied-notebook")
+def applied_imputation_notebook_route(kind: AnnotationKind, normalization: str = "separate",
+                                      showImputationDraw: bool = True, advanced: str = "") -> dict[str, str]:
+    from app.services.notebook_imputation import applied_imputation_notebook
+
+    with plot_errors("Failed to export applied imputation"):
+        token = applied_imputation_notebook(kind, normalization, showImputationDraw, parse_advanced_plot_settings(advanced))
+        return {"notebookToken": token}
+
+
 @router.get("/distribution/{kind}/qqnorm.png")
 def distribution_qq_route(
     kind: AnnotationKind,
-    randomSeed: int = 187,
+    randomSeed: int = 1,
     advanced: str = "",
 ) -> Response:
     with plot_errors("Failed to render QQ plot"):

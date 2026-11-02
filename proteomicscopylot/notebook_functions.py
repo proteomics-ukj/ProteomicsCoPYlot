@@ -24,6 +24,42 @@ from scipy.stats import gaussian_kde, pearsonr
 from scipy.stats import t
 from sklearn.decomposition import PCA
 
+if __package__:
+    from . import notebook_tables as _gui_tables
+else:
+    import importlib.util as _table_import
+
+    _table_spec = _table_import.spec_from_file_location("copylot_notebook_tables", Path(__file__).with_name("notebook_tables.py"))
+    _gui_tables = _table_import.module_from_spec(_table_spec)
+    sys.modules[_table_spec.name] = _gui_tables
+    _table_spec.loader.exec_module(_gui_tables)
+
+completeness_feature_summary_table = _gui_tables.completeness_feature_summary_table
+completeness_sample_summary_table = _gui_tables.completeness_sample_summary_table
+gene_list_terms_table = _gui_tables.gene_list_terms_table
+_condition_cvs = _gui_tables.condition_cvs
+ora_terms_table = _gui_tables.ora_terms_table
+pathway_heatmap_table = _gui_tables.pathway_heatmap_table
+pearson_table = _gui_tables.pearson_table
+peptideCollapse = _gui_tables.peptideCollapse
+peptide_coverage_table = _gui_tables.peptide_coverage_table
+peptide_missed_cleavage_summary = _gui_tables.peptide_missed_cleavage_summary
+peptide_modification_counts = _gui_tables.peptide_modification_counts
+phospho_counts_table = _gui_tables.phospho_counts_table
+phospho_coverage_table = _gui_tables.phospho_coverage_table
+phospho_distribution_table = _gui_tables.phospho_distribution_table
+phospho_sty_table = _gui_tables.phospho_sty_table
+qc_boxplot_table = _gui_tables.qc_boxplot_table
+qc_coverage_table = _gui_tables.qc_coverage_table
+qc_cv_table = _gui_tables.qc_cv_table
+qc_feature_cvs = _gui_tables.qc_feature_cvs
+single_protein_boxplot_table = _gui_tables.single_protein_boxplot_table
+single_protein_heatmap_table = _gui_tables.single_protein_heatmap_table
+single_protein_lineplot_table = _gui_tables.single_protein_lineplot_table
+translate_id_table = _gui_tables.translate_id_table
+venn_table = _gui_tables.venn_table
+volcano_untested_table = _gui_tables.volcano_untested_table
+
 # <shared-core> proteomicscopylot/_core.py, one copy for the app and the pip
 # package. Notebook exports inline these definitions here.
 try:
@@ -980,7 +1016,7 @@ def transform_phosprot(
     return data_phosprot[[column for column in ordered if column in data_phosprot.columns]]
 
 
-def qqnorm_plot(data, meta, seed=187):
+def qqnorm_plot(data, meta, seed=1):
     sample_columns = meta['sample'].tolist()
     data_values = data[sample_columns].apply(pd.to_numeric, errors="coerce")
 
@@ -998,7 +1034,7 @@ def qqnorm_plot(data, meta, seed=187):
     ax.set_ylabel("Sample Quantiles")
     return fig
 
-def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, ret=0, sample_wise=True, seed=1337, method="quantile", down_shift=1.8, width=0.3):
+def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, ret=0, sample_wise=True, seed=1, method="quantile", down_shift=1.8, width=0.3):
     """Impute missing values with a downshifted normal draw.
 
     Pass **log2 transformed** data. The model draws from a normal centred near
@@ -1243,7 +1279,7 @@ def coverage_plot(data, meta, id=True, header=True, legend=True, plot_colors=Non
 
 
 def coverage_plot_summary(data, meta, header=True, plot_colors=None, width=20, height=10, dpi=300, text=False,
-                          text_size=9, seed=69, data_scale="log2"):
+                          text_size=9, seed=1, data_scale="log2"):
     data = _prepare_intensity_data(data, meta['sample'].tolist(), data_scale)
     meta = meta.copy()
     meta["sample"] = meta["sample"].astype(str)
@@ -1456,8 +1492,17 @@ def coverage_plot_pep(data2_path, meta, id=True, header=True, legend=True,
     return fig
 
 
+def _log2_plot_input(data, meta, data_scale):
+    scale = str(data_scale).strip().lower()
+    if scale == "linear":
+        return log2_transform_data(data, meta)
+    return _prepare_intensity_data(data, meta["sample"], scale)
+
+
 def histo_int(data, meta, plot_colors=None, header=True, legend=True,
-              width=20, height=10, dpi=300):
+              width=20, height=10, dpi=300, data_scale="log2"):
+    """Plot log2 intensities, converting linear input before averaging replicates."""
+    data = _log2_plot_input(data, meta, data_scale)
     figsize_inches = (width / 2.54, height / 2.54)
     fig, ax = plt.subplots(figsize=figsize_inches, dpi=dpi)
 
@@ -1510,7 +1555,9 @@ def histo_int(data, meta, plot_colors=None, header=True, legend=True,
 
 
 def boxplot_int(data, meta, outliers=False, header=True, plot_colors=None,
-                width_cm=20, height_cm=10, dpi=100, text=False, text_size=9):
+                width_cm=20, height_cm=10, dpi=100, text=False, text_size=9, data_scale="log2"):
+    """Plot log2 intensities, converting linear input before averaging replicates."""
+    data = _log2_plot_input(data, meta, data_scale)
     n_conditions = meta['condition'].nunique()
 
     if plot_colors is not None:
@@ -1689,21 +1736,9 @@ def cov_plot(data, meta, outliers=False, header=True, legend=True, plot_colors=N
         raise ValueError("data_scale must be 'linear' for cov_plot.")
 
     data = _prepare_intensity_data(data, meta['sample'].tolist(), normalized_scale)
-    conditions = meta['condition'].unique()
-    valid_conditions = []
-    cv_data = []
-
-    for cond in conditions:
-        cols = meta.loc[meta['condition'] == cond, 'sample'].tolist()
-        if len(cols) >= 2:
-            subset = data[cols]
-            means = subset.mean(axis=1, skipna=True)
-            sds = subset.std(axis=1, skipna=True)
-            cv = (sds / means) * 100
-            cv = cv[np.isfinite(cv)]
-            if len(cv) > 0:
-                valid_conditions.append(cond)
-                cv_data.append(cv)
+    cvs = _condition_cvs(data, meta)
+    valid_conditions = [condition for condition, _ in cvs]
+    cv_data = [values for _, values in cvs]
 
     n_conditions = len(valid_conditions)
 
@@ -3168,6 +3203,19 @@ def median_center(values, fit_rows=None):
     return values.sub(medians, axis=1).add(grand_median)
 
 
+def _interp_extrapolate(x, xs, ys):
+    """Interpolate within the fit and preserve the nearest endpoint offset outside it."""
+    x = np.asarray(x, dtype=float)
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    out = np.interp(x, xs, ys)
+    low = x < xs[0]
+    high = x > xs[-1]
+    out[low] = x[low] + (ys[0] - xs[0])
+    out[high] = x[high] + (ys[-1] - xs[-1])
+    return out
+
+
 def quantile_normalize(values, fit_rows=None):
     """Force every sample onto a common intensity distribution.
 
@@ -3181,7 +3229,7 @@ def quantile_normalize(values, fit_rows=None):
     learned from those rows only; every other row is placed by interpolating its
     value into its sample's learned mapping.
     """
-    numeric = values.apply(pd.to_numeric, errors="coerce")
+    numeric = values.apply(pd.to_numeric, errors="coerce").astype(float)
     reference_frame = numeric if fit_rows is None else numeric.loc[fit_rows]
     row_count = int(reference_frame.shape[0])
     if row_count == 0:
@@ -3217,7 +3265,7 @@ def quantile_normalize(values, fit_rows=None):
         xs, ys = fit_values[order], mapped[order]
         xs_unique, first = np.unique(xs, return_index=True)
         mask = numeric[column].notna().to_numpy()
-        out.loc[mask, column] = np.interp(numeric[column].to_numpy(dtype=float)[mask], xs_unique, ys[first])
+        out.loc[mask, column] = _interp_extrapolate(numeric[column].to_numpy(dtype=float)[mask], xs_unique, ys[first])
     return out
 
 
@@ -3941,19 +3989,25 @@ def _different_genes_column(data, workflow):
     raise ValueError("different_genes requires GeneNames or Gene_group.")
 
 
-def _different_gene_tokens(values):
-    """Every member of every value, once, sorted: the shared `split_tokens`
-    rule (`;` or `,` separated), as in the web app and the R functions.
+_explicit_gene_tokens = _gui_tables._explicit_gene_tokens
 
-    A protein group "A;B" used to contribute only "A" outside the phosphoprotein
-    workflow; every member counts now. The former
+
+def _different_gene_tokens(values):
+    """The leading member of every value, once, sorted: cells are cut by the
+    shared `split_tokens` rule (`;` or `,` separated) and the first member is
+    kept, as in the web app and the R functions.
+
+    One quantified feature is one draw from the urn, so a protein group "A;B"
+    contributes "A" only, for hits and background alike. The former
     group-splitting switch, ignored since then, is gone (2026-10-22).
     """
     genes = set()
     for value in values:
         if value is None or (not isinstance(value, str) and pd.isna(value)):
             continue
-        genes.update(split_tokens(value))
+        tokens = split_tokens(value)
+        if tokens:
+            genes.add(tokens[0])
     return sorted(genes)
 
 
@@ -4073,7 +4127,7 @@ def enrichment_data(
     Returns an empty frame rather than None when nothing passes, so callers can
     treat the result as a table unconditionally.
     """
-    genes = _different_gene_tokens(gene_list)
+    genes = _explicit_gene_tokens(gene_list)
     if not genes:
         return _empty_enrichment_frame()
     if background_mode not in {"experiment", "global"}:
@@ -4091,7 +4145,7 @@ def enrichment_data(
             raise ValueError(
                 "Provide the tested-gene background, or set background_mode='global'."
             )
-        submitted_background = set(_different_gene_tokens(background))
+        submitted_background = set(_explicit_gene_tokens(background))
         missing = sorted(set(genes).difference(submitted_background))
         if missing:
             raise ValueError(
@@ -4920,7 +4974,7 @@ def phosprot_regulation(data: pd.DataFrame, meta: pd.DataFrame,
 
 #PEPTIDE
 
-def rt_vs_pred_rt_plot(data_path, method="Hexbin Plot", add_line=False, bins=1000, header=True, width=8, height=6, dpi=100, seed=69):
+def rt_vs_pred_rt_plot(data_path, method="Scatter Plot", add_line=False, bins=100, header=True, width=8, height=6, dpi=100, seed=1):
     data = read_data(data_path)
 
     x = data['Predicted.RT']
@@ -5367,7 +5421,7 @@ def single_protein_values(data, meta, protein):
 
 
 def boxplot_int_single_prot(data, meta, protein, outliers=False, dots=False, header=True, legend=True,
-                       plot_colors=None, width=8, height=6, dpi=100, seed=69):
+                       plot_colors=None, width=8, height=6, dpi=100, seed=1):
     values = single_protein_values(data, meta, protein)
     meta = _sample_meta(meta.copy(), id=False)
 
@@ -5591,15 +5645,10 @@ def phossite_coverage_plot(
 
 def sty_plot(data, localization_cutoff=0.0):
     data = filter_localization(data, localization_cutoff)
-    sty = data["PTM_Collapse_key"].astype(str)
-    letter = sty.str.extract(r'~[^_]+_([STY])\d+_')[0]
-    letter = letter.fillna(sty.str.extract(r"(?:^|_)([STY])\d+(?:_|$)")[0])
-
-    counts = letter.value_counts().reindex(["S", "T", "Y"], fill_value=0)
-    if letter.isna().any():
-        counts.loc["Unparsed"] = int(letter.isna().sum())
+    table = phospho_sty_table(data).set_index("Residue")
+    counts = table["Count"]
+    perc = table["Percentage"]
     total = counts.sum()
-    perc = (counts / total * 100) if total > 0 else counts.astype(float)
 
     fig, ax = plt.subplots(figsize=(7, 4.5), dpi=140)
 
@@ -5643,7 +5692,7 @@ def sty_plot(data, localization_cutoff=0.0):
 def phossite_coverage_plot_summary(
     data, meta, header=True, legend=True,
     width=20, height=10, dpi=300,
-    color_classI="blue", color_notclassI="orange", seed=69, is_log2=True, localization_cutoff=0.0
+    color_classI="blue", color_notclassI="orange", seed=1, is_log2=True, localization_cutoff=0.0
 ):
     data = filter_localization(data, localization_cutoff)
     counts = _phossite_coverage_counts(data, meta, is_log2)
@@ -6224,8 +6273,8 @@ def _dropped_features_message(dropped, total, purpose="clustering", noun="featur
     else:
         text = f"{percent:.0f}%"
     return (
-        f"{text} of {noun} dropped for {purpose} ({dropped:,} of {total:,}) "
-        "\u2014 not observed in every sample"
+        f"{text} of {noun} dropped for {purpose} ({dropped:,} of {total:,}), "
+        "not observed in every sample"
     )
 
 

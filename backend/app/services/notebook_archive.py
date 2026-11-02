@@ -16,7 +16,6 @@ import pandas as pd
 
 from app.app_version import APP_VERSION
 from app.services.notebook_source import NotebookSource
-from app.services.notebook_limits import notebook_memory_budgets
 
 _DISTRIBUTIONS = {"PIL": "Pillow", "sklearn": "scikit-learn", "Bio": "biopython",
                   "matplotlib_venn": "matplotlib-venn", "umap": "umap-learn"}
@@ -127,8 +126,6 @@ def build_notebook_archive(recipe: NotebookRecipe) -> tuple[str, bytes]:
             raise ValueError("Resources must have safe relative archive names.")
     if "input.parquet" not in recipe.resources or "metadata.parquet" not in recipe.resources:
         raise ValueError("The exact input matrix and metadata must be captured.")
-    if sum(map(len, recipe.resources.values())) > notebook_memory_budgets()[0]:
-        raise ValueError("Notebook resources exceed COPYLOT_NOTEBOOK_SESSION_MEMORY_MB; increase it on a suitably sized machine.")
     for code in (recipe.preparation, recipe.calculation, *(code for _, code in recipe.calculation_sections)):
         compile(code, "notebook", "exec")
     packages = {"pandas", "pyarrow"}

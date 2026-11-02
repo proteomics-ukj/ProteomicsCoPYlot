@@ -249,10 +249,8 @@ export default function App() {
         const isInteractive = contextText(contextModes["stats:volcano"], "type") !== "normal";
         return isInteractive ? PLOTLY_DEFAULT_TEMPLATE_CONTROLS : MATPLOTLIB_LEFT_BOTTOM_CONTROLS;
       }
-      case "peptide:rtPlot": {
-        const isInteractive = contextText(contextModes.peptide, "type") === "interactive";
-        return isInteractive ? PLOTLY_WHITE_TEMPLATE_CONTROLS : MATPLOTLIB_CONTROLS;
-      }
+      case "peptide:rtPlot":
+        return MATPLOTLIB_CONTROLS;
       case "comparison:pearson": {
         const isInteractive = contextText(contextModes.comparison, "type") === "interactive";
         return isInteractive ? PLOTLY_WHITE_TEMPLATE_CONTROLS : MATPLOTLIB_BOTH_GRID_CONTROLS;
@@ -1101,7 +1099,9 @@ export default function App() {
       // below, the Kinase Library included, uses the sites that pass it.
       const cutoffHeader = (
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <LocalizationCutoffField className="max-w-xs" />
+          <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
+            <LocalizationCutoffField />
+          </div>
         </section>
       );
       if (activePhosphoTab === "ksea") {

@@ -1,14 +1,22 @@
 """Portable peptide plots from captured explicit inputs."""
 from functools import lru_cache
+import json
+from app.services.peptide_preparation_cache import cached_peptide_preparation
 import inspect
 import sys
 from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
 from app.services.notebook_interactive import abundance_source
 from app.services.notebook_qc import qc_source
 from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+
+
+def _cached_image(name, settings, fmt, revision, render):
+    # Store only immutable image bytes, never a notebook token. Each request
+    # still captures its own recipe (including report exports and provenance).
+    return cached_peptide_preparation(name, (json.dumps(settings, sort_keys=True), fmt, revision), render)
 
 
 @lru_cache(maxsize=1)
@@ -22,7 +30,8 @@ def missed_cleavage_source():
     figure = function[:start] + ('    plt = get_plt()\n    wide = data\n    meta = metadata\n'
         '    annotated_cols = [column for column in meta["new_sample"] if column in wide.columns]\n') + function[boundary:]
     figure = replace_once(figure, 'def peptide_missed_cleavage_plot(\n    *,',
-                           'def render_plot(data, metadata, *, seq_col,')
+                           'def render_plot(data, metadata, *, seq_col, prepared_summary=None,')
+    figure = figure.replace('summary = peptide_missed_cleavage_summary(', 'summary = prepared_summary.copy(deep=True) if prepared_summary is not None else peptide_missed_cleavage_summary(')
     figure = figure.replace('_cm_to_inch(', 'cm_to_inch(').replace('_to_png_bytes(', 'to_png_bytes(')
     source = merge_source('import numpy as np\nimport pandas as pd\nfrom matplotlib import ticker as mtick',
         extract_notebook_source(original, ('peptide_missed_cleavage_summary', 'PROTEASE_LABELS',
@@ -54,24 +63,29 @@ def render_missed_cleavage(**options):
     bound.apply_defaults()
     settings = dict(bound.arguments)
     settings['protease'] = peptide_tools.normalize_protease(settings['protease'])
-    frame = peptide_tools.get_peptide_frame()
-    metadata = peptide_tools._prepare_metadata(frame, settings['include_id'])
     module = _missed_cleavage_module()
-    data, settings['seq_col'] = module.prepare_input(frame, metadata)
-    metadata = metadata[['condition', 'new_sample']].copy(deep=True)
-    summary = module.peptide_missed_cleavage_summary(data, sequence_column=settings['seq_col'],
-        sample_columns=[s for s in metadata['new_sample'] if s in data.columns], protease=settings['protease'])
+    def prepare():
+        frame = peptide_tools.get_peptide_frame()
+        metadata = peptide_tools._prepare_metadata(frame, settings['include_id'])
+        data, seq_col = module.prepare_input(frame, metadata)
+        metadata = metadata[['condition', 'new_sample']].copy(deep=True)
+        summary = module.peptide_missed_cleavage_summary(data, sequence_column=seq_col,
+            sample_columns=[s for s in metadata['new_sample'] if s in data.columns], protease=settings['protease'])
+        resources = {'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
+                     'summary.parquet': dataframe_bytes(summary)}
+        return data, metadata, seq_col, summary, resources
+    data, metadata, settings['seq_col'], summary, resources = cached_peptide_preparation(
+        'cleavage-input', (settings['include_id'], settings['protease']), prepare)
     fmt = plot_output_format.get()
     format_token = module.plot_output_format.set(fmt)
     try:
-        image = module.render_plot(data, metadata, **settings)
+        image = _cached_image('cleavage-image', settings, fmt, revision, lambda: module.render_plot(data, metadata, prepared_summary=summary, **settings))
     finally:
         module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Peptide Missed Cleavages',
         source=extract_notebook_source(missed_cleavage_source().code, ('render_plot', 'peptide_missed_cleavage_summary')),
         settings=settings, original_filename=get_current_dataset('peptide').filename,
-        resources={'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
-            'summary.parquet': dataframe_bytes(summary), f'original.{fmt}': bytes(image)},
+        resources={**resources, f'original.{fmt}': bytes(image)},
         provenance={'kind': 'peptide', 'plot': 'missed_cleavages', 'protease': settings['protease'],
             'aggregation': 'maximum quantity per stripped sequence/run',
             'metadataSource': 'protein annotation' if get_current_dataset('protein') is not None else 'peptide annotation',
@@ -106,8 +120,9 @@ def modification_source():
     figure = function[:start] + ('    plt = get_plt()\n    filtered = data\n'
         '    ordered_samples = metadata["new_sample"].tolist()\n'
         '    annotated_cols = [column for column in ordered_samples if column in filtered.columns]\n') + function[boundary:]
-    figure = replace_once(figure, 'def peptide_modification_plot(\n    *,', 'def render_plot(data, metadata, *,')
+    figure = replace_once(figure, 'def peptide_modification_plot(\n    *,', 'def render_plot(data, metadata, *, prepared_counts=None,')
     figure = figure.replace('_cm_to_inch(', 'cm_to_inch(').replace('_to_png_bytes(', 'to_png_bytes(')
+    figure = figure.replace('modification_counts = peptide_modification_counts(', 'modification_counts = prepared_counts.copy(deep=True) if prepared_counts is not None else peptide_modification_counts(')
     helpers = '\n\n'.join(function_definition(original, name) for name in
         ('_file_name_column', '_require_column', '_sample_rename_map'))
     helpers = helpers.replace('_extract_id_or_number(', 'extract_sample_id(')
@@ -139,24 +154,29 @@ def render_modification(**options):
     bound = inspect.signature(peptide_tools.peptide_modification_plot).bind(**options)
     bound.apply_defaults()
     settings = dict(bound.arguments)
-    frame = peptide_tools.get_peptide_frame()
-    metadata = peptide_tools._prepare_metadata(frame, settings['include_id'])
     module = _modification_module()
-    data = module.prepare_input(frame, metadata)
-    metadata = metadata[['condition', 'new_sample']].copy(deep=True)
-    counts = module.peptide_modification_counts(data, sequence_column='Modified.Sequence',
-        sample_columns=[s for s in metadata['new_sample'] if s in data.columns])
+    def prepare():
+        frame = peptide_tools.get_peptide_frame()
+        metadata = peptide_tools._prepare_metadata(frame, settings['include_id'])
+        data = module.prepare_input(frame, metadata)
+        metadata = metadata[['condition', 'new_sample']].copy(deep=True)
+        counts = module.peptide_modification_counts(data, sequence_column='Modified.Sequence',
+            sample_columns=[s for s in metadata['new_sample'] if s in data.columns])
+        resources = {'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
+                     'counts.parquet': dataframe_bytes(counts)}
+        return data, metadata, counts, resources
+    data, metadata, counts, resources = cached_peptide_preparation(
+        'modification-input', (settings['include_id'],), prepare)
     fmt = plot_output_format.get()
     format_token = module.plot_output_format.set(fmt)
     try:
-        image = module.render_plot(data, metadata, **settings)
+        image = _cached_image('modification-image', settings, fmt, revision, lambda: module.render_plot(data, metadata, prepared_counts=counts, **settings))
     finally:
         module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Peptide Modifications',
         source=extract_notebook_source(modification_source().code, ('render_plot', 'peptide_modification_counts')),
         settings=settings, original_filename=dataset.filename,
-        resources={'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
-            'counts.parquet': dataframe_bytes(counts), f'original.{fmt}': bytes(image)},
+        resources={**resources, f'original.{fmt}': bytes(image)},
         provenance={'kind': 'peptide', 'plot': 'modifications', 'aggregation': 'maximum quantity per modified sequence/run',
             'metadataSource': 'protein annotation' if get_current_dataset('protein') is not None else 'peptide annotation',
             'normalizationApplied': False, 'filterApplied': False, 'imputationApplied': False},
@@ -187,7 +207,7 @@ def interactive_rt_source():
     boundary = function.index('    if len(data) > 250_000:')
     preparation = ('def prepare_points(frame):\n' + function[start:boundary]
                    + "    return data.drop(columns=['sample'])\n")
-    rendering = ('def plot_figure(data, *, add_line=False, header=True, sampling_seed=69, '
+    rendering = ('def plot_figure(data, *, add_line=False, header=True, sampling_seed=1, '
                  'width_cm=20, height_cm=15, advanced=None):\n    go = get_plotly()[1]\n'
                  + function[boundary:])
     rendering = replace_once(rendering, 'return _plotly_html(fig)', 'return force_svg_rendering(fig)')
@@ -300,10 +320,12 @@ def render_rt(**options):
 
     revision = runtime_cache_version()
     dataset = get_current_dataset('peptide')
-    frame = get_peptide_frame()
-    for column in ('Predicted.RT', 'RT'):
-        _require_column(frame, column)
-    frame = frame[['Predicted.RT', 'RT']].copy(deep=True)
+    def prepare():
+        frame = get_peptide_frame(columns=['Predicted.RT', 'RT'])
+        for column in ('Predicted.RT', 'RT'):
+            _require_column(frame, column)
+        return frame, dataframe_bytes(frame)
+    frame, input_bytes = cached_peptide_preparation('rt-input', (), prepare)
     bound = inspect.signature(peptide_rt_plot).bind(**options)
     bound.apply_defaults()
     settings = dict(bound.arguments)
@@ -311,12 +333,12 @@ def render_rt(**options):
     fmt = plot_output_format.get()
     format_token = module.plot_output_format.set(fmt)
     try:
-        content = module.render_plot(frame, **settings)
+        content = _cached_image('rt-image', settings, fmt, revision, lambda: module.render_plot(frame, **settings))
     finally:
         module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Peptide Retention Time', source=rt_source(),
         settings=settings, original_filename=dataset.filename,
-        resources={'input.parquet': dataframe_bytes(frame), 'metadata.parquet': dataframe_bytes(pd.DataFrame()),
+        resources={'input.parquet': input_bytes, 'metadata.parquet': dataframe_bytes(pd.DataFrame()),
                    f'original.{fmt}': bytes(content)},
         provenance={'kind': 'peptide', 'plot': 'retention_time', 'source': 'uploaded retention-time columns',
             'normalizationApplied': False, 'filterApplied': False, 'imputationApplied': False,
@@ -392,6 +414,8 @@ def render_coverage(**options):
         content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"])
     finally:
         module.plot_output_format.reset(format_token)
+    if not notebook_capture_requested():
+        return content, ""
     table, total, _ = module.summarize_peptide_coverage(data, metadata)
     recipe = NotebookRecipe(
         plot_name=f"{settings['level'].capitalize()} Coverage", source=coverage_source(), settings=settings,

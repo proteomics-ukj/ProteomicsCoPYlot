@@ -77,6 +77,7 @@ VIEWER_ALLOWED_OPERATIONS = frozenset({
     ('GET', '/api/plots/qc/{kind}/coverage.png'),
     ('GET', '/api/plots/qc/{kind}/cv-table'),
     ('GET', '/api/plots/qc/{kind}/cv.png'),
+    ('GET', '/api/plots/qc/{kind}/feature-cvs.csv'),
     ('GET', '/api/plots/qc/{kind}/intensity-histogram.png'),
     ('GET', '/api/plots/qc/{kind}/options'),
     ('GET', '/api/plots/qc/{kind}/pca-features'),

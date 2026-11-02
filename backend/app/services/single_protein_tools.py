@@ -801,6 +801,11 @@ def single_protein_options(
         "availableIdentifiers": available_identifiers,
         "dataSource": requested_source,
         "carried": carried,
+        # Lineplot "Show NA as low" draws missing values at log2 0 (linear 1).
+        # On a phosphoprotein matrix collapsed with robust_site_median the
+        # stored values are ratios to each site's median, where 0 is the middle
+        # of the scale, not low; the page hides the toggle for that case.
+        "centredPhosprotValues": bool(phosprot_values_are_centred(kind)),
         **availability,
     }
 
@@ -864,6 +869,10 @@ def single_protein_lineplot_plot(
     fig, ax = plt.subplots(figsize=(_cm_to_inch(width_cm), _cm_to_inch(height_cm)))
     features = table["Feature"].drop_duplicates().tolist()
     color_map = plt.get_cmap("tab10", max(1, len(features)))
+    if show_na_low and phosprot_values_are_centred(kind):
+        # Centred ratios: log2 0 is the middle of the scale, so a baseline
+        # there would read as a measurement. Missing stays missing.
+        show_na_low = False
 
     for idx, feature in enumerate(features):
         subset = table[table["Feature"] == feature].sort_values("x")
@@ -950,7 +959,7 @@ def single_protein_boxplot_plot(
     identifier: str = "workflow",
     outliers: bool = False,
     dots: bool = False,
-    random_seed: int = 69,
+    random_seed: int = 1,
     header: bool = True,
     legend: bool = True,
     width_cm: float = 20,

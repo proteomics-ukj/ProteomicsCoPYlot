@@ -103,6 +103,8 @@ def _discard_session(session_id: str) -> None:
 
         forget_viewer_session_bootstrap(session_id)
     finally:
+        from app.services.runtime_cache import discard_runtime_cache
+        discard_runtime_cache(get_session_id())
         reset_session_id(token)
 
 

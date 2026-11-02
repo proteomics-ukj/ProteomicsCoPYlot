@@ -294,6 +294,8 @@ class AnovaResultResponse(BaseModel):
 
 
 class ListEnrichmentRequest(BaseModel):
+    inputSource: Literal["manual", "list"] = "manual"
+    namedList: str = ""
     genes: list[str] = Field(default_factory=list)
     backgroundMode: EnrichmentBackgroundMode = "experiment"
     backgroundGenes: list[str] = Field(default_factory=list)
@@ -305,6 +307,7 @@ class ListEnrichmentRequest(BaseModel):
 
 
 class ListEnrichmentResultResponse(BaseModel):
+    notebookToken: str = ""
     evidenceToken: str = ""
     genes: list[str]
     terms: list[EnrichmentTerm]

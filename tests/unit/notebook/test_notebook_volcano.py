@@ -53,6 +53,9 @@ def test_volcano_statistics_and_standalone_plot_match_app(inputs, tmp_path, test
                             cwd=tmp_path, capture_output=True, text=True, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == actual
+    untested = pd.read_parquet(io.BytesIO(recipe.resources['untested.parquet']))
+    if not untested.empty:
+        assert (tmp_path / 'reproduced_not_tested.csv').read_text() == untested.to_csv(index=False).replace('\r\n', '\n')
     if test_type.startswith('moderated'):
         assert '|' in recipe.settings['limma_runtime'], 'the R and limma versions are recorded'
         assert 'limma' in recipe.input_explanation

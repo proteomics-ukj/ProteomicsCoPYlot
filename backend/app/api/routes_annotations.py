@@ -4,6 +4,7 @@ import logging
 
 import io
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -48,6 +49,7 @@ from app.services.metadata_upload_store import (
     list_auto_generated_profiles,
     save_uploaded_metadata_profiles,
 )
+from app.services.metadata_profile_io import export_metadata_profiles, read_metadata_profiles
 from app.services.phosprot_tools import aggregate_from_phospho, upload_phosprot
 from app.services.upload_limits import ensure_upload_size
 from app.api.download_headers import attachment_disposition
@@ -144,7 +146,24 @@ def upload_annotation_metadata(
         raise HTTPException(status_code=413, detail=str(e)) from e
 
     try:
-        _ = get_extension(file.filename)
+        extension = get_extension(file.filename)
+        if extension == "xlsx":
+            current = get_current_dataset(kind)
+            if current is None or not hasattr(current, "frame"):
+                raise ValueError(f"No {kind} dataset is currently loaded. Upload data first.")
+            bundle = read_metadata_profiles(file.file, kind, current.frame)
+            if bundle is not None:
+                records, active_profile = bundle
+                stored = save_uploaded_metadata_profiles(kind, file.filename, records, active_profile_name=active_profile)
+                for name, _ in records:
+                    clear_annotation(kind, metadata_profile_name=name)
+                    if kind == "phospho":
+                        clear_annotation("phosprot", metadata_profile_name=name)
+                _invalidate_auto_generated_profile_annotations(kind)
+                if kind == "phospho":
+                    for name in list_auto_generated_profiles():
+                        clear_annotation("phosprot", metadata_profile_name=name)
+                return _metadata_upload_response(stored, profile_names=[name for name, _ in records])
         frame = read_dataframe(file.filename, file.file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -426,7 +445,16 @@ def download_current_source_annotation(kind: AnnotationKind) -> StreamingRespons
 
 
 @router.get("/current/{kind}/metadata/download")
-def download_current_metadata_annotation(kind: AnnotationKind) -> StreamingResponse:
+def download_current_metadata_annotation(kind: AnnotationKind, scope: Literal["selected", "all"] = "selected") -> StreamingResponse:
+    if scope == "all":
+        try:
+            content = export_metadata_profiles(kind)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        source_kind = "phospho" if kind == "phosprot" else kind
+        return StreamingResponse(io.BytesIO(content),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": attachment_disposition(f"{source_kind}_metadata_all_profiles.xlsx")})
     stored = get_annotation(kind)
     if stored is None:
         raise HTTPException(status_code=404, detail=f"No annotation stored for {kind} dataset")

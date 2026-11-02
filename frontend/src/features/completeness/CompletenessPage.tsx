@@ -119,7 +119,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
     dpi: restorePlotDpi(persistedMissing.dpi, 300),
   });
   const [heatmap, setHeatmap] = useState({
-    includeId: Boolean(persistedHeatmap.includeId ?? true),
+    includeId: Boolean(persistedHeatmap.includeId ?? false),
     header: true,
     widthCm: restorePlotDimensionCm(persistedHeatmap.widthCm, 10),
     heightCm: restorePlotDimensionCm(persistedHeatmap.heightCm, 10),
@@ -424,7 +424,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Data Completeness</h2>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor={fieldId} className="mb-2 block text-sm font-medium text-slate-700">Dataset level</label>
             <AssistantSelect

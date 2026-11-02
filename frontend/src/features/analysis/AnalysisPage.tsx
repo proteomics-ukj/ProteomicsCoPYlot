@@ -1,5 +1,6 @@
 
 import { oraListExportRows } from "../stats/oraExport";
+import NotebookDownload from "../../components/NotebookDownload";
 import { collectColumns, csvDataUrl, rowsToQuotedCsv } from "../../lib/tableData";
 import { linkedConditionsParam } from "./linkedConditions";
 import { resizeHandleClass, useResizablePanel } from "../../lib/useResizablePanel";
@@ -796,7 +797,7 @@ export default function AnalysisPage({
     >
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-900">Global Controls</h3>
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField
             emptyLabel="No options"
             label="Dataset level"
@@ -1442,6 +1443,8 @@ function OraListTile({
     const controller = new AbortController();
     pendingRequest.current = controller;
     const request: ListEnrichmentRequest = {
+      inputSource: sourceMode,
+      namedList: sourceMode === "list" ? selectedListName : "",
       genes,
       backgroundMode,
       backgroundGenes: backgroundMode === "experiment" ? parsedBackground : [],
@@ -1628,6 +1631,8 @@ function OraListTile({
                 Download Terms CSV
               </a>
             ) : null}
+            {result.notebookToken && <NotebookDownload outputLabel="table" plotUrl={result.notebookToken}
+              rendered={{ url: result.notebookToken, token: result.notebookToken }} />}
             <a
               href={textDataUrl(result.genes)}
               download="ora_query_genes.txt"

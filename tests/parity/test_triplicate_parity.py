@@ -36,7 +36,7 @@ STATS_TOOLS_MODULE = "app.services.stats_tools"
 PIP_MODULE = "proteomicscopylot.notebook_functions"
 # How the app (app.services.copylot_core), the package and a file-loaded
 # notebook_functions.py name the shared core module.
-SHARED_CORE_MODULES = ("copylot_shared_core", "proteomicscopylot._core", "_copylot_core")
+SHARED_CORE_MODULES = ("copylot_shared_core", "proteomicscopylot._core", "_copylot_core", "proteomicscopylot.notebook_tables")
 
 
 def _normalise(name: str) -> str:
@@ -83,7 +83,7 @@ env <- new.env()
 sys.source(commandArgs(TRUE)[1], envir = env)
 names <- ls(env, all.names = TRUE)
 names <- Filter(function(name) is.function(get(name, envir = env)), names)
-formals_of <- function(name) as.character(names(formals(get(name, envir = env))))
+formals_of <- function(name) setdiff(as.character(names(formals(get(name, envir = env)))), "...")
 cat(jsonlite::toJSON(lapply(setNames(names, names), formals_of)))
 """
 
@@ -129,7 +129,6 @@ BACKEND_ONLY_ANALYSIS_NAMES = (
     "histogram",
     "normal_fit_curve",
     "qqnorm_plot_data",
-    "condition_cvs",  # the CV plot and table share it; the packages compute CVs inside cov_plot.
     "filter_mask",  # the filter's row decision on the original index, for the normalization fit; the packages pass `filtered.index` / `rownames(filtered)`.
     "unpaired_samples_note",  # the GUI line naming samples a paired test left out; the packages have no warning list.
     "is_moderated_test_type",  # gates the R-only moderated tests in routes and exports; the packages resolve the type directly.
@@ -150,6 +149,8 @@ PIP_ONLY_NAMES = (
 )
 
 R_ONLY_NAMES = (
+    "gui_table",  # Converts R arguments and GUI table results at the reticulate boundary.
+    "qc_box_summary", "qc_group_summaries",  # Base R helpers for the native QC summary functions.
     "%||%",  # R's null-default operator; Python spells it `x if x is not None else y`.
     "localization_keep",  # row mask behind filter_localization, so R can narrow an aligned matrix by position.
     "fit_row_mask",  # turns `fit_rows` (row names or a logical) into a mask; Python indexes with `.loc` directly.

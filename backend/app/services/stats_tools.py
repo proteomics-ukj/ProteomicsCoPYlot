@@ -287,7 +287,19 @@ def protein_correction_options(kind: AnnotationKind) -> ProteinCorrectionOptions
         return ProteinCorrectionOptions()
     phospho, protein = data_source_availability("phospho"), data_source_availability("protein")
     shared = [source for source in DATA_SOURCES if phospho.get(source) and protein.get(source)]
-    return ProteinCorrectionOptions(available=bool(shared), dataSources=shared)
+    if not shared:
+        return ProteinCorrectionOptions()
+    # The correction matches sites to proteins by accession only (never by
+    # protein name), so a protein table without an accession column -- a
+    # Spectronaut PG report exported without PG.ProteinAccessions, say -- cannot
+    # be corrected against; do not offer what would fail at run time.
+    from app.services.annotation_store import get_annotation
+
+    annotation = get_annotation("protein")
+    log2 = getattr(annotation, "log2_data", None)
+    if not isinstance(log2, pd.DataFrame) or "ProteinAccessions" not in log2.columns:
+        return ProteinCorrectionOptions()
+    return ProteinCorrectionOptions(available=True, dataSources=shared)
 
 
 def _clean_feature_name(value: object) -> str:
@@ -353,6 +365,100 @@ def _volcano_untested_rows(
     return out
 
 
+def _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control):
+    if condition1 == condition2:
+        raise ValueError("Please select two different conditions.")
+    cols1 = metadata.loc[metadata["condition"] == condition1, "sample"].astype(str).tolist()
+    cols2 = metadata.loc[metadata["condition"] == condition2, "sample"].astype(str).tolist()
+    if not cols1 or not cols2:
+        raise ValueError("Selected conditions do not have any annotated samples.")
+    if paired:
+        cols1, cols2 = paired_sample_columns(metadata, condition1, condition2)
+    has_control1 = bool(condition1_control)
+    has_control2 = bool(condition2_control)
+    if has_control1 != has_control2:
+        raise ValueError("Control-corrected volcano analysis requires both control conditions.")
+    if has_control1 and has_control2:
+        control_conditions = [
+            str(condition1).strip(),
+            str(condition1_control).strip(),
+            str(condition2).strip(),
+            str(condition2_control).strip(),
+        ]
+        if len(set(control_conditions)) != len(control_conditions):
+            raise ValueError(
+                "Control-corrected volcano analysis requires four distinct conditions; "
+                "an experimental condition cannot be used as its own control."
+            )
+        ctrl1_cols = metadata.loc[metadata["condition"] == condition1_control, "sample"].astype(str).tolist()
+        ctrl2_cols = metadata.loc[metadata["condition"] == condition2_control, "sample"].astype(str).tolist()
+        if not ctrl1_cols or not ctrl2_cols:
+            raise ValueError("Selected control conditions do not have any annotated samples.")
+    else:
+        ctrl1_cols = []
+        ctrl2_cols = []
+
+    count_groups = {condition1: cols1, condition2: cols2}
+    if ctrl1_cols and ctrl2_cols:
+        count_groups[str(condition1_control)] = ctrl1_cols
+        count_groups[str(condition2_control)] = ctrl2_cols
+    return count_groups
+
+
+def _volcano_feature_frame(frame, label_column, groups):
+    selected_columns = [label_column, *(c for cols in groups.values() for c in cols)]
+    for extra in (
+        "GeneNames",
+        "Gene_group",
+        "ProteinNames",
+        "ProteinAccessions",
+        "PTM_Collapse_key",
+        "UPD_seq",
+        "Protein_group",
+        "Phosphoprotein",
+        "site_num",
+        "PTM_Collapse_keys",
+    ):
+        if extra in frame.columns and extra not in selected_columns:
+            selected_columns.append(extra)
+
+    return frame[[col for col in selected_columns if col in frame.columns]].copy()
+
+
+
+def _volcano_eligibility(df, groups, condition1, condition2, paired, condition1_control, condition2_control):
+    arr_x = df[groups[condition1]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    arr_y = df[groups[condition2]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+
+    control_arrays: list[np.ndarray] = []
+    if condition1_control and condition2_control:
+        arr_ctrl1 = df[groups[condition1_control]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+        arr_ctrl2 = df[groups[condition2_control]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+        arr_x = arr_x - np.nanmean(arr_ctrl1, axis=1)[:, None]
+        arr_y = arr_y - np.nanmean(arr_ctrl2, axis=1)[:, None]
+        control_arrays = [arr_ctrl1, arr_ctrl2]
+
+    n1 = np.sum(~np.isnan(arr_x), axis=1)
+    n2 = np.sum(~np.isnan(arr_y), axis=1)
+    valid_mask = (n1 >= 2) & (n2 >= 2)
+    for control in control_arrays:
+        # A control variance cannot be estimated from a single value, and it is
+        # now part of the test statistic, so controls need replicates too.
+        valid_mask &= np.sum(np.isfinite(control), axis=1) >= 2
+    pair_counts = np.sum(np.isfinite(arr_x) & np.isfinite(arr_y), axis=1) if paired else None
+    if pair_counts is not None:
+        valid_mask &= pair_counts >= 2
+    return arr_x, arr_y, control_arrays, n1, n2, valid_mask, pair_counts
+
+
+def volcano_untested_table(data, metadata, condition1, condition2, *, kind="protein", identifier="workflow",
+                          paired=False, condition1_control=None, condition2_control=None):
+    groups = _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control)
+    df = _volcano_feature_frame(data, _resolve_label_column(kind, identifier, data), groups)
+    *_, valid, pairs = _volcano_eligibility(df, groups, condition1, condition2, paired, condition1_control, condition2_control)
+    return _volcano_untested_rows(df, groups, valid, pairs)
+
+
 def _volcano_dataframe(
     *,
     kind: AnnotationKind,
@@ -397,97 +503,62 @@ def _volcano_dataframe(
         warnings = []
     else:
         raise ValueError("Volcano frame and metadata overrides must be provided together.")
-    label_column = _resolve_label_column(kind, identifier, frame)
-
-    cols1 = metadata.loc[metadata["condition"] == condition1, "sample"].astype(str).tolist()
-    cols2 = metadata.loc[metadata["condition"] == condition2, "sample"].astype(str).tolist()
-    if not cols1 or not cols2:
-        raise ValueError("Selected conditions do not have any annotated samples.")
     test_type = effective_test_type(
         test_type, with_controls=bool(condition1_control) and bool(condition2_control)
     )
     paired, variance = resolve_test_type(test_type)
-    if paired:
-        cols1, cols2 = paired_sample_columns(metadata, condition1, condition2)
-        note = unpaired_samples_note(metadata, condition1, condition2)
-        if note:
-            warnings = [*warnings, note]
+    groups = _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control)
+    mask = _imputation_mask(kind, source_used, frame, [c for cols in groups.values() for c in cols])
+    if protein_correction and kind == "phospho" and protein_stats is None:
+        protein_stats = protein_comparison_stats(
+            condition1=condition1, condition2=condition2, test_type=test_type, data_source=data_source,
+            condition1_control=condition1_control, condition2_control=condition2_control,
+        )
+    label, table, notices = _tested_volcano_table(
+        frame, metadata, mask, groups, kind=kind, identifier=identifier, condition1=condition1,
+        condition2=condition2, condition1_control=condition1_control, condition2_control=condition2_control,
+        paired=paired, variance=variance, p_value_threshold=p_value_threshold, log2fc_threshold=log2fc_threshold,
+        use_uncorrected=use_uncorrected, untested_out=untested_out, protein_correction=protein_correction,
+        protein_stats=protein_stats,
+    )
+    return source_used, label, table, [*warnings, *notices]
 
-    selected_columns = [label_column, *cols1, *cols2]
-    has_control1 = bool(condition1_control)
-    has_control2 = bool(condition2_control)
-    if has_control1 != has_control2:
-        raise ValueError("Control-corrected volcano analysis requires both control conditions.")
-    if has_control1 and has_control2:
-        control_conditions = [
-            str(condition1).strip(),
-            str(condition1_control).strip(),
-            str(condition2).strip(),
-            str(condition2_control).strip(),
-        ]
-        if len(set(control_conditions)) != len(control_conditions):
-            raise ValueError(
-                "Control-corrected volcano analysis requires four distinct conditions; "
-                "an experimental condition cannot be used as its own control."
-            )
-        ctrl1_cols = metadata.loc[metadata["condition"] == condition1_control, "sample"].astype(str).tolist()
-        ctrl2_cols = metadata.loc[metadata["condition"] == condition2_control, "sample"].astype(str).tolist()
-        if not ctrl1_cols or not ctrl2_cols:
-            raise ValueError("Selected control conditions do not have any annotated samples.")
-        selected_columns.extend([*ctrl1_cols, *ctrl2_cols])
-    else:
-        ctrl1_cols = []
-        ctrl2_cols = []
 
-    for extra in (
-        "GeneNames",
-        "Gene_group",
-        "ProteinNames",
-        "ProteinAccessions",
-        "PTM_Collapse_key",
-        "UPD_seq",
-        "Protein_group",
-        "Phosphoprotein",
-        "site_num",
-        "PTM_Collapse_keys",
-    ):
-        if extra in frame.columns and extra not in selected_columns:
-            selected_columns.append(extra)
+def calculate_table(data, metadata, imputation_mask=None, *, kind, condition1, condition2, identifier,
+                    p_value_threshold, log2fc_threshold, test_type, use_uncorrected, data_source="data",
+                    condition1_control=None, condition2_control=None, untested_out=None,
+                    protein_correction=False, protein_stats=None):
+    test_type = effective_test_type(
+        test_type, with_controls=bool(condition1_control) and bool(condition2_control)
+    )
+    paired, variance = resolve_test_type(test_type)
+    groups = _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control)
+    label, table, warnings = _tested_volcano_table(
+        data, metadata, imputation_mask, groups, kind=kind, identifier=identifier, condition1=condition1,
+        condition2=condition2, condition1_control=condition1_control, condition2_control=condition2_control,
+        paired=paired, variance=variance, p_value_threshold=p_value_threshold, log2fc_threshold=log2fc_threshold,
+        use_uncorrected=use_uncorrected, untested_out=untested_out, protein_correction=protein_correction,
+        protein_stats=protein_stats,
+    )
+    return data_source, label, table, warnings
 
-    df = frame[[col for col in selected_columns if col in frame.columns]].copy()
-    count_groups = {condition1: cols1, condition2: cols2}
-    if ctrl1_cols and ctrl2_cols:
-        count_groups[str(condition1_control)] = ctrl1_cols
-        count_groups[str(condition2_control)] = ctrl2_cols
-    # The full frame, not df: phosphoprotein tables keep site_observed__ there.
-    mask = _imputation_mask(kind, source_used, frame.loc[df.index], [c for cols in count_groups.values() for c in cols])
+
+def _tested_volcano_table(frame, metadata, mask, count_groups, *, kind, identifier, condition1, condition2,
+                         condition1_control, condition2_control, paired, variance, p_value_threshold,
+                         log2fc_threshold, use_uncorrected, untested_out, protein_correction, protein_stats):
+    label_column = _resolve_label_column(kind, identifier, frame)
+    df = _volcano_feature_frame(frame, label_column, count_groups)
+    note = unpaired_samples_note(metadata, condition1, condition2) if paired else None
+    warnings = [note] if note else []
     imputed_columns: list[str] = []
     if mask is not None:
         counts = imputed_value_counts(mask, count_groups)
         imputed_columns = counts.columns.tolist()
         for column in imputed_columns:
             df[column] = counts[column].to_numpy()
-    arr_x = df[cols1].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-    arr_y = df[cols2].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-
-    control_arrays: list[np.ndarray] = []
-    if ctrl1_cols and ctrl2_cols:
-        arr_ctrl1 = df[ctrl1_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-        arr_ctrl2 = df[ctrl2_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-        arr_x = arr_x - np.nanmean(arr_ctrl1, axis=1)[:, None]
-        arr_y = arr_y - np.nanmean(arr_ctrl2, axis=1)[:, None]
-        control_arrays = [arr_ctrl1, arr_ctrl2]
-
-    n1_real = np.sum(~np.isnan(arr_x), axis=1)
-    n2_real = np.sum(~np.isnan(arr_y), axis=1)
-    valid_mask = (n1_real >= 2) & (n2_real >= 2)
-    for control in control_arrays:
-        # A control variance cannot be estimated from a single value, and it is
-        # now part of the test statistic, so controls need replicates too.
-        valid_mask &= np.sum(np.isfinite(control), axis=1) >= 2
-    pair_counts = np.sum(np.isfinite(arr_x) & np.isfinite(arr_y), axis=1) if paired else None
-    if pair_counts is not None:
-        valid_mask &= pair_counts >= 2
+    arr_x, arr_y, control_arrays, n1_real, n2_real, valid_mask, pair_counts = _volcano_eligibility(
+        df, count_groups, condition1, condition2, paired, condition1_control, condition2_control
+    )
     untested = int((~valid_mask).sum())
     if untested:
         # These rows leave the test silently otherwise, and they are often the
@@ -572,10 +643,7 @@ def _volcano_dataframe(
         if se is None:
             raise ValueError("Protein correction needs a standard error for every site; this test gives none.")
         if protein_stats is None:
-            protein_stats = protein_comparison_stats(
-                condition1=condition1, condition2=condition2, test_type=test_type, data_source=data_source,
-                condition1_control=condition1_control, condition2_control=condition2_control,
-            )
+            raise ValueError("Protein correction needs the protein comparison table (protein_stats).")
         corrected = _apply_protein_correction(df, log2fc, se, dof, pvals, protein_stats)
         log2fc, pvals, protein_matched, protein_ambiguous, protein_log2fc, protein_pvals, se, dof = corrected
         unmatched = int((~protein_matched & ~protein_ambiguous).sum())
@@ -637,7 +705,7 @@ def _volcano_dataframe(
         result["n_pairs"] = n_diff.astype(int)
     # Imputation counts go last, after the statistics they qualify.
     result = result[[c for c in result.columns if c not in imputed_columns] + imputed_columns]
-    return source_used, label_column, result, warnings
+    return label_column, result, warnings
 
 
 def protein_comparison_stats(
@@ -1894,6 +1962,7 @@ def _anova_heatmap_figure(
     # the cluster strip -- in a column of their own, sized to the longest label,
     # so they never run into the colour bar.
     row_label_texts: list[str] = []
+    row_label_indices = np.array([], dtype=int)
     row_label_size = 0.0
     row_label_width = 0.0
     if clustered and row_labels:
@@ -1902,8 +1971,19 @@ def _anova_heatmap_figure(
         else:
             row_label_texts = [str(value) for value in plot_df.index.tolist()]
         heatmap_height_pt = 9.2 * 72 * 0.62
-        auto_size = min(7.0, max(2.0, 0.8 * heatmap_height_pt / max(len(row_label_texts), 1)))
+        auto_size = min(7.0, max(6.0, 0.8 * heatmap_height_pt / max(len(row_label_texts), 1)))
         row_label_size = advanced_number(advanced, "rowLabelSize", 0.0) or auto_size
+        # Drawing thousands of overlapping ticks repeatedly during auto-layout
+        # can take minutes. Space only the labels, never remove heatmap rows.
+        label_capacity = max(1, min(250, int(heatmap_height_pt / max(1.3 * row_label_size, 1))))
+        row_label_indices = np.linspace(0, len(row_label_texts) - 1,
+            min(len(row_label_texts), label_capacity), dtype=int)
+        if len(row_label_indices) < len(row_label_texts):
+            fig._copylot_notice += (
+                f". Showing {len(row_label_indices):,} of {len(row_label_texts):,} row labels for readability; "
+                "all rows remain in the heatmap and result table. Select a smaller cluster to see more names."
+            )
+        row_label_texts = [row_label_texts[index] for index in row_label_indices]
         longest = max((len(text) for text in row_label_texts), default=0)
         row_label_width = min(0.6, max(0.04, longest * row_label_size * 0.6 / 72 / 9.0))
 
@@ -1974,7 +2054,7 @@ def _anova_heatmap_figure(
     ax.set_xticklabels(x_labels, rotation=90, fontsize=5)
     if row_label_texts:
         ax.yaxis.tick_right()
-        ax.set_yticks(np.arange(len(row_label_texts)))
+        ax.set_yticks(row_label_indices)
         ax.set_yticklabels(
             row_label_texts,
             fontsize=row_label_size,
@@ -2256,16 +2336,35 @@ def _validate_enrichment_kind(kind: AnnotationKind) -> None:
         )
 
 
-def _genes_from_values(values: list[object]) -> list[str]:
-    """Every member of every value, once, sorted.
+def _explicit_gene_tokens(values):
+    """Every member of an explicitly supplied gene list, once, sorted.
 
-    A protein group "A;B" used to contribute only "A":
-    hits and background were consistent with each other, but a group's other
-    members were silently absent from the universe. All members count now, for
-    every source (volcano, control volcano, ANOVA cluster, pasted lists) and in
-    the pip and R packages alike.
+    One raw string is pasted text: split on `;`, `,` and whitespace. A list is
+    already itemised: each item splits on `;` and `,` only, so an identifier
+    that itself contains a space (the mouse GO table has three isoform ids
+    such as "mERBB4/iso:JM-A CYT-2") survives when passed as one item.
     """
-    return sorted({gene for value in values for gene in _gene_tokens(value) if gene})
+    if isinstance(values, str):
+        return sorted({gene for token in _gene_tokens(values) for gene in token.split()})
+    return sorted({gene for entry in values for gene in _gene_tokens(entry)})
+
+
+def _genes_from_values(values: list[object]) -> list[str]:
+    """The leading member of every value, once, sorted.
+
+    One quantified feature is one draw from the urn. A protein group "A;B"
+    contributes its leading member only, for hits and background alike and for
+    every source (volcano, control volcano, ANOVA cluster); the
+    pip and R packages apply the same rule. Counting every member (beta.2
+    pre-release) inflated the query size and the overlaps of paralog families
+    such as histone clusters, which is anti-conservative for their terms.
+    """
+    leading = set()
+    for value in values:
+        tokens = [gene for gene in _gene_tokens(value) if gene]
+        if tokens:
+            leading.add(tokens[0])
+    return sorted(leading)
 
 
 def _prepare_ora_universe(
@@ -2513,9 +2612,8 @@ def run_enrichment_from_list(payload: ListEnrichmentRequest) -> ListEnrichmentRe
     if payload.minTermSize > payload.maxTermSize:
         raise ValueError("Minimum term size cannot be larger than maximum term size.")
 
-    # Pasted lists may hold "A;B" groups too: every member counts.
-    cleaned_genes = _genes_from_values(list(payload.genes))
-    cleaned_background = _genes_from_values(list(payload.backgroundGenes))
+    cleaned_genes = _explicit_gene_tokens(list(payload.genes))
+    cleaned_background = _explicit_gene_tokens(list(payload.backgroundGenes))
     if payload.backgroundMode == "experiment" and not cleaned_background:
         raise ValueError(
             "Provide the tested-gene background for experiment-specific ORA, "

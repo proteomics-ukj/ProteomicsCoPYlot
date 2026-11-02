@@ -157,7 +157,7 @@ rm(.copylot_source_file)
   paste0(
     text, " of ", noun, " dropped for ", purpose,
     " (", format(dropped, big.mark = ","), " of ", format(total, big.mark = ","), ")",
-    " \u2014 not observed in every sample"
+    ", not observed in every sample"
   )
 }
 
@@ -1081,7 +1081,7 @@ transform_phosprot <- function(
   output
 }
 
-qqnorm_plot <- function(data, meta, seed = 187) {
+qqnorm_plot <- function(data, meta, seed = 1) {
   values <- as.vector(.numeric_matrix(data, meta$sample))
   values <- values[is.finite(values)]
 
@@ -1112,7 +1112,7 @@ qqnorm_plot <- function(data, meta, seed = 187) {
 # the collapsed matrix. Retain the non-imputed site matrix for coverage checks;
 # aggregate imputed log2 values with data_scale="log2".
 # This generic helper cannot infer biological dataset level from an arbitrary frame.
-impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TRUE, seed=1337, method="quantile", down_shift=1.8, width=0.3) {
+impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TRUE, seed=1, method="quantile", down_shift=1.8, width=0.3) {
   .validate_meta_samples(meta)
   .validate_sample_values(data, meta)
   method <- tolower(trimws(method))
@@ -1404,7 +1404,7 @@ coverage_plot_summary <- function(
     dpi = 300,
     text = FALSE,
     text_size = 9,
-    seed = 69,
+    seed = 1,
     data_scale = "log2"
 ) {
   data <- .prepare_intensity_data(data, meta$sample, data_scale)
@@ -1635,7 +1635,14 @@ coverage_plot_pep <- function(
   .plot_result()
 }
 
-histo_int <- function(data, meta, plot_colors=NULL, header=TRUE, legend=TRUE, width=20, height=10, dpi=300) {
+.log2_plot_input <- function(data, meta, data_scale) {
+  scale <- tolower(trimws(as.character(data_scale)))
+  prepared <- .prepare_intensity_data(data, meta$sample, scale)
+  if (scale == "linear") log2_transform_data(prepared, meta) else prepared
+}
+
+histo_int <- function(data, meta, plot_colors=NULL, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, data_scale="log2") {
+  data <- .log2_plot_input(data, meta, data_scale)
   conditions <- unique(meta$condition)
   mean_intensities <- lapply(conditions, function(condition) {
     columns <- meta$sample[meta$condition == condition]
@@ -1682,7 +1689,8 @@ histo_int <- function(data, meta, plot_colors=NULL, header=TRUE, legend=TRUE, wi
   .plot_result()
 }
 
-boxplot_int <- function(data, meta, outliers=FALSE, header=TRUE, plot_colors=NULL, width_cm=20, height_cm=10, dpi=100, text=FALSE, text_size=9) {
+boxplot_int <- function(data, meta, outliers=FALSE, header=TRUE, plot_colors=NULL, width_cm=20, height_cm=10, dpi=100, text=FALSE, text_size=9, data_scale="log2") {
+  data <- .log2_plot_input(data, meta, data_scale)
   conditions <- unique(meta$condition)
   mean_intensities <- lapply(conditions, function(condition) {
     columns <- meta$sample[meta$condition == condition]
@@ -1787,6 +1795,175 @@ boxplot_int_single <- function(data, meta, outliers=FALSE, id=TRUE, header=TRUE,
   .plot_result()
 }
 
+# The GUI table adapters use the calculation shipped in the Python package.
+# Set RETICULATE_PYTHON to the environment containing proteomicscopylot if needed.
+.gui_table <- function(name) {
+  force(name)
+  function(...) {
+    if (!requireNamespace("reticulate", quietly = TRUE)) {
+      stop("Install the R package reticulate to call GUI table functions.", call. = FALSE)
+    }
+    tables <- if (file.exists(file.path(.copylot_source_dir, "notebook_tables.py"))) {
+      reticulate::import_from_path("notebook_tables", path = .copylot_source_dir, convert = FALSE)
+    } else {
+      reticulate::import("proteomicscopylot.notebook_tables", convert = FALSE)
+    }
+    args <- list(...)
+    for (key in intersect(names(args), c("conditions", "proteins", "sample_columns"))) {
+      args[[key]] <- as.list(args[[key]])
+    }
+    for (key in intersect(names(args), c("top_n", "min_term_size", "max_term_size", "min_present"))) {
+      args[[key]] <- as.integer(args[[key]])
+    }
+    result <- do.call(tables[[name]], args)
+    columns <- reticulate::py_to_r(result$to_dict(orient = "list"))
+    columns <- lapply(columns, function(column) {
+      if (!length(column)) return(character())
+      if (!is.list(column)) return(column)
+      unlist(lapply(column, function(value) if (is.null(value)) NA else value), use.names = FALSE)
+    })
+    result_frame <- as.data.frame(columns, check.names = FALSE, stringsAsFactors = FALSE)
+    if (!reticulate::py_has_attr(result$index, "start")) {
+      index <- unlist(reticulate::py_to_r(result$index$tolist()), use.names = FALSE)
+      if (!anyNA(index) && !anyDuplicated(index)) rownames(result_frame) <- index
+    }
+    result_frame
+  }
+}
+
+qc_coverage_table <- function(data, metadata, summary = FALSE) {
+  conditions <- unique(as.character(metadata$condition))
+  meta <- metadata[order(match(metadata$condition, conditions)), , drop = FALSE]
+  detected <- !is.na(data[as.character(meta$sample)])
+  counts <- colSums(detected)
+  if (summary) {
+    return(do.call(rbind, lapply(conditions, function(condition) {
+      x <- unname(counts[meta$condition == condition])
+      data.frame(condition, mean = round(mean(x), 2), min = min(x), max = max(x), sd = round(sd(x), 2))
+    })))
+  }
+  labels <- paste(meta$condition, ave(seq_along(counts), meta$condition, FUN = seq_along), sep = "_")
+  quantified <- sum(rowSums(detected) > 0)
+  rows <- data.frame(Sample = c(labels, "All samples"), Number = c(unname(counts), quantified))
+  if (quantified < nrow(data)) rows <- rbind(rows, data.frame(Sample = "Identified, not quantified", Number = nrow(data) - quantified))
+  rows
+}
+
+.qc_box_summary <- function(values) {
+  x <- values[is.finite(values)]
+  if (!length(x)) return(NULL)
+  q <- unname(quantile(x, c(.25, .75)))
+  fence <- 1.5 * diff(q)
+  round(data.frame(mean = mean(x), median = median(x), Q1 = q[1], Q3 = q[2],
+                   lower_whisker = min(q[1], x[x >= q[1] - fence]),
+                   upper_whisker = max(q[2], x[x <= q[2] + fence])), 2)
+}
+
+.qc_group_summaries <- function(groups, label) {
+  rows <- lapply(names(groups), function(name) {
+    stats <- .qc_box_summary(groups[[name]])
+    if (is.null(stats)) return(NULL)
+    cbind(setNames(data.frame(name), label), stats)
+  })
+  if (!any(lengths(rows))) return(data.frame())
+  do.call(rbind, rows)
+}
+
+qc_boxplot_table <- function(data, metadata, mode = "Mean") {
+  if (tolower(mode) == "single") {
+    samples <- data[as.character(metadata$sample)]
+    names(samples) <- paste(metadata$condition, ave(seq_len(nrow(metadata)), metadata$condition, FUN = seq_along), sep = "_")
+    return(.qc_group_summaries(samples, "Sample"))
+  }
+  conditions <- unique(as.character(metadata$condition))
+  groups <- lapply(conditions, function(condition) {
+    rowMeans(.numeric_matrix(data, metadata$sample[metadata$condition == condition]), na.rm = TRUE)
+  })
+  .qc_group_summaries(setNames(groups, conditions), "Condition")
+}
+
+qc_cv_table <- function(data, metadata) {
+  .qc_group_summaries(.condition_cvs(data, metadata), "Condition")
+}
+pearson_table <- .gui_table("pearson_table")
+venn_table <- .gui_table("venn_table")
+single_protein_boxplot_table <- function(data, metadata, kind, protein, conditions, identifier = "workflow", data_source = "data") {
+  .gui_table("single_protein_boxplot_table")(data, metadata, kind, protein, as.list(conditions), identifier, data_source)
+}
+single_protein_lineplot_table <- function(data, metadata, kind, proteins, conditions, include_id = FALSE,
+                                          identifier = "workflow", data_source = "data") {
+  .gui_table("single_protein_lineplot_table")(data, metadata, kind, as.list(proteins), as.list(conditions),
+                                               include_id, identifier, data_source)
+}
+single_protein_heatmap_table <- function(data, metadata, kind, protein, conditions, ...) {
+  .gui_table("single_protein_heatmap_table")(data, metadata, kind, protein, as.list(conditions), ...)
+}
+phospho_counts_table <- .gui_table("phospho_counts_table")
+phospho_coverage_table <- function(data, metadata, is_log2, include_id = FALSE, conditions = NULL, mode = "Normal") {
+  .gui_table("phospho_coverage_table")(data, metadata, is_log2, include_id, conditions = conditions, mode = mode)
+}
+phospho_distribution_table <- .gui_table("phospho_distribution_table")
+phospho_sty_table <- function(data) {
+  if (!"PTM_Collapse_key" %in% names(data)) stop("Missing PTM_Collapse_key")
+  matches <- regexec(
+    "_([STY])[0-9]+_M[0-9]+$",
+    as.character(data$PTM_Collapse_key)
+  )
+  residues <- vapply(
+    regmatches(as.character(data$PTM_Collapse_key), matches),
+    function(value) if (length(value) > 1) value[2] else NA_character_,
+    character(1)
+  )
+
+  short_matches <- regexec("(^|_)([STY])[0-9]+(_|$)", as.character(data$PTM_Collapse_key))
+  short_residues <- vapply(regmatches(as.character(data$PTM_Collapse_key), short_matches),
+    function(value) if (length(value) > 2) value[3] else NA_character_, character(1))
+  residues[is.na(residues)] <- short_residues[is.na(residues)]
+  counts <- table(factor(residues, levels = c("S", "T", "Y")))
+  if (anyNA(residues)) counts <- c(counts, Unparsed = sum(is.na(residues)))
+  total <- sum(counts)
+  percentages <- if (total > 0) counts / total * 100 else counts * 0
+  data.frame(Residue = names(counts), Count = as.integer(counts), Percentage = as.numeric(round(percentages, 2)))
+}
+completeness_sample_summary_table <- .gui_table("completeness_sample_summary_table")
+completeness_feature_summary_table <- .gui_table("completeness_feature_summary_table")
+peptide_coverage_table <- .gui_table("peptide_coverage_table")
+peptide_modification_counts <- .gui_table("peptide_modification_counts")
+peptide_missed_cleavage_summary <- .gui_table("peptide_missed_cleavage_summary")
+volcano_untested_table <- .gui_table("volcano_untested_table")
+pathway_heatmap_table <- .gui_table("pathway_heatmap_table")
+ora_terms_table <- .gui_table("ora_terms_table")
+gene_list_terms_table <- function(database, genes, background_genes = NULL, ...) {
+  if (!is.null(background_genes)) background_genes <- as.list(background_genes)
+  .gui_table("gene_list_terms_table")(database, as.list(genes), background_genes, ...)
+}
+translate_id_table <- .gui_table("translate_id_table")
+peptideCollapse <- .gui_table("peptideCollapse")
+
+.condition_cvs <- function(values, meta) {
+  data <- .prepare_intensity_data(values, meta$sample, "linear")
+  conditions <- unique(as.character(meta$condition))
+  setNames(lapply(conditions, function(condition) {
+    samples <- meta$sample[meta$condition == condition]
+    values <- .numeric_matrix(data, samples)
+    cv <- apply(values, 1, sd, na.rm = TRUE) / rowMeans(values, na.rm = TRUE) * 100
+    cv[!is.finite(cv)] <- NA_real_
+    cv
+  }), conditions)
+}
+
+qc_feature_cvs <- function(frame, meta) {
+  result <- frame[setdiff(names(frame), meta$sample)]
+  if (!ncol(result)) result[["Feature row"]] <- seq_len(nrow(frame))
+  cvs <- .condition_cvs(frame, meta)
+  for (condition in names(cvs)) {
+    label <- paste(condition, "CV (%)")
+    while (label %in% names(result)) label <- paste(label, "(CV)")
+    result[[label]] <- cvs[[condition]]
+  }
+  result
+}
+
 cov_plot <- function(data, meta, outliers=FALSE, header=TRUE, legend=TRUE, plot_colors=NULL, width_cm=20, height_cm=10, dpi=100, text=FALSE, text_size=9, data_scale=NULL) {
   if (is.null(data_scale)) {
     stop(
@@ -1808,24 +1985,9 @@ cov_plot <- function(data, meta, outliers=FALSE, header=TRUE, legend=TRUE, plot_
     stop("data_scale must be 'linear' for cov_plot.", call. = FALSE)
   }
 
-  data <- .prepare_intensity_data(data, meta$sample, normalized_scale)
-  valid_conditions <- character()
-  cv_data <- list()
-
-  for (condition in unique(meta$condition)) {
-    columns <- meta$sample[meta$condition == condition]
-    if (length(columns) < 2) next
-
-    values <- .numeric_matrix(data, columns)
-    cv <- apply(values, 1, sd, na.rm = TRUE) /
-      rowMeans(values, na.rm = TRUE) * 100
-    cv <- cv[is.finite(cv)]
-
-    if (length(cv)) {
-      valid_conditions <- c(valid_conditions, condition)
-      cv_data[[length(cv_data) + 1]] <- cv
-    }
-  }
+  cv_data <- lapply(.condition_cvs(data, meta), function(cv) cv[is.finite(cv)])
+  cv_data <- cv_data[lengths(cv_data) > 0]
+  valid_conditions <- names(cv_data)
 
   colors <- .plot_colors(length(valid_conditions), plot_colors)
   medians <- vapply(cv_data, median, numeric(1))
@@ -3654,6 +3816,18 @@ median_center <- function(values, fit_rows = NULL) {
 # With `fit_rows`, the reference distribution and each sample's mapping are
 # learned from those rows only; every other row is placed by interpolating its
 # value into its sample's learned mapping.
+# Outside the fit, keep the additive correction at the nearest endpoint.
+.interp_extrapolate <- function(x, xs, ys) {
+  if (length(xs) == 1) return(x + (ys[1] - xs[1]))
+  out <- stats::approx(xs, ys, xout = x, rule = 2)$y
+  low <- !is.na(x) & x < xs[1]
+  high <- !is.na(x) & x > xs[length(xs)]
+  n <- length(xs)
+  out[low] <- x[low] + (ys[1] - xs[1])
+  out[high] <- x[high] + (ys[n] - xs[n])
+  out
+}
+
 quantile_normalize <- function(values, fit_rows = NULL) {
   matrix_values <- as.matrix(values)
   storage.mode(matrix_values) <- "numeric"
@@ -3697,9 +3871,7 @@ quantile_normalize <- function(values, fit_rows = NULL) {
     ordering <- order(fit_values, method = "radix")
     xs <- fit_values[ordering]; ys <- mapped[ordering]
     keep <- !duplicated(xs)
-    matrix_values[mask, index] <- if (sum(keep) == 1) rep(ys[keep], sum(mask)) else stats::approx(
-      xs[keep], ys[keep], xout = column[mask], rule = 2
-    )$y
+    matrix_values[mask, index] <- .interp_extrapolate(column[mask], xs[keep], ys[keep])
   }
   as.data.frame(matrix_values, check.names = FALSE)
 }
@@ -3725,7 +3897,9 @@ anchor_vsn_level <- function(glog_values, log2_values) {
     if (length(fit_rows) != nrow(matrix_values)) stop("fit_rows must have one entry per row.", call. = FALSE)
     return(fit_rows)
   }
-  rownames(matrix_values) %in% as.character(fit_rows)
+  ids <- rownames(matrix_values)
+  if (is.null(ids)) ids <- seq_len(nrow(matrix_values))
+  ids %in% as.character(fit_rows)
 }
 
 # Apply a global normalization to the sample columns of a log2 matrix.
@@ -3904,7 +4078,8 @@ normalize_data <- function(data, meta, method = "none", linear_source = NULL, fi
       2^numeric_values
     } else {
       raw <- .numeric_matrix(linear_source, present)
-      raw[!is.na(raw) & raw == 0] <- NA_real_
+      # Zero and negative linear intensities are missing, as in every other path.
+      raw[!is.na(raw) & raw <= 0] <- NA_real_
       raw
     }
     fit <- if (is.null(fit_rows)) {
@@ -4539,16 +4714,30 @@ anova_plot_cluster <- function(
   workflow_key %in% c("phosprot", "phosphoprotein", "phosphoproteome")
 }
 
-# Every member of every value, once, sorted: the shared `split_tokens` rule
-# (`;` or `,` separated), as in the web app and the pip package. A protein
-# group "A;B" used to contribute only "A" outside the phosphoprotein workflow
-#; every member counts now. The former group-splitting
-# switch, ignored since then, is gone (2026-10-22).
+# The leading member of every value, once, sorted: cells are cut by the shared
+# `split_tokens` rule (`;` or `,` separated) and the first member is kept, as
+# in the web app and the pip package. One quantified feature is one draw from
+# the urn, so a protein group "A;B" contributes "A" only, for hits and
+# background alike. The former group-splitting switch is gone (2026-10-22).
+# One raw string is pasted text: split on `;`, `,` and whitespace. A vector of
+# several entries is already itemised: each splits on `;` and `,` only, so an
+# identifier containing a space survives when passed as one entry.
+.explicit_gene_tokens <- function(values) {
+  values <- values[!is.na(values)]
+  if (!length(values)) return(character())
+  members <- as.character(unlist(lapply(values, split_tokens)))
+  if (length(values) == 1) members <- as.character(unlist(strsplit(members, "[[:space:]]+")))
+  sort(unique(members[nzchar(members)]))
+}
+
 .different_gene_tokens <- function(values) {
   values <- values[!is.na(values)]
   if (!length(values)) return(character())
-  tokens <- unlist(lapply(as.character(values), split_tokens), use.names = FALSE)
-  sort(unique(tokens))
+  tokens <- vapply(as.character(values), function(value) {
+    members <- split_tokens(value)
+    if (length(members)) members[[1]] else NA_character_
+  }, character(1), USE.NAMES = FALSE)
+  sort(unique(tokens[!is.na(tokens)]))
 }
 
 .different_genes_from_volcano <- function(volcano_data, key_col) {
@@ -4663,7 +4852,7 @@ enrichment_data <- function(
   # cannot drift apart. Returns a zero-row frame rather than NULL when nothing
   # passes, so callers can treat the result as a table unconditionally.
   background_mode <- match.arg(background_mode, c("experiment", "global"))
-  genes <- .different_gene_tokens(gene_list)
+  genes <- .explicit_gene_tokens(gene_list)
   if (!length(genes)) return(.empty_enrichment_frame())
   if (min_num > max_num) {
     stop("min_num cannot be larger than max_num.", call. = FALSE)
@@ -4682,7 +4871,7 @@ enrichment_data <- function(
         call. = FALSE
       )
     }
-    submitted_background <- .different_gene_tokens(background)
+    submitted_background <- .explicit_gene_tokens(background)
     missing <- setdiff(genes, submitted_background)
     if (length(missing)) {
       stop(
@@ -5481,14 +5670,14 @@ phosprot_regulation <- function(data, meta, condition1, condition2, in_pval=0.05
 
 rt_vs_pred_rt_plot <- function(
     data_path,
-    method = "Hexbin Plot",
+    method = "Scatter Plot",
     add_line = FALSE,
-    bins = 1000,
+    bins = 100,
     header = TRUE,
     width = 8,
     height = 6,
     dpi = 100,
-    seed = 69
+    seed = 1
 ) {
   data <- read_data(data_path)
   if (!all(c("Predicted.RT", "RT") %in% names(data))) {
@@ -5970,7 +6159,7 @@ single_protein_values <- function(data, meta, protein) {
   table
 }
 
-boxplot_int_single_prot <- function(data, meta, protein, outliers=FALSE, dots=FALSE, header=TRUE, legend=TRUE, plot_colors=NULL, width=8, height=6, dpi=100, seed=69) {
+boxplot_int_single_prot <- function(data, meta, protein, outliers=FALSE, dots=FALSE, header=TRUE, legend=TRUE, plot_colors=NULL, width=8, height=6, dpi=100, seed=1) {
   table <- single_protein_values(data, meta, protein)
   conditions <- unique(meta$condition)
   intensities <- lapply(conditions, function(condition) {
@@ -6203,25 +6392,10 @@ phossite_coverage_plot <- function(data, meta, id=FALSE, header=TRUE, legend=TRU
 
 sty_plot <- function(data, localization_cutoff=0) {
   data <- filter_localization(data, localization_cutoff)
-  matches <- regexec(
-    "~[^_]+_([STY])[0-9]+_",
-    as.character(data$PTM_Collapse_key)
-  )
-  residues <- vapply(
-    regmatches(as.character(data$PTM_Collapse_key), matches),
-    function(value) if (length(value) > 1) value[2] else NA_character_,
-    character(1)
-  )
-
-  counts <- table(factor(residues, levels = c("S", "T", "Y")))
-  short_matches <- regexec("(^|_)([STY])[0-9]+(_|$)", as.character(data$PTM_Collapse_key))
-  short_residues <- vapply(regmatches(as.character(data$PTM_Collapse_key), short_matches),
-    function(value) if (length(value) > 2) value[3] else NA_character_, character(1))
-  residues[is.na(residues)] <- short_residues[is.na(residues)]
-  counts <- table(factor(residues, levels = c("S", "T", "Y")))
-  if (anyNA(residues)) counts <- c(counts, Unparsed = sum(is.na(residues)))
+  tab <- phospho_sty_table(data)
+  counts <- setNames(tab$Count, tab$Residue)
+  percentages <- tab$Percentage
   total <- sum(counts)
-  percentages <- if (total > 0) counts / total * 100 else counts * 0
   colors <- c(S = "#4C78A8", T = "#F58518", Y = "#54A24B")
 
   old_par <- par(mar = c(4.5, 4.5, 3.5, 4.5))
@@ -6256,7 +6430,7 @@ sty_plot <- function(data, localization_cutoff=0) {
   .plot_result()
 }
 
-phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI="blue", color_notclassI="orange", seed=69, is_log2=TRUE, localization_cutoff=0) {
+phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI="blue", color_notclassI="orange", seed=1, is_log2=TRUE, localization_cutoff=0) {
   data <- filter_localization(data, localization_cutoff)
   counts <- .phossite_coverage_counts(data, meta, is_log2)
   if (!any(counts["Unclassified", ] > 0)) counts <- counts[1:2, , drop=FALSE]

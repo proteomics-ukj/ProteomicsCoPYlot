@@ -17,13 +17,16 @@ function renewable(plotUrl: string, outputLabel: string): boolean {
  * Render the same output again on the server to get a new export of it.
  *
  * Exports are kept for a while per session; an old one can have expired or
- * been replaced by newer ones. The URL is the one already on screen, so the
- * server draws the identical figure or table and hands out a new token for it.
+ * been replaced by newer ones. The caller compares the server-issued scope
+ * prefix before accepting a replacement from the same URL.
  */
-async function renewToken(plotUrl: string): Promise<string | null> {
+async function renewToken(plotUrl: string, reportError = false): Promise<string | null> {
   const controller = new AbortController();
   const response = await fetchPlot(plotUrl, controller.signal);
-  if (!response.ok) return null;
+  if (!response.ok) {
+    if (reportError) throw new Error(plotErrorMessage(await response.json().catch(() => null)));
+    return null;
+  }
   const header = response.headers.get("X-CoPYlot-Notebook") ?? "";
   if (TOKEN.test(header)) return header;
   if ((response.headers.get("content-type") ?? "").includes("application/json")) {
@@ -34,25 +37,25 @@ async function renewToken(plotUrl: string): Promise<string | null> {
   return null;
 }
 
-export default function NotebookDownload({ plotUrl, rendered, outputLabel = 'plot' }: {
-  plotUrl: string; rendered: RenderedNotebook | null; outputLabel?: 'plot' | 'table' | 'report';
+export default function NotebookDownload({ plotUrl, rendered, outputLabel = 'plot', prepareOnClick = false }: {
+  plotUrl: string; rendered: RenderedNotebook | null; outputLabel?: 'plot' | 'table' | 'report'; prepareOnClick?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [renewed, setRenewed] = useState<RenderedNotebook | null>(null);
   // Viewers may download plots and tables, not notebook exports (D11).
   if (IS_VIEWER_MODE) return null;
-  const token = renewed?.url === plotUrl && renewed.token ? renewed.token
-    : rendered?.url === plotUrl ? rendered.token : null;
+  const token = rendered?.url === plotUrl ? rendered.token : null;
 
   async function download() {
-    if (!token || busy) return;
+    if ((!token && !prepareOnClick) || busy) return;
     setBusy(true);
     setError("");
     let objectUrl = "";
     try {
       const zip = (value: string) => fetch(buildPlotUrl(`/api/plots/notebooks/${encodeURIComponent(value)}.zip`));
-      let response = await zip(token);
+      const current = prepareOnClick ? await renewToken(plotUrl, true) : token;
+      if (!current) throw new Error("The applied table could not be prepared for notebook export.");
+      let response = await zip(current);
       if (response.status === 404) {
         if (!renewable(plotUrl, outputLabel)) {
           throw new Error(outputLabel === "report"
@@ -61,7 +64,9 @@ export default function NotebookDownload({ plotUrl, rendered, outputLabel = 'plo
         }
         const fresh = await renewToken(plotUrl);
         if (!fresh) throw new Error(`This ${outputLabel} could not be prepared again for export. Change a setting and back to redraw it.`);
-        setRenewed({ url: plotUrl, token: fresh });
+        if (fresh.slice(0, 10) !== current.slice(0, 10)) {
+          throw new Error(`The data or settings have changed. Redraw this ${outputLabel} before exporting it.`);
+        }
         response = await zip(fresh);
       }
       if (!response.ok) throw new Error(plotErrorMessage(await response.json().catch(() => null)));
@@ -87,8 +92,8 @@ export default function NotebookDownload({ plotUrl, rendered, outputLabel = 'plo
   }
 
   return <>
-    <button type="button" onClick={() => void download()} disabled={!token || busy}
-      title={token ? `Export this ${outputLabel} as a reproducible Python notebook` : `Waiting for an exportable ${outputLabel}`}
+    <button type="button" onClick={() => void download()} disabled={(!token && !prepareOnClick) || busy}
+      title={token || prepareOnClick ? `Export this ${outputLabel} as a reproducible Python notebook` : `Waiting for an exportable ${outputLabel}`}
       className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
       {busy ? "Preparing notebook…" : "Export notebook"}
     </button>

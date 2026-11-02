@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proteomicscopylot"
-version = "1.0.0b1"
+version = "1.0.0b2"
 description = "Notebook-facing plotting and analysis helpers for ProteomicsCoPYlot."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,7 @@ authors = [
 ]
 keywords = ["proteomics", "phosphoproteomics", "plotting", "notebooks"]
 classifiers = [
+  "Development Status :: 4 - Beta",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
@@ -40,6 +41,11 @@ dependencies = [
   "matplotlib-venn>=1.0,<2",
   "plotly>=5.15,<8",
 ]
+
+[project.urls]
+Homepage = "https://github.com/proteomics-ukj/ProteomicsCoPYlot"
+Documentation = "https://github.com/proteomics-ukj/ProteomicsCoPYlot/blob/main/docs/INSTALLATION.md"
+Issues = "https://github.com/proteomics-ukj/ProteomicsCoPYlot/issues"
 
 [project.optional-dependencies]
 bio = [
@@ -102,7 +108,7 @@ markers = [
 # ESLint in CI from the start; this closes the same gap on the Python side.
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 # Notebooks star-import the package on purpose -- that is the documented way to
 # use it -- so F403/F405 there describe the design, not a defect.
 extend-exclude = ["build", "dist", "release", "local", "viewer_data", "*.ipynb"]

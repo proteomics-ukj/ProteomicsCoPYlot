@@ -513,12 +513,7 @@ export function OraPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="GO Enrichment (ORA)">
-        <p className="mb-3 text-sm text-slate-600">
-          All semicolon-listed genes are included and counted once per gene list. The same mapping
-          applies to selected genes and the tested-gene background. Genes mapped from a protein group
-          are not necessarily independently measured.
-        </p>
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={oraKindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>
@@ -649,11 +644,6 @@ export function OraPanel({
               ]}
             />
           </div>
-          <p className="mt-3 text-xs text-slate-600">
-            {backgroundMode === "experiment"
-              ? "ORA uses every gene that received the selected upstream statistical test."
-              : "Global background can overstate enrichment when detectability is restricted by the experiment."}
-          </p>
         </div>
         <div className="mt-6 border-t border-slate-200 pt-6">
           <h4 className="text-sm font-semibold text-slate-900">Figure Size</h4>

@@ -72,7 +72,7 @@ def single_protein_boxplot_route(
     dataSource: DataSource = "data",
     outliers: bool = False,
     dots: bool = False,
-    randomSeed: int = 69,
+    randomSeed: int = 1,
     header: bool = True,
     legend: bool = True,
     widthCm: float = 20,

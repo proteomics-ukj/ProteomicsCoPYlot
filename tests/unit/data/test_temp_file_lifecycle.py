@@ -162,7 +162,7 @@ def test_peptide_read_keeps_file_during_replacement(temp_root, monkeypatch):
     path = owned_file('peptide_uploads')
     store.save_peptide_path(str(path))
 
-    def read_while_replaced(path_str, modified_ns):
+    def read_while_replaced(path_str, modified_ns, size, changed_ns):
         store.save_peptide_path(str(owned_file('peptide_uploads', 'replacement.csv')))
         gc.collect()
         assert path.exists()

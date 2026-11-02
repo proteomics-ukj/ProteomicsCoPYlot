@@ -549,6 +549,8 @@ export type EnrichmentTerm = {
 export type EnrichmentResultResponse = Served<Schemas["EnrichmentResultResponse"]>;
 
 export type ListEnrichmentRequest = {
+  inputSource?: "manual" | "list";
+  namedList?: string;
   genes: string[];
   backgroundMode: "experiment" | "global";
   backgroundGenes: string[];
@@ -628,6 +630,9 @@ export type SingleProteinOptionsResponse = {
   // Present when the request carried a selection from another identifier:
   // old name -> the same row's name under this identifier.
   carried?: Record<string, string>;
+  /** True for a phosphoprotein matrix of centred site ratios, where "Show NA
+   * as low" has no meaning (0 is the middle of the scale); the toggle is hidden. */
+  centredPhosprotValues?: boolean;
 };
 
 export type SingleProteinIdentifier = "workflow" | "genes";
@@ -691,6 +696,8 @@ export type SummaryReportRequest = {
   title: string;
   author: string;
   textEntries: Record<string, string>;
+  includeSampleLabels?: boolean;
+  sampleLabels?: Record<string, string>;
   reportContext?: SummaryReportContext;
 };
 

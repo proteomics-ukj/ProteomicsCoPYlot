@@ -98,10 +98,15 @@ def ora_list_route(payload: ListEnrichmentRequest) -> ListEnrichmentResultRespon
     try:
         from app.services.assistant_snapshots import store_snapshot
         result = run_enrichment_from_list(payload)
-        data = result.model_dump(exclude={"evidenceToken", "terms", "genes", "backgroundGenes"})
+        from app.services.notebook_ora import capture_gene_list
+        try:
+            result.notebookToken = capture_gene_list(payload, result)
+        except (ValueError, ModuleNotFoundError):
+            LOGGER.exception("Gene list enrichment notebook unavailable")
+        data = result.model_dump(exclude={"evidenceToken", "notebookToken", "terms", "genes", "backgroundGenes"})
         data.update(type="canvas_ora", querySize=len(result.genes), totalRows=len(result.terms),
                     terms=[term.model_dump() for term in result.terms[:10]],
-                    settings=payload.model_dump(exclude={"genes", "backgroundGenes"}))
+                    settings=payload.model_dump(exclude={"genes", "backgroundGenes", "namedList", "inputSource"}))
         result.evidenceToken = store_snapshot(data)
         return result
     except ValueError as e:

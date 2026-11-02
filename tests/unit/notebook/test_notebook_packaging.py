@@ -39,6 +39,7 @@ CASES = [
 ] + [
     ('pca', 'pca_source', (interactive, method)) for interactive in [False, True] for method in ['pca', 'umap', 't-sne']
 ] + [
+    ('imputation', 'imputation_source', ()), ('ora', 'gene_list_source', ()),
     ('comparison', 'comparison_source', ('pearson', False)),
     ('comparison', 'comparison_source', ('pearson', True)),
     ('comparison', 'comparison_source', ('venn', False)),

@@ -17,6 +17,23 @@ class NotebookSource:
     imports: tuple[str, ...]
 
 
+def _target_names(target: ast.expr) -> set[str]:
+    """Names an assignment target binds, by Python's rules.
+
+    `x = ...`, `a, (b, *c) = ...` bind names; `d[k] = ...` and `o.attr = ...`
+    bind nothing (they mutate `d` / `o`). Walking every `Name` under the
+    target made `sys.modules[name] = module` count as a rebinding of `sys`,
+    and the extractor refused the package source as ambiguous (2026-11-02).
+    """
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(_target_names(element) for element in target.elts))
+    return set()
+
+
 def _bindings(node: ast.AST) -> set[str]:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return {node.name}
@@ -28,7 +45,7 @@ def _bindings(node: ast.AST) -> set[str]:
         return {alias.asname or alias.name for alias in node.names}
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        return {part.id for target in targets for part in ast.walk(target) if isinstance(part, ast.Name)}
+        return set().union(*(_target_names(target) for target in targets))
     if isinstance(node, (ast.Try, ast.If)):
         return set().union(*(_bindings(child) for child in ast.iter_child_nodes(node)))
     if isinstance(node, ast.ExceptHandler):

@@ -250,33 +250,33 @@ export default function UploadPage({ onDatasetUploaded, readOnly = false }: Uplo
                 type="button"
                 aria-expanded="false"
                 onClick={() => updateDatasetManagerVisibility(true)}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                className="shrink-0 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
               >
                 Show Dataset Manager
               </button>
             </div>
           ) : (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <h2 className="text-lg font-semibold text-slate-900">Dataset Manager</h2>
                 <button
                   type="button"
                   aria-expanded="true"
                   onClick={() => updateDatasetManagerVisibility(false)}
-                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  className="shrink-0 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                 >
                   Hide Dataset Manager
                 </button>
               </div>
 
-              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+              <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] items-end gap-4">
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="manager-selected-dataset">Selected dataset</label>
                 <select id="manager-selected-dataset"
                   value={current?.activePackage ?? "Data"}
                   onChange={(event) => handleActivePackageChange(event.target.value)}
                   disabled={packageBusy}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  className="h-10 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
                 >
                   {(current?.availablePackages ?? ["Data"]).map((name) => (
                     <option key={name} value={name}>
@@ -288,19 +288,19 @@ export default function UploadPage({ onDatasetUploaded, readOnly = false }: Uplo
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="manager-new-dataset">New dataset</label>
-                <div className="flex gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                   <input id="manager-new-dataset"
                     type="text"
                     value={newPackageName}
                     onChange={(event) => setNewPackageName(event.target.value)}
                     placeholder="Dataset_2"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
                   />
                   <button
                     type="button"
                     onClick={handleCreatePackage}
                     disabled={packageBusy}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+                    className="inline-flex h-10 min-w-20 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
                   >
                     Create
                   </button>
@@ -309,19 +309,19 @@ export default function UploadPage({ onDatasetUploaded, readOnly = false }: Uplo
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="manager-rename-dataset">Rename selected dataset</label>
-                <div className="flex gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                   <input id="manager-rename-dataset"
                     type="text"
                     value={renamePackageName}
                     onChange={(event) => setRenamePackageName(event.target.value)}
                     placeholder="Data"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
                   />
                   <button
                     type="button"
                     onClick={handleRenameActivePackage}
                     disabled={packageBusy}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+                    className="inline-flex h-10 min-w-20 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
                   >
                     Rename
                   </button>

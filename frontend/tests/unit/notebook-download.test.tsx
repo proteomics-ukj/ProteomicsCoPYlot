@@ -13,7 +13,7 @@ import NotebookDownload from "../../src/components/NotebookDownload";
 import PlotImage from "../../src/components/PlotImage";
 
 const OLD = "a".repeat(32);
-const FRESH = "b".repeat(32);
+const FRESH = OLD.slice(0, 10) + "b".repeat(22);
 const PLOT = "/api/plots/qc/protein/boxplot.png?advanced=%7B%7D";
 
 beforeEach(() => {
@@ -34,6 +34,15 @@ const expired = () => new Response(JSON.stringify({ detail: "Notebook snapshot u
   { status: 404, headers: { "content-type": "application/json" } });
 
 describe("an expired export", () => {
+  it("prepares the applied imputation table only when its notebook is requested", async () => {
+    const endpoint = "/api/plots/imputation/protein/applied-notebook";
+    const fetch = serve((url) => url === endpoint
+      ? Response.json({ notebookToken: FRESH }) : zip());
+    render(<NotebookDownload plotUrl={endpoint} rendered={null} prepareOnClick outputLabel="table" />);
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Export notebook" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining(`/notebooks/${FRESH}.zip`)));
+  });
   it("is prepared again from the plot on screen and downloaded", async () => {
     const fetch = serve((url) => url.includes(`/notebooks/${OLD}`) ? expired()
       : url.includes(`/notebooks/${FRESH}`) ? zip()
@@ -43,6 +52,16 @@ describe("an expired export", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining(`/notebooks/${FRESH}.zip`)));
     expect(fetch.mock.calls.map(([url]) => url)).toContain(PLOT);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("requires a redraw when renewal captures a different dataset", async () => {
+    const fetch = serve(url => url === PLOT
+      ? new Response("png", { headers: { "X-CoPYlot-Notebook": "z".repeat(32) } }) : expired());
+    render(<NotebookDownload plotUrl={PLOT} rendered={{ url: PLOT, token: OLD }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Export notebook" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Redraw");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   it("of a report asks for the report to be generated again", async () => {

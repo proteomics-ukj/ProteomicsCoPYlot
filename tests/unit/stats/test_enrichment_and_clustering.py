@@ -357,7 +357,9 @@ def test_pathway_heatmap_labels_show_source_feature_counts(monkeypatch) -> None:
     assert "median across mapped features" in str(captured["title"])
 
 
-def test_phosprot_ora_uses_all_gene_group_tokens(monkeypatch) -> None:
+def test_phosprot_ora_uses_the_leading_gene_group_member(monkeypatch) -> None:
+    """One quantified feature is one draw: "A;B" contributes "A" to hits and
+    background alike (2026-11-02; every member counted before)."""
     frame = pd.DataFrame(
         {
             "Gene_group": [" A ; B ; A ;;", "B; C", np.nan, "D;; E"],
@@ -385,9 +387,9 @@ def test_phosprot_ora_uses_all_gene_group_tokens(monkeypatch) -> None:
         )
     )
 
-    assert up == ["A", "B"]
-    assert down == ["B", "C"]
-    assert background == ["A", "B", "C", "D", "E"]
+    assert up == ["A"]
+    assert down == ["B"]
+    assert background == ["A", "B", "D"]
     assert "nan" not in background
 
 

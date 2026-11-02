@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -53,6 +54,51 @@ def test_every_cell_of_the_example_notebook_executes() -> None:
         "the published example notebook no longer runs against the package:\n  "
         + "\n  ".join(failures[:8])
     )
+    _compare_example_with_gui(namespace)
+
+
+def _compare_example_with_gui(notebook) -> None:
+    """Replay the tutorial's documented settings through the GUI endpoints."""
+    import pandas as pd
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from proteomicscopylot.notebook_functions import example_data_path
+
+    def compare(actual, expected, key, columns):
+        # A repeated display label is not a unique feature ID. Compare every
+        # row, including multiplicities, rather than dropping duplicate labels.
+        def align(frame):
+            return frame[[key, *columns]].sort_values([key, columns[0]]).reset_index(drop=True)
+        pd.testing.assert_frame_equal(align(actual), align(expected), check_dtype=False,
+                                      check_exact=False, rtol=1e-8, atol=1e-10)
+
+    with TestClient(app) as client:
+        def post(path, **kwargs):
+            response = client.post(path, **kwargs)
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        for kind in ("protein", "phospho"):
+            for path, name in (("/api/datasets/upload", kind),
+                               ("/api/annotations/metadata/upload", kind + "_metadata")):
+                source = example_data_path(name)
+                with source.open("rb") as handle:
+                    post(path, data={"kind": kind}, files={"file": (source.name, handle)})
+            post("/api/annotations/generate", json={"kind": kind, "isLog2Transformed": True,
+                 "filter": {"minPresent": 3, "mode": "per_group", "normalization": "none",
+                            "contaminants": {"enabled": True, "categories": [1, 2, 3, 4, 5]}}})
+        post("/api/annotations/phosprot/aggregate", json={"mode": "robust_site_median", "source": "non_imputed"})
+        retained = client.get("/api/annotations/current/phosprot/filtered/download")
+        assert retained.status_code == 200, retained.text
+        compare(pd.read_csv(io.StringIO(retained.text)), notebook["phosprot_filtered"], "Phosphoprotein",
+                notebook["meta_sites"]["sample"].tolist() + ["site_num"])
+        for kind, table, key in (("protein", "volcano", "ProteinNames"),
+                                 ("phospho", "site_volcano", "PTM_Collapse_key"),
+                                 ("phosprot", "phosprot_volcano", "Phosphoprotein")):
+            response = post("/api/stats/volcano/run", json={"kind": kind, "condition1": "WT", "condition2": "GRK",
+                            "dataSource": "filtered", "testType": "unpaired"})
+            compare(pd.DataFrame(response["rows"]), notebook[table], key,
+                    ["log2FC", "pval", "adj_pval", "significance"])
 
 
 EXAMPLE_R = ROOT / "examples" / "example.R"
@@ -66,12 +112,13 @@ def test_the_r_example_exists() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.requires_r("plotly")  # the example draws volcano plots
+@pytest.mark.requires_r("plotly", "reticulate")
 def test_the_r_example_runs(tmp_path) -> None:
     import subprocess
 
     completed = subprocess.run(
         [RSCRIPT, str(EXAMPLE_R)],
+        env={**os.environ, "RETICULATE_PYTHON": sys.executable},
         capture_output=True,
         text=True,
         timeout=900,

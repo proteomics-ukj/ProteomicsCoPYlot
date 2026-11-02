@@ -84,7 +84,8 @@ def _compare_example_with_gui(notebook) -> None:
                 with source.open("rb") as handle:
                     post(path, data={"kind": kind}, files={"file": (source.name, handle)})
             post("/api/annotations/generate", json={"kind": kind, "isLog2Transformed": True,
-                 "filter": {"minPresent": 3, "mode": "per_group", "normalization": "none"}})
+                 "filter": {"minPresent": 3, "mode": "per_group", "normalization": "none",
+                            "contaminants": {"enabled": True, "categories": [1, 2, 3, 4, 5]}}})
         post("/api/annotations/phosprot/aggregate", json={"mode": "robust_site_median", "source": "non_imputed"})
         retained = client.get("/api/annotations/current/phosprot/filtered/download")
         assert retained.status_code == 200, retained.text

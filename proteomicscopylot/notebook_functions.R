@@ -1635,7 +1635,14 @@ coverage_plot_pep <- function(
   .plot_result()
 }
 
-histo_int <- function(data, meta, plot_colors=NULL, header=TRUE, legend=TRUE, width=20, height=10, dpi=300) {
+.log2_plot_input <- function(data, meta, data_scale) {
+  scale <- tolower(trimws(as.character(data_scale)))
+  prepared <- .prepare_intensity_data(data, meta$sample, scale)
+  if (scale == "linear") log2_transform_data(prepared, meta) else prepared
+}
+
+histo_int <- function(data, meta, plot_colors=NULL, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, data_scale="log2") {
+  data <- .log2_plot_input(data, meta, data_scale)
   conditions <- unique(meta$condition)
   mean_intensities <- lapply(conditions, function(condition) {
     columns <- meta$sample[meta$condition == condition]
@@ -1682,7 +1689,8 @@ histo_int <- function(data, meta, plot_colors=NULL, header=TRUE, legend=TRUE, wi
   .plot_result()
 }
 
-boxplot_int <- function(data, meta, outliers=FALSE, header=TRUE, plot_colors=NULL, width_cm=20, height_cm=10, dpi=100, text=FALSE, text_size=9) {
+boxplot_int <- function(data, meta, outliers=FALSE, header=TRUE, plot_colors=NULL, width_cm=20, height_cm=10, dpi=100, text=FALSE, text_size=9, data_scale="log2") {
+  data <- .log2_plot_input(data, meta, data_scale)
   conditions <- unique(meta$condition)
   mean_intensities <- lapply(conditions, function(condition) {
     columns <- meta$sample[meta$condition == condition]

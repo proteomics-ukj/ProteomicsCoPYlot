@@ -44,8 +44,8 @@ fig <- impute_values(filtered, meta, ret = 3, seed = 1)
 # QC -------------------------------------------------------------------------
 linear <- inverse_log2_transform_data(filtered, meta)
 fig <- coverage_plot(filtered, meta, id = FALSE, data_scale = "log2")
-fig <- boxplot_int(filtered, meta)
-fig <- histo_int(filtered, meta)
+fig <- boxplot_int(filtered, meta, data_scale = "log2")
+fig <- histo_int(filtered, meta, data_scale = "log2")
 fig <- cov_plot(linear, meta, data_scale = "linear")
 fig <- abundance_plot(linear, meta, workflow = "Protein", data_scale = "linear")
 fig <- corr_plot(filtered, meta, id = FALSE, data_scale = "log2")
@@ -64,7 +64,9 @@ print(head(volcano_imputed[c("ProteinNames", "log2FC", "adj_pval", "imputed_valu
 # ANOVA ------------------------------------------------------------------------
 anova <- anova_data_f(filtered, meta)
 print(head(anova, 5))
-fig <- anova_plot(anova, meta)
+fig <- withCallingHandlers(anova_plot(anova, meta), warning = function(w) {
+  if (grepl("features dropped for clustering", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning")
+})
 
 # GO over-representation -----------------------------------------------------
 genes <- different_genes(filtered, meta, conditions[1], conditions[2], workflow = "Protein")

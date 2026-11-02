@@ -736,3 +736,24 @@ test_that("transform_phosprot keeps Spectronaut-style sample names", {
     stopifnot(all(real_names %in% names(real_out)), nrow(real_out) == 2L)
   })
 })
+
+test_that("intensity boxplots and histograms give identical plots from either input scale", {
+  meta <- data.frame(sample = letters[1:4], condition = c("A", "A", "B", "B"))
+  logged <- data.frame(a = c(0,-1,4,NA,6), b = c(4,1,2,3,0),
+                       c = c(2,3,0,4,1), d = c(1,5,-2,5,NA))
+  linear <- 2^logged
+  linear$a[4] <- 0
+  render <- function(plot, data, ...) {
+    path <- tempfile(fileext = ".png")
+    on.exit(unlink(path))
+    png(path, width = 800, height = 500)
+    tryCatch(plot(data, meta, ...), finally = dev.off())
+    readBin(path, "raw", file.info(path)$size)
+  }
+  for (plot in list(boxplot_int, histo_int)) {
+    expected <- render(plot, logged)
+    expect_identical(render(plot, logged, data_scale = "log2"), expected)
+    expect_identical(render(plot, linear, data_scale = "linear"), expected)
+    expect_error(plot(linear, meta, data_scale = "unknown"), "data_scale")
+  }
+})

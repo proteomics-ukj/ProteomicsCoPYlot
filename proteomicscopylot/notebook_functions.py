@@ -1456,8 +1456,17 @@ def coverage_plot_pep(data2_path, meta, id=True, header=True, legend=True,
     return fig
 
 
+def _log2_plot_input(data, meta, data_scale):
+    scale = str(data_scale).strip().lower()
+    if scale == "linear":
+        return log2_transform_data(data, meta)
+    return _prepare_intensity_data(data, meta["sample"], scale)
+
+
 def histo_int(data, meta, plot_colors=None, header=True, legend=True,
-              width=20, height=10, dpi=300):
+              width=20, height=10, dpi=300, data_scale="log2"):
+    """Plot log2 intensities, converting linear input before averaging replicates."""
+    data = _log2_plot_input(data, meta, data_scale)
     figsize_inches = (width / 2.54, height / 2.54)
     fig, ax = plt.subplots(figsize=figsize_inches, dpi=dpi)
 
@@ -1510,7 +1519,9 @@ def histo_int(data, meta, plot_colors=None, header=True, legend=True,
 
 
 def boxplot_int(data, meta, outliers=False, header=True, plot_colors=None,
-                width_cm=20, height_cm=10, dpi=100, text=False, text_size=9):
+                width_cm=20, height_cm=10, dpi=100, text=False, text_size=9, data_scale="log2"):
+    """Plot log2 intensities, converting linear input before averaging replicates."""
+    data = _log2_plot_input(data, meta, data_scale)
     n_conditions = meta['condition'].nunique()
 
     if plot_colors is not None:

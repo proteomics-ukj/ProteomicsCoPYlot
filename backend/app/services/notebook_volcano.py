@@ -14,26 +14,9 @@ from app.services.functions import effective_test_type, is_moderated_test_type
 @lru_cache(maxsize=2)
 def volcano_source(interactive=False):
     original = module_source("stats_tools.py")
-    calculation = function_definition(original, "_volcano_dataframe")
-    calculation = replace_once(calculation, "def _volcano_dataframe(\n    *,", "def calculate_table(data, metadata, imputation_mask=None, *,")
-    start = calculation.index("    if frame_override is None and metadata_override is None:")
-    end = calculation.index("    label_column =", start)
-    calculation = calculation[:start] + "    source_used = data_source\n    frame = data.copy()\n    metadata = metadata.copy()\n    warnings = []\n" + calculation[end:]
-    calculation = calculation.replace("    frame_override: pd.DataFrame | None = None,\n", "")
-    calculation = calculation.replace("    metadata_override: pd.DataFrame | None = None,\n", "")
-    calculation = replace_once(calculation,
-        "mask = _imputation_mask(kind, source_used, frame.loc[df.index], [c for cols in count_groups.values() for c in cols])",
-        "mask = imputation_mask")
-    # The protein comparison a corrected site change subtracts is a second
-    # calculate_table run on the frozen protein matrix (see render_volcano); the
-    # notebook never reaches into the app's annotation store for it.
-    start = calculation.index("        if protein_stats is None:\n            protein_stats = protein_comparison_stats(")
-    end = calculation.index("        corrected = _apply_protein_correction(", start)
-    calculation = calculation[:start] + (
-        "        if protein_stats is None:\n"
-        "            raise ValueError('Protein correction needs the protein comparison table (protein_stats).')\n"
-    ) + calculation[end:]
+    calculation = function_definition(original, "calculate_table")
     helpers = "\n\n".join(function_definition(original, name) for name in (
+        "_tested_volcano_table", "_volcano_groups", "_volcano_feature_frame", "_volcano_eligibility",
         "_first_available_column", "_workflow_label_candidates", "_gene_label_candidates", "_resolve_label_column",
         "_variance_and_count", "_volcano_untested_rows", "_apply_protein_correction", "_safe_neg_log10", "_correction_label", "_clean_feature_name", "_gene_tokens",
         "_normalize_highlight_token", "_volcano_condition_texts", "_volcano_marker_style", "_volcano_top_hits",
@@ -157,7 +140,7 @@ def render_volcano(payload, *, interactive=False, **options):
     lineage, imputation, uses_imputed, imputation_text = input_history(kind, annotation, dataset, source=source)
     mask = stats_tools._imputation_mask(kind, source, data, metadata["sample"].astype(str).tolist())
     metadata = metadata[[column for column in ("sample", "condition", "pair_id") if column in metadata]].copy()
-    identifiers = ["GeneNames", "Gene_group", "ProteinNames", "PTM_Collapse_key", "UPD_seq",
+    identifiers = ["GeneNames", "Gene_group", "ProteinNames", "ProteinAccessions", "PTM_Collapse_key", "UPD_seq",
                    "Protein_group", "Phosphoprotein", "site_num", "PTM_Collapse_keys"]
     columns = list(dict.fromkeys(metadata["sample"].tolist() + identifiers))
     data = data[[column for column in columns if column in data]].copy()
@@ -255,7 +238,12 @@ def render_volcano(payload, *, interactive=False, **options):
             "mask_path = RESOURCES / 'imputation_mask.parquet'\n"
             "imputation_mask = read_resource_table(mask_path) if mask_path.exists() else None\n"
             + PROTEIN_STATS_CODE +
-            "_, label_column, table, warnings = functions.calculate_table(data, metadata, imputation_mask, protein_stats=protein_stats, **settings['calculation'])\n"
+            "untested = []\n"
+            "_, label_column, table, warnings = functions.calculate_table(data, metadata, imputation_mask, protein_stats=protein_stats, untested_out=untested, **settings['calculation'])\n"
+            "untested_table = untested[0]\n"
+            "pd.testing.assert_frame_equal(untested_table, read_resource_table(RESOURCES / 'untested.parquet'), check_exact=True)\n"
+            "if not untested_table.empty:\n"
+            "    untested_table.to_csv('reproduced_not_tested.csv', index=False)\n    display(untested_table)\n"
             "pd.testing.assert_frame_equal(table, read_resource_table(RESOURCES / 'table.parquet'), check_exact=True)\n"
             "table.to_csv('reproduced_table.csv', index=False)\ndisplay(table)\n" + render_code,
     )

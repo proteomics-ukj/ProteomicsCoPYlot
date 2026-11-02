@@ -1028,7 +1028,14 @@ export default function QCPipelinePage({
                 download={`qc_${activeTab}_${kind}_summary.csv`}
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
               >
-                Download CSV
+                {activeTab === "cv" ? "Download summary CSV" : "Download CSV"}
+              </a>
+            ) : null}
+            {activeTab === "cv" && tableCsvUrl ? (
+              <a href={buildPlotUrl(`/api/plots/qc/${kind}/feature-cvs.csv`, notebookToken ? { snapshot: notebookToken } : {})}
+                download={`qc_${kind}_feature_cvs.csv`}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
+                Download feature CVs (.csv)
               </a>
             ) : null}
             {pairedNotebook && plotView ? (

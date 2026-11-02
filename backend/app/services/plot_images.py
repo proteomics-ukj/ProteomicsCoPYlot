@@ -235,7 +235,6 @@ def imputation_before_plot(
     width=0.3,
     advanced: dict[str, Any] | None = None,
 ) -> bytes:
-    plt = _get_plt()
     _, frame = _imputation_source(kind)
     sample_columns = _get_sample_columns(kind, frame)
     diagnostics = impute_values_with_diagnostics(
@@ -249,6 +248,11 @@ def imputation_before_plot(
         down_shift=down_shift,
         width=width,
     )
+    return render_imputation_before(diagnostics, phosprot_values_are_centred(kind), advanced)
+
+
+def render_imputation_before(diagnostics, centered, advanced):
+    plt = _get_plt()
 
     fig, ax = _make_fig(plt, 20, 10)  # the common 20 x 10 cm canvas (2026-10-09)
     ax.hist(
@@ -261,7 +265,7 @@ def imputation_before_plot(
     )
     ax.legend()
     ax.set_title("Overall distribution of data with and without missing values")
-    ax.set_xlabel(intensity_unit_label(phosprot_values_are_centred(kind)))
+    ax.set_xlabel(intensity_unit_label(centered))
     ax.set_ylabel("Density")
     apply_advanced_axes(ax, advanced)
     return _to_png_bytes(fig, plt, dpi=300)
@@ -289,7 +293,6 @@ def imputation_overall_fit_plot(
     width=0.3,
     advanced: dict[str, Any] | None = None,
 ) -> bytes:
-    plt = _get_plt()
     _, frame = _imputation_source(kind)
     sample_columns = _get_sample_columns(kind, frame)
     diagnostics = impute_values_with_diagnostics(
@@ -303,6 +306,11 @@ def imputation_overall_fit_plot(
         down_shift=down_shift,
         width=width,
     )
+    return render_imputation_fit(diagnostics, phosprot_values_are_centred(kind), advanced, method, show_imputation_draw)
+
+
+def render_imputation_fit(diagnostics, centered, advanced, method, show_imputation_draw):
+    plt = _get_plt()
 
     values = diagnostics.overall_observed
     if values.size == 0:
@@ -361,7 +369,7 @@ def imputation_overall_fit_plot(
 
     method_label = "Numerical" if str(method).strip().lower() == "numerical" else "Quantile"
     ax.set_title(f"Overall data distribution and norm fit ({method_label})")
-    ax.set_xlabel(intensity_unit_label(phosprot_values_are_centred(kind)))
+    ax.set_xlabel(intensity_unit_label(centered))
     ax.set_ylabel("Density")
     apply_advanced_axes(ax, advanced)
     return _to_png_bytes(fig, plt, dpi=300)
@@ -379,7 +387,6 @@ def imputation_after_plot(
     width=0.3,
     advanced: dict[str, Any] | None = None,
 ) -> bytes:
-    plt = _get_plt()
     _, frame = _imputation_source(kind)
     sample_columns = _get_sample_columns(kind, frame)
     diagnostics = impute_values_with_diagnostics(
@@ -393,6 +400,11 @@ def imputation_after_plot(
         down_shift=down_shift,
         width=width,
     )
+    return render_imputation_after(diagnostics, phosprot_values_are_centred(kind), advanced, method, normalization)
+
+
+def render_imputation_after(diagnostics, centered, advanced, method, normalization):
+    plt = _get_plt()
 
     non_imputed = diagnostics.after_non_imputed
     imputed = diagnostics.after_imputed
@@ -414,7 +426,7 @@ def imputation_after_plot(
     ax.legend()
     method_label = "Numerical" if str(method).strip().lower() == "numerical" else "Quantile"
     ax.set_title(f"Distribution of data after {method_label.lower()} imputation")
-    ax.set_xlabel(intensity_unit_label(phosprot_values_are_centred(kind)))
+    ax.set_xlabel(intensity_unit_label(centered))
     ax.set_ylabel("Density")
     apply_advanced_axes(ax, advanced)
     return _to_png_bytes(fig, plt, dpi=300)

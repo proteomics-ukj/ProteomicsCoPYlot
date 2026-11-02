@@ -789,7 +789,9 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
           ]}
           toggles={[
             <CheckboxField key="id" label="Toggle ID" checked={line.includeId} onChange={(value) => setLine({ ...line, includeId: value })} />,
-            <CheckboxField key="na-low" label="Show NA as low" checked={line.showNaLow} onChange={(value) => setLine({ ...line, showNaLow: value })} />,
+            ...(options?.centredPhosprotValues
+              ? []
+              : [<CheckboxField key="na-low" label="Show NA as low" checked={line.showNaLow} onChange={(value) => setLine({ ...line, showNaLow: value })} />]),
           ]}
           size={
             <SizeRow

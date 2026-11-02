@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -111,12 +112,13 @@ def test_the_r_example_exists() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.requires_r("plotly")  # the example draws volcano plots
+@pytest.mark.requires_r("plotly", "reticulate")
 def test_the_r_example_runs(tmp_path) -> None:
     import subprocess
 
     completed = subprocess.run(
         [RSCRIPT, str(EXAMPLE_R)],
+        env={**os.environ, "RETICULATE_PYTHON": sys.executable},
         capture_output=True,
         text=True,
         timeout=900,

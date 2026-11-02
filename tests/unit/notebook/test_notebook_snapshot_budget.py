@@ -21,6 +21,19 @@ def _recipe(size: int) -> NotebookRecipe:
         provenance={}, original_filename="", resources={"input.parquet": b"x" * size})
 
 
+def test_renewal_scope_tracks_session_revision_and_captured_inputs():
+    from app.services.runtime_cache import invalidate_runtime_cache
+
+    store = NotebookSnapshots()
+    old = store.capture("alice", _recipe(10))
+    fresh = store.capture("alice", _recipe(10))
+    assert len(fresh) == 32 and fresh != old and fresh[:10] == old[:10]
+    assert store.capture("bob", _recipe(10))[:10] != old[:10]
+    assert store.capture("alice", _recipe(11))[:10] != old[:10]
+    invalidate_runtime_cache()
+    assert store.capture("alice", _recipe(10))[:10] != old[:10]
+
+
 @pytest.mark.parametrize('outcome', ['success', 'error', 'cancel', 'budget', 'logout', 'expired', 'evicted'])
 def test_simultaneous_downloads_prepare_once_and_recheck_access(monkeypatch, outcome):
     from app.services import notebook_snapshots

@@ -1109,6 +1109,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/plots/imputation/{kind}/applied-notebook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Applied Imputation Notebook Route */
+        get: operations["applied_imputation_notebook_route_api_plots_imputation__kind__applied_notebook_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plots/imputation/{kind}/before-missing.png": {
         parameters: {
             query?: never;
@@ -1594,6 +1611,23 @@ export interface paths {
         };
         /** Qc Cv Route */
         get: operations["qc_cv_route_api_plots_qc__kind__cv_png_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plots/qc/{kind}/feature-cvs.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Qc Feature Cvs Route */
+        get: operations["qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4302,6 +4336,12 @@ export interface components {
             /** Genes */
             genes?: string[];
             /**
+             * Inputsource
+             * @default manual
+             * @enum {string}
+             */
+            inputSource?: "manual" | "list";
+            /**
              * Maxtermsize
              * @default 300
              */
@@ -4311,6 +4351,11 @@ export interface components {
              * @default 20
              */
             minTermSize?: number;
+            /**
+             * Namedlist
+             * @default
+             */
+            namedList?: string;
             /**
              * Organism
              * @default human
@@ -4351,6 +4396,11 @@ export interface components {
             evidenceToken?: string;
             /** Genes */
             genes: string[];
+            /**
+             * Notebooktoken
+             * @default
+             */
+            notebookToken?: string;
             /**
              * Organism
              * @description Organism of the Gene Ontology database used for enrichment.
@@ -7785,6 +7835,43 @@ export interface operations {
             };
         };
     };
+    applied_imputation_notebook_route_api_plots_imputation__kind__applied_notebook_get: {
+        parameters: {
+            query?: {
+                normalization?: string;
+                showImputationDraw?: boolean;
+                advanced?: string;
+            };
+            header?: never;
+            path: {
+                kind: "protein" | "phospho" | "phosprot";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     imputation_before_route_api_plots_imputation__kind__before_missing_png_get: {
         parameters: {
             query?: {
@@ -8872,6 +8959,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get: {
+        parameters: {
+            query?: {
+                snapshot?: string;
+            };
+            header?: never;
+            path: {
+                kind: "protein" | "phospho" | "phosprot";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
                 };
             };
             /** @description Validation Error */

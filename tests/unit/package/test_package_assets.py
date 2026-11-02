@@ -93,7 +93,8 @@ def test_ora_requires_an_explicit_experiment_background(monkeypatch) -> None:
     assert grouped_figure is not None
     labels = {label.get_text() for label in grouped_figure.axes[0].get_yticklabels()}
     # Each label names its GO ontology since 2026-10-02.
-    assert {"term one (BP)", "term three (BP)"} <= labels
+    assert "term one (BP)" in labels
+    assert "term three (BP)" in labels
 
 
 def test_notebook_anova_clustering_requires_significant_rows() -> None:
@@ -200,7 +201,7 @@ def test_python_pathway_heatmap_aggregation_is_order_invariant() -> None:
     notebook_functions.pd.testing.assert_series_equal(counts, shuffled_counts)
 
 
-def test_python_phosphoproteome_different_genes_uses_all_group_tokens() -> None:
+def test_python_phosphoproteome_different_genes_uses_the_leading_group_member() -> None:
     metadata = notebook_functions.pd.DataFrame(
         {
             "sample": ["a1", "a2", "b1", "b2"],
@@ -230,9 +231,10 @@ def test_python_phosphoproteome_different_genes_uses_all_group_tokens() -> None:
     )
     # log2FC is condition1 - condition2, so the directions are the mirror of
     # what "two" being higher used to produce.
-    assert result["Upregulated"] == ["B", "C"]
-    assert result["Downregulated"] == ["A", "B"]
-    assert result["Background"] == ["A", "B", "C", "D", "E"]
+    # One quantified feature is one draw: the leading member of each group.
+    assert result["Upregulated"] == ["B"]
+    assert result["Downregulated"] == ["A"]
+    assert result["Background"] == ["A", "B", "D"]
 
     fallback = notebook_functions.different_genes(
         data.drop(columns=["Gene_group"]).assign(GeneNames=["A; B", "B; C", None, "D; E"]),
@@ -244,9 +246,9 @@ def test_python_phosphoproteome_different_genes_uses_all_group_tokens() -> None:
         workflow="Phosphoprotein",
         uncorrected=True,
     )
-    assert fallback["Upregulated"] == ["B", "C"]
-    assert fallback["Downregulated"] == ["A", "B"]
-    assert fallback["Background"] == ["A", "B", "C", "D", "E"]
+    assert fallback["Upregulated"] == ["B"]
+    assert fallback["Downregulated"] == ["A"]
+    assert fallback["Background"] == ["A", "B", "D"]
 
     anova_input = data.assign(Phosphoprotein=["P1", "P2", "P3", "P4"])
     anova_result = notebook_functions.anova_data_f(
@@ -256,13 +258,7 @@ def test_python_phosphoproteome_different_genes_uses_all_group_tokens() -> None:
         uncorrected=True,
     )
     assert "Gene_group" in anova_result.columns
-    assert notebook_functions._different_gene_tokens(anova_result["Gene_group"]) == [
-        "A",
-        "B",
-        "C",
-        "D",
-        "E",
-    ]
+    assert notebook_functions._different_gene_tokens(anova_result["Gene_group"]) == ["A", "B", "D"]
 
 
 def test_notebook_anova_rejects_no_testable_rows() -> None:

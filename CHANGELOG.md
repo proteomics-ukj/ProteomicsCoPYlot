@@ -2,20 +2,13 @@
 
 ## 1.0.0-beta.2 — unreleased
 
-- Export and restore all original metadata profiles in one Excel workbook,
-  preserving profile names, sample grouping, and pairing.
-- Improve report editing, add custom sample labels, and align phosphosite
-  coverage sections with their plot settings.
-- Offer report notebooks only when every displayed section was captured;
-  allow large exports beyond the soft notebook cache targets.
-- Reuse peptide preparation and ANOVA calculations when restyling figures,
-  and space dense heatmap row labels without removing data rows.
-- Use static scatter plots by default for peptide retention-time comparisons
-  and remove the interactive retention-time option from the graphical interface.
-- Simplify plot and filtering controls and standardize default random seeds
-  to 1 across the application and notebook helpers. Analyses using defaults
-  can therefore differ from Beta 1 when they involve random sampling or imputation.
-- Update Python, backend, frontend, citation, and API versions to Beta 2.
+- Normalization fitted on filtered or fully observed features
+- Optional Cambridge cRAP contaminant filtering
+- Paired and unpaired moderated t-tests with limma
+- Optional correction of phosphosite fold changes for protein abundance
+- GO enrichment using the leading gene per quantified group and all distinct genes in explicit lists
+- GUI result tables in Python and R, plus notebook exports for gene-list enrichment and imputation
+- Excel export and restore of metadata profiles, including sample pairing
 
 ## 1.0.0-beta.1 — unreleased
 

@@ -108,7 +108,7 @@ markers = [
 # ESLint in CI from the start; this closes the same gap on the Python side.
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 # Notebooks star-import the package on purpose -- that is the documented way to
 # use it -- so F403/F405 there describe the design, not a defect.
 extend-exclude = ["build", "dist", "release", "local", "viewer_data", "*.ipynb"]

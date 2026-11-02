@@ -1,9 +1,9 @@
-# Convert a collaborator's sample sheet into CoPYlot metadata
+# Convert existing sample annotations into CoPYlot metadata
 
-Follow this prompt when I attach or paste a collaborator's sample sheet. The source may
-be an Excel workbook, CSV, tab-separated text, or an informal table. Your task is to
-produce metadata that I can upload into ProteomicsCoPYlot, preserving the experimental
-meaning and the exact identities of the measured samples.
+Convert the sample annotations I attach or paste into metadata I can upload to
+ProteomicsCoPYlot. The annotations may use my own naming conventions and layout and
+may come from an Excel workbook, CSV, tab-separated text, or an informal table.
+Preserve the experimental meaning and the exact identities of the measured samples.
 
 This prompt is self-contained. You do not need access to CoPYlot's repository or a
 particular LLM provider. If you cannot read an attachment or create a file, say so and
@@ -26,7 +26,7 @@ Establish:
 - Whether any samples are marked for exclusion, and whether that exclusion is intended.
 - Which CoPYlot level the metadata will be uploaded for: protein or phospho.
 
-The ideal inputs are the collaborator's sample sheet **and the exact sample-column
+The ideal inputs are the source annotations **and the exact sample-column
 names from the measurement table loaded into CoPYlot**. A pasted list of those names or
 the relevant measurement-table header is enough; quantitative values are unnecessary.
 An existing CoPYlot metadata CSV can also supply authoritative sample names.
@@ -43,7 +43,7 @@ the measurement data. Preserve case, punctuation, spaces within names, filename
 extensions, prefixes, suffixes and leading zeros. Do not replace run names with patient
 names, plot labels such as `Control_1`, or prettier names.
 
-Use a supplied run-to-sample mapping where available. If the collaborator uses short
+Use a supplied run-to-sample mapping where available. If the source annotations use short
 labels while the measurement table uses long run names, show any proposed mapping and
 ask for confirmation wherever the correspondence is not explicit and unique. Fuzzy
 matching, row order, similar filenames, and matching numeric suffixes alone are not proof.

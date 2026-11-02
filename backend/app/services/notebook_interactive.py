@@ -5,7 +5,7 @@ import sys
 from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
 from app.services.notebook_qc import qc_source
 from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
@@ -84,6 +84,8 @@ def render_abundance(kind: str, **options) -> tuple[str, str]:
     settings["condition_colors"] = advanced_condition_colors(kind, None, conditions, settings["advanced"])
     figure = module.plot_figure(data, metadata, **settings)
     html = module.plotly_html(figure)
+    if not notebook_capture_requested():
+        return html, ""
     recipe = NotebookRecipe(
         plot_name="Interactive Abundance", source=abundance_source(), settings=settings,
         original_filename=dataset.filename,

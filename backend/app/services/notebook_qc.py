@@ -13,7 +13,7 @@ import sys
 from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
 from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
 QC_RENDERERS = {
     "coverage": "qc_coverage_plot", "boxplot": "qc_boxplot_plot", "cv": "qc_cv_plot",
@@ -81,6 +81,8 @@ def qc_source(plot: str):
     combined = merge_source("import math\nimport numpy as np\nimport pandas as pd\nfrom typing import Any", notebook,
                              styles, serialization, helpers, function, table_code, scientific)
     roots = ("plot_figure", "to_png_bytes", "get_plt") + (("prepare_table",) if plot in PAIRED_PLOTS else ())
+    if plot == "cv":
+        roots += ("qc_feature_cvs",)
     return extract_notebook_source(combined, roots)
 
 
@@ -91,9 +93,12 @@ def _table_source(plot: str) -> str:
     table_function = function_definition(tables, f"qc_{plot}_table")
     table_function = table_function.replace(f"qc_{plot}_table(kind: AnnotationKind", "prepare_table(data, metadata")
     table_function = table_function.replace(f"frame = {'linear' if plot == 'cv' else 'log2'}_qc_frame(kind)", "frame = data")
+    table_function = table_function.replace("_metadata_for_kind(kind, frame, _get_sample_columns(kind, frame))", "metadata.copy()")
     table_function = table_function.replace("_get_sample_columns(kind, frame)", "metadata['sample'].tolist()")
     table_function = table_function.replace("_metadata_for_kind(kind, frame, sample_columns)", "metadata.copy()")
     table_code += "\n\n" + table_function
+    if plot == "cv":
+        table_code += "\n\n" + function_definition(tables, "qc_feature_cvs")
     table_code = table_code.replace("_extract_id_or_number", "extract_sample_id")
     return table_code
 
@@ -137,7 +142,8 @@ def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, s
     settings["centered"] = bool(lineage and lineage.aggregation == "robust_site_median")
     module = _qc_module(plot)
     table_settings = {key: settings[key] for key in ("summary", "mode") if key in settings}
-    table = module.prepare_table(data, metadata, **table_settings) if plot in PAIRED_PLOTS else None
+    capture = notebook_capture_requested()
+    table = module.prepare_table(data, metadata, **table_settings) if plot in PAIRED_PLOTS and (capture or plot == "cv") else None
     conditions = (table["Condition"].astype(str).tolist() if plot == "cv" and not table.empty
                   else metadata["condition"].astype(str).drop_duplicates().tolist())
     if plot == "histogram":
@@ -156,6 +162,8 @@ def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, s
         content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"], tight=plot != "coverage")
     finally:
         module.plot_output_format.reset(format_token)
+    if not capture:
+        return content, ""
     plot_name = ({"coverage": "Coverage Summary" if settings.get("summary") else "Coverage Plot",
                   "boxplot": "Intensity Boxplot", "cv": "Coefficient of Variation",
                   "histogram": "Intensity Distribution", "correlation": "Sample Correlation",
@@ -169,6 +177,10 @@ def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, s
             "table = functions.prepare_table(data, metadata, **table_options)\n"
             "pd.testing.assert_frame_equal(table, read_resource_table(RESOURCES / 'table.parquet'), check_exact=True)\n"
             "table.to_csv('reproduced_table.csv', index=False)\ndisplay(table)")
+    if plot == "cv":
+        table_calculation += (
+            "\nfeature_cvs = functions.qc_feature_cvs(data, metadata)\n"
+            "feature_cvs.to_csv('reproduced_feature_cvs.csv', index=False)\ndisplay(feature_cvs)")
     recipe = NotebookRecipe(
         plot_name=plot_name, source=qc_source(plot),
         settings=settings, original_filename=dataset.filename,

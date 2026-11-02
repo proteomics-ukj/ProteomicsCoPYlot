@@ -244,8 +244,7 @@ Get-AuthenticodeSignature .\dist\*.exe | Format-Table Path, Status, StatusMessag
 The **Build macOS release** workflow builds standard and AI analysis applications
 for Apple Silicon (`arm64`, macOS 14 runner) and Intel (`x86_64`, macOS 15 runner).
 After merging the workflow, open **Actions > Build macOS release > Run workflow**.
-The default source commit matches the existing `v1.0.0-beta.1` Windows/Linux
-builds. For a later release, enter its full merged `main` commit SHA.
+Enter the full merged `main` commit SHA used for the Windows and Linux builds of this release.
 
 Each job checks the bundle hashes, source revision, startup, frontend, version
 and AI mode before uploading an artifact. Download all four artifacts within

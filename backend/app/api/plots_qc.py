@@ -6,7 +6,10 @@ One of the routers `routes_plots` combines; see that module for what is shared.
 """
 
 
+import io
 from typing import Any, Callable, cast
+
+import pandas as pd
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, Response
@@ -32,6 +35,7 @@ from app.services.plot_styling import (
 )
 from app.services.analysis_matrix import phosprot_values_are_centred, data_source_options, imputed_data_available
 from app.services.table_functions import (
+    qc_feature_cvs,
     qc_boxplot_table,
     qc_coverage_table,
     qc_cv_table,
@@ -40,7 +44,8 @@ from app.services.plot_images import (
     _sample_label,
     qc_pca_feature_summary,
 )
-from app.api.plot_responses import plot_errors, png_response, snapshot_table, table_rows
+from app.api.plot_responses import plot_errors, png_response, snapshot_table, table_rows, table_snapshot
+from app.services.data_tools import _get_sample_columns, linear_qc_frame, metadata_for_kind
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -337,6 +342,20 @@ def qc_cv_table_route(kind: AnnotationKind, snapshot: str = "") -> dict[str, lis
         return snapshot_table(kind, "cv", snapshot)
     with plot_errors("Failed to load CV table"):
         return table_rows(qc_cv_table(kind=kind))
+
+
+@router.get("/qc/{kind}/feature-cvs.csv", response_class=Response, responses={200: {"content": {"text/csv": {}}}})
+def qc_feature_cvs_route(kind: AnnotationKind, snapshot: str = "") -> Response:
+    recipe = table_snapshot(kind, "cv", snapshot) if snapshot else None
+    with plot_errors("Failed to export feature CVs"):
+        if recipe is None:
+            frame = linear_qc_frame(kind)
+            meta = metadata_for_kind(kind, frame, _get_sample_columns(kind, frame))
+        else:
+            frame = pd.read_parquet(io.BytesIO(recipe.resources["input.parquet"]))
+            meta = pd.read_parquet(io.BytesIO(recipe.resources["metadata.parquet"]))
+        return Response(qc_feature_cvs(frame, meta).to_csv(index=False), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="qc_{kind}_feature_cvs.csv"'})
 
 
 @router.get("/qc/{kind}/pca.png")

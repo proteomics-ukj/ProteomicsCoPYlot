@@ -26,6 +26,13 @@ from app.services.phosprot_tools import transform_phosprot
 report_recipe_sink = ContextVar('report_recipe_sink', default=None)
 
 
+def notebook_capture_requested():
+    from app.services.plot_export import notebook_capture_allowed
+    from app.services.viewer_bootstrap import viewer_mode_enabled
+
+    return report_recipe_sink.get() is not None or (notebook_capture_allowed.get() and not viewer_mode_enabled())
+
+
 def capture_notebook(session, recipe):
     """Snapshot a rendered output for export; '' when this render gets no notebook.
 
@@ -34,11 +41,9 @@ def capture_notebook(session, recipe):
     section at once, because the report is one deliberate export.
     """
     from copy import deepcopy
-    from app.services.plot_export import notebook_capture_allowed
     from app.services.runtime_cache import runtime_cache_version
-    from app.services.viewer_bootstrap import viewer_mode_enabled
     sink = report_recipe_sink.get()
-    if sink is None and (not notebook_capture_allowed.get() or viewer_mode_enabled()):
+    if not notebook_capture_requested():
         return ''
     from app.services.plot_export import note_notebook_unavailable
     try:
@@ -205,7 +210,7 @@ def bind_original_preprocessing(recipe):
     from app.services.dataset_store import get_current_dataset
     from app.services.phospho_localization import get_localization_cutoff
 
-    if recipe.uses_imputed_input or recipe.provenance.get('inputReplay') == 'original-file':
+    if recipe.uses_imputed_input or recipe.provenance.get('inputReplay') in {'original-file', 'submitted-gene-list'}:
         return lambda: recipe
     kind = recipe.provenance.get('kind')
     if kind in {'peptide', 'precursor'}:

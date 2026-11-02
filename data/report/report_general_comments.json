@@ -33,7 +33,7 @@
     "In a healthy experiment, the distributions of protein quantitative mean values of all groups are similar, depicted by the same shape of the distribution curves."
   ],
   "BoxplotIntProt": [
-    "Protein intensity distributions - Depicted are the measured log2-raw protein intensities in a boxplot of each sample.",
+    "Protein intensity distributions - Depicted are the log2 protein intensities of each sample in a boxplot, after the normalization stated above (none, if none was applied) and before imputation.",
     "Missing values are not considered when creating the boxplots. Zero intensity values are considered as missing values.",
     "For a healthy experiment, we expect similar log2-intensity distributions in all samples and all conditions.",
     "Significant deviations indicate unequal peptide loading during LC-MS/MS or unequal protein amounts in the starting material. Also, major contaminants in the samples can influence accurate peptide concentration measurements and, therefore, the number of protein identifications and protein quantitative values in a given sample."
@@ -78,7 +78,7 @@
     "In a healthy experiment, the distributions of phosphosite quantitative mean values across all groups are expected to be similar, depicted by comparable shapes of the distribution curves."
   ],
   "BoxplotIntPhos": [
-    "Phosphosite intensity distributions - Depicted are the measured log2-raw phosphosite intensities in a boxplot of each sample.",
+    "Phosphosite intensity distributions - Depicted are the log2 phosphosite intensities of each sample in a boxplot, after the normalization stated above (none, if none was applied) and before imputation.",
     "Missing values are not considered when creating the boxplots. Zero intensity values are treated as missing values.",
     "For a healthy experiment, we expect similar log2-intensity distributions of phosphosites across all samples and experimental conditions.",
     "Significant deviations may indicate unequal peptide loading during LC-MS/MS, variability in phosphopeptide enrichment efficiency, or unequal protein amounts in the starting material. In addition, major contaminants or technical issues can influence accurate phosphosite quantification and the number of confidently localized phosphosites in a given sample."

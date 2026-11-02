@@ -734,10 +734,12 @@ export function VolcanoPanel({
             notebook={capturedTable ? { url: capturedTable.url, token: capturedTable.token } : null}
             filename={volcanoExportFilename(sourceMode, kind, condition1, condition2)}
           />
-          {result.untestedRows && result.untestedRows.length > 0 ? (
+          {displayedResult.untestedRows && displayedResult.untestedRows.length > 0 ? (
             <TableSection
               title="Rows not tested"
-              rows={result.untestedRows}
+              rows={displayedResult.untestedRows}
+              plotUrl={plotUrl}
+              notebook={capturedTable ? { url: capturedTable.url, token: capturedTable.token } : null}
               filename={volcanoExportFilename(sourceMode, kind, condition1, condition2).replace(/\.csv$/, "_not_tested.csv")}
             />
           ) : null}

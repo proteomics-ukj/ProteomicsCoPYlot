@@ -464,7 +464,10 @@ def phospho_sty_table() -> pd.DataFrame:
         raise ValueError("Phospho dataset must contain PTM_Collapse_key for STY plot.")
 
     keys = frame["PTM_Collapse_key"].astype(str)
-    letters = keys.str.extract(r"~[^_]+_([STY])\d+_")[0]
+    # The site parser's rule: the residue is the letter before the position in
+    # the last "_<residue><position>_M<n>" block, so a gene name that itself
+    # contains "_T1" (restored into the key) cannot be read as the residue.
+    letters = keys.str.extract(r"_([STY])\d+_M\d+$")[0]
     letters = letters.fillna(keys.str.extract(r"(?:^|_)([STY])\d+(?:_|$)")[0])
 
     counts = letters.value_counts().reindex(["S", "T", "Y"], fill_value=0)

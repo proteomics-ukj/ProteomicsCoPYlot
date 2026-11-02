@@ -1,11 +1,11 @@
-"""One splitting rule for gene and protein-group cells in the app, the pip package and R (2026-10-22).
+"""One rule for gene and protein-group cells in the app, the pip package and R.
 
-The three gene splitters used to carry their own `;` loop next to the shared
-`split_tokens` (used for accessions). They delegate to it now. This test pins
-two things: for every `;`-separated input the result is exactly what the former
-loops returned (the legacy rule is reproduced here verbatim), and the two
-differences are the same in all three: a `,` also separates members, and a
-cell that is just the text "nan" (a stringified missing value) is empty.
+Cells are cut by the shared `split_tokens` (`;` or `,`, blanks dropped, a cell
+that is just the text "nan" is empty) and the leading member is kept: one
+quantified feature is one draw from the ORA urn (2026-11-02; until then every
+member of a group counted, which inflated paralog families). This test pins the
+rule and that all three implementations agree on it; `legacy_tokens` is the
+all-members loop kept here only to show what changed.
 """
 from __future__ import annotations
 
@@ -57,18 +57,19 @@ def r_tokens(values, tmp_path) -> list[str]:
     return [str(x) for x in json.loads(result.stdout)]
 
 
-def test_semicolon_inputs_split_exactly_as_before_in_app_and_pip() -> None:
-    expected = legacy_tokens(LEGACY_INPUTS)
-    assert expected == ["1.5", "12345", "A", "AKT1", "B", "C", "GENE_1", "GENE_2", "MTOR", "P12345-2", "Q9Y6K9", "a", "b", "c"]
+def test_semicolon_inputs_keep_the_leading_member_in_app_and_pip() -> None:
+    assert legacy_tokens(LEGACY_INPUTS) == ["1.5", "12345", "A", "AKT1", "B", "C", "GENE_1", "GENE_2", "MTOR", "P12345-2", "Q9Y6K9", "a", "b", "c"]
+    expected = ["1.5", "12345", "A", "AKT1", "GENE_1", "MTOR", "P12345-2", "b"]
     assert stats_tools._genes_from_values(LEGACY_INPUTS) == expected
     assert nb._different_gene_tokens(LEGACY_INPUTS) == expected
     assert nb._different_gene_tokens(pd.Series(LEGACY_INPUTS, dtype=object)) == expected
+    # the cell splitter itself still exposes every member (accession matching uses it)
     for value in LEGACY_INPUTS:
         assert sorted(set(stats_tools._gene_tokens(value))) == legacy_tokens([value])
 
 
-def test_a_comma_now_separates_members_the_same_way_in_app_and_pip() -> None:
-    expected = ["A", "AKT1", "B", "C", "MTOR", "X", "Y", "Z"]
+def test_a_comma_separates_members_the_same_way_in_app_and_pip() -> None:
+    expected = ["A", "AKT1", "X"]
     assert stats_tools._genes_from_values(COMMA_INPUTS) == expected
     assert nb._different_gene_tokens(COMMA_INPUTS) == expected
     assert legacy_tokens(COMMA_INPUTS) != expected, "this is an intended change"
@@ -77,8 +78,9 @@ def test_a_comma_now_separates_members_the_same_way_in_app_and_pip() -> None:
 def test_a_cell_that_is_just_nan_text_is_empty_in_app_and_pip() -> None:
     assert legacy_tokens(["nan"]) == ["nan"], "the former loops kept it"
     assert stats_tools._genes_from_values(["nan"]) == nb._different_gene_tokens(["nan"]) == []
-    # inside a group the text stays a member, as `split_tokens` has always done for accessions
-    assert stats_tools._genes_from_values(["A;nan"]) == nb._different_gene_tokens(["A;nan"]) == ["A", "nan"]
+    # inside a group the text stays a member for `split_tokens`; the leading member is "A"
+    assert stats_tools._genes_from_values(["A;nan"]) == nb._different_gene_tokens(["A;nan"]) == ["A"]
+    assert stats_tools._genes_from_values(["nan;A"]) == nb._different_gene_tokens(["nan;A"]) == ["nan"]
 
 
 @pytest.mark.requires_r("jsonlite")
@@ -89,4 +91,4 @@ def test_r_splits_the_same_cells(tmp_path) -> None:
     assert sorted(r_tokens(strings, tmp_path)) == nb._different_gene_tokens(strings)
     commas = [v for v in COMMA_INPUTS if isinstance(v, str) or v is None]
     assert sorted(r_tokens(commas, tmp_path)) == nb._different_gene_tokens(commas)
-    assert r_tokens(["nan"], tmp_path) == [] and r_tokens(["A;nan"], tmp_path) == ["A", "nan"]
+    assert r_tokens(["nan"], tmp_path) == [] and r_tokens(["A;nan"], tmp_path) == ["A"]

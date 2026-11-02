@@ -5,6 +5,8 @@ from collections import OrderedDict
 from concurrent.futures import Future
 from copy import deepcopy
 from dataclasses import dataclass, replace
+import base64
+import hashlib
 import json
 import secrets
 from threading import RLock, get_ident
@@ -94,6 +96,7 @@ class NotebookSnapshots:
         self.max_total_bytes = max_total_bytes
         self.per_session = per_session
         self.ttl = ttl
+        self._scope_key = secrets.token_bytes(32)
         self.clock = clock
         self._lock = RLock()
         self._entries: OrderedDict[str, _Snapshot] = OrderedDict()
@@ -112,10 +115,20 @@ class NotebookSnapshots:
             size = recipe_size(recipe.recipe if isinstance(recipe, PendingRecipe) else recipe)
         retained = tuple((id(frame), int(frame.memory_usage(index=True, deep=True).sum()))
                          for frame in getattr(getattr(recipe, 'finish', None), 'frames', ()))
+        from app.services.runtime_cache import runtime_cache_version
+        scope = hashlib.blake2b(key=self._scope_key, digest_size=8)
+        scope.update(json.dumps([session, runtime_cache_version()]).encode())
+        inputs = recipe.recipe if isinstance(recipe, PendingRecipe) else recipe
+        scope.update(json.dumps([inputs.original_filename, inputs.settings, inputs.provenance], sort_keys=True).encode())
+        for name, value in sorted(inputs.resources.items()):
+            if name.endswith(".parquet"):
+                scope.update(name.encode() + b"\0" + len(value).to_bytes(8, "big"))
+                scope.update(value)
+        prefix = base64.urlsafe_b64encode(scope.digest()).decode()[:10]
         snapshot = _Snapshot(session, deepcopy(recipe), size, self.clock() + self.ttl, retained)
         with self._lock:
             self._expire()
-            token = secrets.token_urlsafe(24)
+            token = prefix + secrets.token_urlsafe(16)
             self._admit(token, snapshot)
             return token
 

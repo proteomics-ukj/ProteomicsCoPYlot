@@ -3,6 +3,16 @@
 # notebook_functions.R into the global environment first, so its functions,
 # `repo_root`, `functions_path` and `example_path` are visible here.
 
+test_that("endpoint offsets, explicit genes and site counts match the app", {
+  values <- data.frame(a = c(20, 20.001, 19, 21), b = c(10, 20, 9, 21))
+  expect_equal(quantile_normalize(values, 1:2)$a, c(15, 20.0005, 14, 20.9995))
+  expect_equal(.explicit_gene_tokens(c("TP53;BRCA1,TP53\nEGFR", NA)), c("BRCA1", "EGFR", "TP53"))
+  expect_equal(.explicit_gene_tokens(c("mERBB4/iso:JM-A CYT-2", "A;B")), c("A", "B", "mERBB4/iso:JM-A CYT-2"))
+  expect_equal(.different_gene_tokens("B;A,A"), "B")
+  keys <- c("P~GENE_T1_S2_M1", "S3", "Y4", NA)
+  expect_equal(phospho_sty_table(data.frame(PTM_Collapse_key = keys))$Count, c(2, 0, 1, 1))
+})
+
 test_that("the package sources from its own folder and exposes the documented API", {
   expect_no_error({
     stopifnot(identical(
@@ -21,6 +31,22 @@ test_that("the package sources from its own folder and exposes the documented AP
     stopifnot(identical(bool_to_str(TRUE), "TRUE"))
     stopifnot(identical(bool_to_str(FALSE), "FALSE"))
   })
+})
+
+test_that("GUI QC tables retain feature identities, condition order and missing values", {
+  linear <- data.frame(ProteinNames = c("P", "P", "Q"), a = c(1, 0, 0),
+                       b = c(5, 7, 0), c = c(3, 2, 0))
+  meta <- data.frame(sample = c("a", "b", "c"), condition = c("A", "B", "A"))
+  features <- qc_feature_cvs(linear, meta)
+  expect_identical(names(features), c("ProteinNames", "A CV (%)", "B CV (%)"))
+  expect_equal(features[[2]], c(100 * sqrt(2) / 2, NA, NA))
+  expect_true(all(is.na(features[[3]])))
+  expect_equal(qc_cv_table(linear, meta)$median, 70.71)
+  log2_data <- linear
+  log2_data[meta$sample] <- lapply(linear[meta$sample], function(x) ifelse(x > 0, log2(x), NA_real_))
+  expect_equal(qc_coverage_table(log2_data, meta)$Number, c(1, 2, 2, 2, 1))
+  expect_equal(qc_coverage_table(log2_data, meta, summary = TRUE)$mean, c(1.5, 2))
+  expect_equal(qc_boxplot_table(log2_data, meta, mode = "Single")$Sample, c("A_1", "B_1", "A_2"))
 })
 
 test_that("CV refuses log2 input and asks for linear intensities", {
@@ -225,9 +251,9 @@ test_that("phosphoprotein genes, ANOVA and regulation summaries", {
       uncorrected = TRUE
     )
     stopifnot(
-      identical(phosprot_genes$Upregulated, c("B", "C")),
-      identical(phosprot_genes$Downregulated, c("A", "B")),
-      identical(phosprot_genes$Background, c("A", "B", "C", "D", "E"))
+      identical(phosprot_genes$Upregulated, "B"),
+      identical(phosprot_genes$Downregulated, "A"),
+      identical(phosprot_genes$Background, c("A", "B", "D"))
     )
     fallback_data <- phosprot_data
     fallback_data$Gene_group <- NULL
@@ -243,9 +269,9 @@ test_that("phosphoprotein genes, ANOVA and regulation summaries", {
       uncorrected = TRUE
     )
     stopifnot(
-      identical(fallback_genes$Upregulated, c("B", "C")),
-      identical(fallback_genes$Downregulated, c("A", "B")),
-      identical(fallback_genes$Background, c("A", "B", "C", "D", "E"))
+      identical(fallback_genes$Upregulated, "B"),
+      identical(fallback_genes$Downregulated, "A"),
+      identical(fallback_genes$Background, c("A", "B", "D"))
     )
     phosprot_data$Phosphoprotein <- c("P1", "P2", "P3", "P4")
     phosprot_anova <- anova_data_f(
@@ -258,7 +284,7 @@ test_that("phosphoprotein genes, ANOVA and regulation summaries", {
       "Gene_group" %in% names(phosprot_anova),
       identical(
         .different_gene_tokens(phosprot_anova$Gene_group),
-        c("A", "B", "C", "D", "E")
+        c("A", "B", "D")
       )
     )
     regulation_meta <- data.frame(

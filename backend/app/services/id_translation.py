@@ -235,24 +235,25 @@ def _translated_values(cells: list[object], index: dict[str, list[str]]) -> tupl
     return values, translated_count
 
 
-def translated_dataframe(payload: IdTranslationRequest) -> tuple[pd.DataFrame, str, str, str, list[str]]:
-    if payload.outputDb not in DB_TO_COL:
-        raise ValueError(f"Unsupported output database: {payload.outputDb}")
+def _validate_translation(frame, column, output_db, kind):
+    if output_db not in DB_TO_COL:
+        raise ValueError(f"Unsupported output database: {output_db}")
 
-    frame, filename = _get_current_frame(payload.kind)
-    if payload.column not in frame.columns:
-        raise ValueError(f"Column '{payload.column}' was not found in the {payload.kind} dataset.")
+    if column not in frame.columns:
+        raise ValueError(f"Column '{column}' was not found in the {kind} dataset.")
 
-    db_df = load_db()
-    requested_input = payload.inputDb
+
+
+def _translate_ids(frame, db_df, column, output_db, input_db, auto_detect):
+    requested_input = input_db
     if requested_input is not None and requested_input not in DB_TO_COL:
         raise ValueError(f"Unsupported input database: {requested_input}")
 
     effective_input = requested_input
     warnings: list[str] = []
-    if payload.autoDetectInput or not effective_input:
+    if auto_detect or not effective_input:
         sample_values = (
-            frame[payload.column]
+            frame[column]
             .dropna()
             .astype(str)
             .map(str.strip)
@@ -274,10 +275,10 @@ def translated_dataframe(payload: IdTranslationRequest) -> tuple[pd.DataFrame, s
     if effective_input is None:
         raise ValueError("An input database is required.")
 
-    index = build_index(db_df, effective_input, payload.outputDb)
-    output_column = OUT_LABEL_TO_COLNAME.get(payload.outputDb, payload.outputDb.replace(" ", "") + "Names")
+    index = build_index(db_df, effective_input, output_db)
+    output_column = OUT_LABEL_TO_COLNAME.get(output_db, output_db.replace(" ", "") + "Names")
 
-    source_cells = frame[payload.column].tolist()
+    source_cells = frame[column].tolist()
     translated_values, _ = _translated_values(source_cells, index)
 
     translated = frame.copy()
@@ -291,7 +292,22 @@ def translated_dataframe(payload: IdTranslationRequest) -> tuple[pd.DataFrame, s
             warnings.append(
                 "Added GeneNames column (HGNC Symbol) so downstream gene-name based analyses can run."
             )
-    return translated, filename, effective_input, output_column, warnings
+    return translated, effective_input, output_column, warnings
+
+
+def translate_id_table(frame, db_df, column, output_db, input_db=None, auto_detect=True):
+    _validate_translation(frame, column, output_db, "input")
+    translated, _, _, _ = _translate_ids(frame, db_df, column, output_db, input_db, auto_detect)
+    return translated
+
+
+def translated_dataframe(payload: IdTranslationRequest) -> tuple[pd.DataFrame, str, str, str, list[str]]:
+    frame, filename = _get_current_frame(payload.kind)
+    _validate_translation(frame, payload.column, payload.outputDb, payload.kind)
+    translated, input_db, output_column, warnings = _translate_ids(
+        frame, load_db(), payload.column, payload.outputDb, payload.inputDb, payload.autoDetectInput
+    )
+    return translated, filename, input_db, output_column, warnings
 
 
 def _download_details(original_filename: str) -> tuple[str, str]:

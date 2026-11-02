@@ -1,5 +1,6 @@
 
 import { oraListExportRows } from "../stats/oraExport";
+import NotebookDownload from "../../components/NotebookDownload";
 import { collectColumns, csvDataUrl, rowsToQuotedCsv } from "../../lib/tableData";
 import { linkedConditionsParam } from "./linkedConditions";
 import { resizeHandleClass, useResizablePanel } from "../../lib/useResizablePanel";
@@ -1442,6 +1443,8 @@ function OraListTile({
     const controller = new AbortController();
     pendingRequest.current = controller;
     const request: ListEnrichmentRequest = {
+      inputSource: sourceMode,
+      namedList: sourceMode === "list" ? selectedListName : "",
       genes,
       backgroundMode,
       backgroundGenes: backgroundMode === "experiment" ? parsedBackground : [],
@@ -1628,6 +1631,8 @@ function OraListTile({
                 Download Terms CSV
               </a>
             ) : null}
+            {result.notebookToken && <NotebookDownload outputLabel="table" plotUrl={result.notebookToken}
+              rendered={{ url: result.notebookToken, token: result.notebookToken }} />}
             <a
               href={textDataUrl(result.genes)}
               download="ora_query_genes.txt"

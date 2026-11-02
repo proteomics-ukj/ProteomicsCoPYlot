@@ -28,6 +28,35 @@ def database(monkeypatch):
     return frame
 
 
+@pytest.mark.parametrize("min_term_size", [1, 20])
+def test_canvas_gene_list_download_replays_the_gui_table(database, monkeypatch, tmp_path, min_term_size):
+    from app.api.routes_stats import ora_list_route
+    from app.schemas.stats import ListEnrichmentRequest
+    from app.services.notebook_snapshots import snapshots
+    from app.services.session_context import get_session_id
+
+    monkeypatch.setattr(stats_tools, "_go_database_sha256", lambda organism: "test-database")
+    # List items are atomic apart from `;`/`,` (whitespace splits raw pasted text only).
+    payload = ListEnrichmentRequest(genes=["A;B"], backgroundGenes=["A,B", "C;D", "E"],
+                                    inputSource="list", namedList="Candidates", minTermSize=min_term_size, adjPValueCutoff=1)
+    result = ora_list_route(payload)
+    recipe = snapshots.get(get_session_id(), result.notebookToken)
+    _, blob = build_notebook_archive(recipe)
+    with ZipFile(io.BytesIO(blob)) as archive:
+        archive.extractall(tmp_path)
+    notebook = json.loads(next(tmp_path.glob("*.ipynb")).read_text())
+    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    subprocess.run([sys.executable, "-I", "-c", "import sys;sys.path.insert(0,'.')\n" + cells],
+                   cwd=tmp_path, check=True, timeout=90)
+    exported = pd.read_csv(tmp_path / "ora_terms.csv")
+    assert bool(result.terms) == (min_term_size == 1)
+    assert exported["namedList"].unique().tolist() == (["Candidates"] if result.terms else [])
+    assert (tmp_path / "ora_query_genes.txt").read_text().splitlines() == result.genes == ["A", "B"]
+    assert (tmp_path / "ora_background_genes.txt").read_text().splitlines() == result.backgroundGenes == list("ABCDE")
+    assert exported["termId"].tolist() == [term.termId for term in result.terms]
+    assert exported["intersectingGenes"].tolist() == [",".join(term.intersectingGenes) for term in result.terms]
+
+
 @pytest.mark.parametrize('pvalues', [[1.0], [1.0, 1.0], [0.99, 0.99], [0.01, 0.01], [0.01, 0.5]])
 def test_ora_colorbar_has_nonnegative_nondegenerate_range(monkeypatch, pvalues):
     terms = [EnrichmentTerm(source='BP', termId=f'GO:{i}', name=f'Term {i}',
@@ -190,6 +219,13 @@ def test_captured_ora_reruns_upstream_statistics(inputs, analysis_database, tmp_
         cwd=tmp_path, capture_output=True, text=True, timeout=90)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
+
+
+    exported = pd.read_csv(tmp_path / f'reproduced_{direction}_terms.csv')
+    expected_terms = json.loads(recipe.resources['result.json'])[f'{direction}Terms']
+    assert exported['ontology'].tolist() == [term['source'] for term in expected_terms]
+    assert exported['intersectingGenes'].tolist() == [','.join(term['intersectingGenes']) for term in expected_terms]
+    assert 'source' not in exported
 
 
 def test_ora_snapshot_routes_are_frozen_and_owner_scoped(inputs, analysis_database, monkeypatch):

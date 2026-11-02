@@ -119,9 +119,7 @@ def csv_values(raw: str) -> list[str]:
     return parse_selection_list(raw)
 
 
-def snapshot_table(kind: str, plot: str, snapshot: str, **settings):
-    import io
-    import pandas as pd
+def table_snapshot(kind: str, plot: str, snapshot: str, **settings):
     from app.services.notebook_snapshots import snapshots
     from app.services.session_context import get_session_id
 
@@ -132,6 +130,14 @@ def snapshot_table(kind: str, plot: str, snapshot: str, **settings):
     if (recipe.provenance.get("kind") != kind or recipe.provenance.get("plot") != plot
             or any(recipe.settings.get(key) != value for key, value in settings.items())):
         raise HTTPException(status_code=409, detail="The table settings do not match the rendered plot.")
+    return recipe
+
+
+def snapshot_table(kind: str, plot: str, snapshot: str, **settings):
+    import io
+    import pandas as pd
+
+    recipe = table_snapshot(kind, plot, snapshot, **settings)
     if 'table.json' in recipe.resources:
         import json
         return {'rows': json.loads(recipe.resources['table.json'])}

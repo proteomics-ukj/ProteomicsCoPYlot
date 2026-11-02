@@ -1,4 +1,5 @@
 import SummaryCard from "../../components/SummaryCard";
+import NotebookDownload from "../../components/NotebookDownload";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildPlotUrl, downloadImputationCsv, getCurrentAnnotation, isAbortError, runImputation } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
@@ -480,6 +481,10 @@ export default function ImputationPage() {
                 >
                   {downloadingCsv ? "Downloading..." : "Download Full Imputed CSV"}
                 </button>
+                {applied && <NotebookDownload outputLabel="table" rendered={null} prepareOnClick
+                  plotUrl={buildPlotUrl(`/api/plots/imputation/${kind}/applied-notebook`, {
+                    normalization: afterNormalization, showImputationDraw,
+                  })} />}
               </div>
             </div>
             <div className="mt-4">

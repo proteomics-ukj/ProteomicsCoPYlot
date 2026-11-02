@@ -7,7 +7,7 @@ import sys
 from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
 from app.services.notebook_interactive import abundance_source
 from app.services.notebook_qc import qc_source
 from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
@@ -414,6 +414,8 @@ def render_coverage(**options):
         content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"])
     finally:
         module.plot_output_format.reset(format_token)
+    if not notebook_capture_requested():
+        return content, ""
     table, total, _ = module.summarize_peptide_coverage(data, metadata)
     recipe = NotebookRecipe(
         plot_name=f"{settings['level'].capitalize()} Coverage", source=coverage_source(), settings=settings,

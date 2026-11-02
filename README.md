@@ -174,10 +174,12 @@ Load the bundled HEK293 example with `load_example_data("protein")` (also `"phos
 `"phosphoprotein"`, `"protein_metadata"` and `"phospho_metadata"`); the R functions provide
 the same `load_example_data()`.
 
+**View the HEK293 example with plots and tables** · [Python notebook](examples/rendered/python.ipynb) · [R notebook](examples/rendered/r.ipynb)
+
 Install the optional R packages the R functions use:
 
 ```r
-install.packages(c("arrow", "hexbin", "plotly", "readxl", "scatterplot3d", "VennDiagram"))
+install.packages(c("arrow", "hexbin", "plotly", "readxl", "reticulate", "scatterplot3d", "VennDiagram"))
 # VSN normalization and the moderated t-tests (optional) come from Bioconductor:
 install.packages("BiocManager"); BiocManager::install(c("vsn", "limma"))
 ```
@@ -192,10 +194,7 @@ python -m jupyterlab example.ipynb
 
 Select your CoPYlot Python environment and run all cells for the bundled experiment. The settings cell also supports your own tables, input scales, comparison groups and an optional results folder.
 
-Examples:
-
-- `examples/example.ipynb`
-- `examples/example.R`
+Run the [R example script](examples/example.R) from the checkout. For the shared table functions, set `RETICULATE_PYTHON` to the Python executable in your CoPYlot environment before starting R.
 
 The Python package, the R functions (`notebook_functions.R`, loaded with `source()`; it
 is a script, not an installable R package) and the app support the same core analysis

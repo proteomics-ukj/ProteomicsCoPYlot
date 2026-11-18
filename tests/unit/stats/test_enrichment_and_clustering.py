@@ -4,7 +4,6 @@ Moved out of test_api_smoke.py (2026-10-02)."""
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -19,7 +18,6 @@ from app.schemas.stats import (
 from app.services import stats_tools
 
 
-ROOT = Path(__file__).resolve().parents[3]
 
 
 

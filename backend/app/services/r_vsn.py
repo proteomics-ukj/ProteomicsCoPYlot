@@ -32,7 +32,7 @@ from app.services.r_runtime import detect_r_runtime
 # vsn expects linear intensities and returns values on a glog2 scale that
 # approaches log2 for large values, so it replaces the log2 step rather than
 # following it. The caller hands us log2 values, so we invert first.
-_PROBE_SCRIPT = 'cat(requireNamespace("vsn", quietly=TRUE))'
+_VSN_PROBE_SCRIPT = 'cat(requireNamespace("vsn", quietly=TRUE))'
 
 # Raw little-endian float64 rather than CSV. VSN's fit is unstable enough on real
 # data that a 1-ULP difference in the input moves the output by ~0.5 log2 units,
@@ -95,7 +95,7 @@ def vsn_availability() -> dict[str, object]:
         }
     try:
         completed = subprocess.run(
-            [str(executable), "-e", _PROBE_SCRIPT],
+            [str(executable), "-e", _VSN_PROBE_SCRIPT],
             capture_output=True,
             check=False,
             text=True,

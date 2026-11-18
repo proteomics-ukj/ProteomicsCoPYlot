@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from pathlib import Path
 
 import warnings
 
@@ -10,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 SAMPLES = [f"s{i}" for i in range(6)]
 OFFSETS = np.array([0.0, 1.2, -0.9, 0.6, -1.5, 0.3])
@@ -366,7 +365,7 @@ def test_notebook_exact_run_matching(notebook, monkeypatch, plot_name, reverse):
 
 
 @pytest.mark.parametrize('level,quantity,expected', [('peptide', 'Precursor.Quantity', 1),
-    ('precursor', 'Precursor.Quantity', 2), ('peptide', 'LFQ intensity', 1), ('precursor', 'LFQ intensity', 1)])
+    ('precursor', 'Precursor.Quantity', 2)])
 def test_notebook_selected_quantity_and_level(notebook, monkeypatch, level, quantity, expected):
     import matplotlib.pyplot as plt
     frame = pd.DataFrame({'File.Name': ['ctrl_01.raw'] * 3 + ['treat_01.raw'] * 3,
@@ -381,8 +380,10 @@ def test_notebook_selected_quantity_and_level(notebook, monkeypatch, level, quan
             assert [bar.get_height() for bar in fig.axes[0].patches] == [expected]
         finally:
             plt.close(fig)
-    with pytest.raises(KeyError):
-        missing('unused', meta, quantity_column='removed')
+    with pytest.raises(ValueError, match='Precursor.Quantity'):
+        missing('unused', meta, quantity_column='PG.Quantity')
+    with pytest.raises(ValueError, match='Precursor.Quantity'):
+        notebook.coverage_plot_pep(frame, meta, quantity_column='PG.Quantity', level=level)
 
 
 @pytest.mark.requires_r()
@@ -509,13 +510,14 @@ def test_r_notebook_sparse_and_pathway_edges():
         Stripped.Sequence=rep(c("AAA","AAA","BBB"),2), Precursor.Id=rep(c("AAA2","AAA3","BBB2"),2),
         Precursor.Quantity=c(1,1,0,1,1,1), check.names=FALSE)
       collision[["LFQ intensity"]] <- c(0,0,1,1,1,1)
-      for (level in c("peptide","precursor")) for (quantity in c("Precursor.Quantity","LFQ intensity")) {
+      for (level in c("peptide","precursor")) {
+        quantity <- "Precursor.Quantity"
         expected_height <- if (level=="precursor" && quantity=="Precursor.Quantity") 2 else 1
         coverage_plot_pep(collision, selection, legend=FALSE, level=level, quantity_column=quantity)
         missing <- if (level=="precursor") missing_value_plot_prec else missing_value_plot_pep
         missing("unused", selection, quantity_column=quantity)
       }
-      stopifnot(inherits(try(missing_value_plot_pep("unused",selection,quantity_column="removed"),silent=TRUE),"try-error"))
+      stopifnot(inherits(try(missing_value_plot_pep("unused",selection,quantity_column="PG.Quantity"),silent=TRUE),"try-error"))
       untrace("barplot.default", where=asNamespace("graphics"))
       read_data <- original_read
       db <- data.frame(description="path", genes="A;B")

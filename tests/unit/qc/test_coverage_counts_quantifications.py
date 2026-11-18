@@ -14,13 +14,11 @@ with the missing-value plot, which already excludes never-quantified features.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services.annotation_store import get_annotation
 from app.services.table_functions import prepare_coverage_df

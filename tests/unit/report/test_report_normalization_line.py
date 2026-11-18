@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import html as html_module
 import re
-from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 import app.services.report_function as report
 

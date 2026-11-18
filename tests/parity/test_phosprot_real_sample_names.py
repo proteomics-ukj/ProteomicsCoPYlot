@@ -11,7 +11,6 @@ packages and every aggregation mode.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -19,14 +18,13 @@ import pytest
 
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 EXAMPLE = ROOT / "proteomicscopylot" / "example_data"
 SITES = EXAMPLE / "20260511_144129_20240822_JM_HEK293_PP_Report_collapsed.tsv"
 META = EXAMPLE / "phospho_metadata_full.csv"
 MODES = ("robust_site_median", "mean", "sum_ignore_na", "sum_propagate_na")
 
 
-from _r_runtime import RSCRIPT
 
 
 def test_example_sample_names_are_the_kind_that_broke():
@@ -35,7 +33,7 @@ def test_example_sample_names_are_the_kind_that_broke():
 
 
 @pytest.mark.requires_r()
-def test_r_collapse_keeps_real_sample_names_and_matches_python(tmp_path):
+def test_r_collapse_keeps_real_sample_names_and_matches_python(tmp_path, rscript):
     sites = pd.read_csv(SITES, sep="\t")
     meta = pd.read_csv(META)
     samples = meta["sample"].astype(str).tolist()
@@ -55,7 +53,7 @@ def test_r_collapse_keeps_real_sample_names_and_matches_python(tmp_path):
         write.table(out, file.path(args[1], paste0("r_", mode, ".tsv")), sep = "\t", row.names = FALSE, quote = TRUE)
       }
     '''
-    run = subprocess.run([RSCRIPT, "-e", script, str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=600)
+    run = subprocess.run([rscript, "-e", script, str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stdout + run.stderr
     for mode in MODES:
         python = notebook.transform_phosprot(log2, meta, mode=mode, data_scale="log2", coverage_data=log2)

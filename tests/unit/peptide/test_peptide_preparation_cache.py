@@ -113,3 +113,44 @@ def test_external_rewrite_and_output_formats_do_not_reuse_old_results(source):
     assert _cached_image('format-test', {}, 'png', revision, lambda: b'png') == b'png'
     assert _cached_image('format-test', {}, 'svg', revision, lambda: b'svg') == b'svg'
     assert _cached_image('format-test', {}, 'png', revision + 1, lambda: b'changed') == b'changed'
+
+@pytest.mark.parametrize("extension", ["tsv", "csv", "parquet", "xlsx"])
+def test_projected_detection_reader_matches_full_import(tmp_path, extension):
+    raw = pd.DataFrame({"R.FileName": ["r1", "r2"], "FG.Charge": [2, 3],
+                        "FG.LabeledSequence": ["_AA_", "_AA_"], "PEP.StrippedSequence": ["AA", "AA"],
+                        "FG.Quantity": [0., 1.], "PG.Quantity": [100., 100.]})
+    path = tmp_path / ("report." + extension)
+    if extension == "xlsx":
+        raw.to_excel(path, index=False)
+    elif extension == "parquet":
+        raw.to_parquet(path, index=False)
+    else:
+        raw.to_csv(path, sep="\t" if extension == "tsv" else ",", index=False)
+    save_peptide_path(str(path))
+    full = peptides.get_peptide_frame()
+    narrow = peptides.get_peptide_frame(detection_only=True)
+    assert "PG.Quantity" not in narrow
+    pd.testing.assert_frame_equal(narrow, full[narrow.columns])
+    from app.services.notebook_preprocessing import read_original_table
+    replay = read_original_table(path, peptides._detection_column)
+    pd.testing.assert_frame_equal(replay, narrow)
+    assert narrow["Precursor.Id"].tolist() == ["_AA_/2", "_AA_/3"]
+
+
+def test_coverage_and_missingness_share_matrix_per_level(source, monkeypatch):
+    from app.services import completeness_tools, plot_images
+    frame = pd.read_csv(source)
+    frame["Precursor.Id"] = ["ACK/2", "PEPTIDE/3"]
+    frame.to_csv(source, index=False)
+    original = pd.DataFrame.pivot_table
+    calls = []
+    def pivot(data, *args, **kwargs):
+        calls.append(kwargs["index"])
+        return original(data, *args, **kwargs)
+    monkeypatch.setattr(pd.DataFrame, "pivot_table", pivot)
+    for level in ("peptide", "precursor"):
+        coverage, _ = plot_images._peptide_coverage_data(level=level)
+        missing = completeness_tools.completeness_peptide_matrix(level)
+        np.testing.assert_equal(coverage.to_numpy(), missing.to_numpy())
+        plot_images._peptide_coverage_data(include_id=True, level=level)
+    assert calls == ["Stripped.Sequence", "Precursor.Id"]

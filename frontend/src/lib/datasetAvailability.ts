@@ -60,7 +60,7 @@ export const initializeBrowserSession = onceAsync(async () => {
   if (BROWSER_SESSION_RESET_ENABLED && !skip) await resetBrowserSessionState();
 });
 
-export type AnnotationKindOption = {
+type AnnotationKindOption = {
   value: AnnotationKind;
   label: string;
 };

@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import json
 from contextlib import contextmanager
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -12,7 +11,7 @@ import pytest
 from app.services import annotation_store, dataset_store, viewer_bootstrap, viewer_portal
 from app.services.session_context import reset_session_id, set_session_id
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 CONFIG = ROOT / "tests" / "fixtures" / "viewer_config.json"
 
 

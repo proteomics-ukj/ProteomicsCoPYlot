@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 R_SCRIPT = ROOT / "tests" / "parity" / "r" / "cross_implementation.R"
 
 CONDITIONS = ("Ctrl", "Treat", "Third", "Fourth")
@@ -68,7 +68,7 @@ def test_notebook_degenerate_families_match_backend_and_r(tmp_path, family, monk
     else:
         assert anova.empty
     pd.testing.assert_frame_equal(data, before)
-    require_r()
+    rscript = require_r()
     data.to_csv(tmp_path / "data.csv", index=False)
     meta.to_csv(tmp_path / "meta.csv", index=False)
     script = '''
@@ -81,7 +81,7 @@ def test_notebook_degenerate_families_match_backend_and_r(tmp_path, family, monk
       write.csv(result,file.path(args[1],"simulation.csv"),row.names=FALSE)
       write.csv(anova_data_f(d,m),file.path(args[1],"anova.csv"),row.names=FALSE)
     '''
-    run = subprocess.run([RSCRIPT, "-e", script, str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=120)
+    run = subprocess.run([rscript, "-e", script, str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stdout + run.stderr
     r = pd.read_csv(tmp_path / "simulation.csv").set_index("ProteinNames")
     np.testing.assert_allclose(actual[["pval", "adj_pval", "log2FC"]], r.loc[actual.index, ["pval", "adj_pval", "log2FC"]], equal_nan=True)
@@ -102,7 +102,7 @@ def test_notebook_degenerate_families_match_backend_and_r(tmp_path, family, monk
       error <- tryCatch({volcano_plot_sim(d,m,"A","B"); ""}, error=conditionMessage)
       stopifnot(grepl("enough replicate",error))
     '''
-    run = subprocess.run([RSCRIPT, "-e", script, str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=120)
+    run = subprocess.run([rscript, "-e", script, str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stdout + run.stderr
 REPLICATES = 4
 TOLERANCE = 1e-9
@@ -113,7 +113,6 @@ TEST_TYPES = (
 )
 
 
-from _r_runtime import RSCRIPT
 requires_r = pytest.mark.requires_r()
 
 
@@ -182,9 +181,9 @@ def _phospho_fixture(directory: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     return frame, meta
 
 
-def _run_r(directory: Path) -> None:
+def _run_r(directory: Path, rscript) -> None:
     completed = subprocess.run(
-        [RSCRIPT, str(R_SCRIPT), str(directory)],
+        [rscript, str(R_SCRIPT), str(directory)],
         capture_output=True,
         text=True,
         timeout=600,
@@ -204,7 +203,7 @@ def _run_r(directory: Path) -> None:
 
 @pytest.fixture(scope="module")
 def results(tmp_path_factory, require_r) -> dict[str, pd.DataFrame]:
-    require_r()
+    rscript = require_r()
     directory = tmp_path_factory.mktemp("cross_impl")
     frame, meta = _fixture(directory)
     phospho, phospho_meta = _phospho_fixture(directory)
@@ -359,7 +358,7 @@ def results(tmp_path_factory, require_r) -> dict[str, pd.DataFrame]:
         .reset_index(drop=True)
     )
 
-    _run_r(directory)
+    _run_r(directory, rscript)
     r_results = {
         name: pd.read_csv(directory / f"r_{name}.csv") for name in python_results
     }
@@ -763,7 +762,7 @@ def test_enrichment_corrects_over_tested_terms_not_eligible_ones(organism) -> No
 
 
 def test_mouse_enrichment_matches_r(tmp_path, require_r):
-    require_r()
+    rscript = require_r()
     notebook = _notebook()
     db = notebook.load_go_db("mouse")
     genes = sorted(set(db.loc[db["description"] == "apoptotic process", "genes"].iloc[0].split(";")))
@@ -781,7 +780,7 @@ def test_mouse_enrichment_matches_r(tmp_path, require_r):
           background=background, adj_p_value_cutoff=1, organism="mouse")
       write.csv(result, file.path(folder, "result.csv"), row.names=FALSE)
     '''
-    run = subprocess.run([RSCRIPT, "-e", script, str(tmp_path)], cwd=ROOT,
+    run = subprocess.run([rscript, "-e", script, str(tmp_path)], cwd=ROOT,
                          capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stdout + run.stderr
     actual = pd.read_csv(tmp_path / "result.csv").sort_values("term_id")
@@ -818,7 +817,7 @@ def test_a_pandas_series_of_sequences_is_counted_elementwise() -> None:
 
 
 @requires_r
-def test_missed_cleavages_agree_across_the_packages_for_a_collection() -> None:
+def test_missed_cleavages_agree_across_the_packages_for_a_collection(rscript) -> None:
     import subprocess
 
     peptides = ["PEPKTIDEK", "KKKK", "PEPKPTIDEK", "NOCLEAVAGESITE", "MKWVTFISLLLLFSSAYSR"]
@@ -830,7 +829,7 @@ def test_missed_cleavages_agree_across_the_packages_for_a_collection() -> None:
         f'cat(count_missed_cleavages(c({", ".join(repr(p) for p in peptides)})))'
     )
     completed = subprocess.run(
-        [RSCRIPT, "-e", script], capture_output=True, text=True, timeout=300, cwd=str(ROOT)
+        [rscript, "-e", script], capture_output=True, text=True, timeout=300, cwd=str(ROOT)
     )
     assert completed.returncode == 0, completed.stderr[-300:]
     r_counts = [int(v) for v in completed.stdout.split()]
@@ -838,7 +837,7 @@ def test_missed_cleavages_agree_across_the_packages_for_a_collection() -> None:
 
 
 @requires_r
-def test_paired_constant_and_missing_edges(tmp_path) -> None:
+def test_paired_constant_and_missing_edges(tmp_path, rscript) -> None:
     from app.services.functions import paired_t_test
     from scipy.stats import ttest_1samp
 
@@ -868,7 +867,7 @@ def test_paired_constant_and_missing_edges(tmp_path) -> None:
       result <- volcano_data_f(data, meta, "A", "B", workflow="Protein", test_type="paired")
       write.csv(result, file.path(args[1], "result.csv"), row.names=FALSE)
     '''
-    completed = subprocess.run([RSCRIPT, "-e", script, str(tmp_path)], cwd=ROOT,
+    completed = subprocess.run([rscript, "-e", script, str(tmp_path)], cwd=ROOT,
                                capture_output=True, text=True, timeout=180)
     assert completed.returncode == 0, completed.stderr
     actual = pd.read_csv(tmp_path / "result.csv").set_index("ProteinNames").sort_index()

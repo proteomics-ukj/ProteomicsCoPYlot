@@ -15,14 +15,12 @@ Two separate ways of misreporting the same digest:
 from __future__ import annotations
 
 from contextlib import ExitStack
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 import app.services.peptide_tools as pt
 import app.services.report_function as report

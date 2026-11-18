@@ -11,6 +11,7 @@ from app.services.plot_export import (
     fit_figure_to_labels as _fit_figure_to_labels,
 )
 
+import re
 import hashlib
 import logging
 from functools import lru_cache
@@ -324,8 +325,7 @@ def _gene_tokens(value: object) -> list[str]:
 
 def _normalize_highlight_token(value: object) -> str:
     token = str(value or "").strip().lower()
-    if token.endswith("_human"):
-        token = token[: -len("_human")]
+    token = re.sub(r"_(human|mouse)$", "", token)
     return token.strip()
 
 
@@ -958,15 +958,8 @@ def _volcano_marker_style(
             "color": advanced_text(advanced, color_key) or palette[significance],
             "shape": resolve_marker_shape(advanced_text(advanced, "markerShape")),
         }
-    # The ring follows the general marker size until it is set on its own
-    # (setting the general size in the panel clears it, as for the classes);
-    # the default ring is a little larger than the default dot so it shows.
-    general_size = advanced_optional_number(advanced, "markerSize")
     style["_highlight"] = {
-        "size": advanced_size(
-            advanced, "volcanoHighlightSize",
-            general_size + 4.0 if general_size is not None else 10.0,
-        ),
+        "width": max(.1, advanced_number(advanced, "volcanoHighlightWidth", 1.0)),
         "color": advanced_text(advanced, "volcanoHighlightColor") or "#22c55e",
         "legend": _advanced_bool(advanced, "volcanoHighlightLegend", True),
         "label": advanced_text(advanced, "volcanoHighlightLegendLabel") or "Highlighted",
@@ -1004,7 +997,7 @@ def _volcano_top_hits(
         wanted.append(subset.head(int(count)))
     if not wanted:
         return volcano_df.head(0)
-    return pd.concat(wanted, ignore_index=True)
+    return pd.concat(wanted)
 
 
 def _volcano_figure(
@@ -1022,6 +1015,8 @@ def _volcano_figure(
     advanced: dict | None = None,
     highlight_outline: bool = True,
     highlight_labels: bool = False,
+    label_top_up: int = 0,
+    label_top_down: int = 0,
 ):
     """The interactive volcano. `highlight_labels` is accepted for parity with the
     static figure and ignored: hovering a point names it."""
@@ -1032,6 +1027,8 @@ def _volcano_figure(
         significance: str(style[significance]["color"]) for significance in VOLCANO_COLORS
     }
     normalized_highlights = {_normalize_highlight_token(term) for term in highlight_terms if _normalize_highlight_token(term)}
+
+    top_indices = _volcano_top_hits(volcano_df, label_column=label_column, up=label_top_up, down=label_top_down).index
 
     def is_highlighted(value: object) -> bool:
         if not normalized_highlights or not highlight_outline:
@@ -1087,17 +1084,18 @@ def _volcano_figure(
         return "<br>".join(parts)
 
     fig = go.Figure()
+    has_highlights = False
     for significance, color in color_mapping.items():
         subset = volcano_df[volcano_df["significance"] == significance].copy()
         if subset.empty:
             continue
         subset["_hover"] = subset.apply(build_hover_text, axis=1)
-        subset["highlighted"] = subset[label_column].apply(is_highlighted)
+        subset["highlighted"] = highlight_outline & (subset[label_column].apply(is_highlighted) | subset.index.isin(top_indices))
         for highlighted, suffix in ((False, ""), (True, f" ({style['_highlight']['label']})")):
-            part = subset[subset["highlighted"] == highlighted]
+            part = subset[subset["highlighted"]] if highlighted else subset
             if part.empty:
                 continue
-            size = style["_highlight"]["size"] if highlighted else style[significance]["size"]
+            size = style[significance]["size"]
             marker = {
                 "color": color,
                 "size": size,
@@ -1107,7 +1105,8 @@ def _volcano_figure(
                 ),
             }
             if highlighted:
-                marker["line"] = {"color": style["_highlight"]["color"], "width": 2}
+                has_highlights = True
+                marker["line"] = {"color": style["_highlight"]["color"], "width": style["_highlight"]["width"]}
                 # A highlighted point is one the user went looking for, so it is
                 # drawn at full strength whatever its class opacity is.
                 marker["opacity"] = 1.0
@@ -1118,11 +1117,18 @@ def _volcano_figure(
                     mode="markers",
                     marker=marker,
                     name=f"{significance}{suffix}",
-                    showlegend=bool(style["_highlight"]["legend"]) if highlighted else True,
+                    showlegend=not highlighted,
+                    legendgroup=significance,
                     text=part["_hover"],
                     hovertemplate="%{text}<br>log2FC=%{x:.3f}<br>-log10 p=%{y:.3f}<extra></extra>",
                 )
             )
+
+    if has_highlights and style["_highlight"]["legend"]:
+        fig.add_scatter(x=[None], y=[None], mode="markers", hoverinfo="skip",
+            marker={"size": 6, "symbol": "circle-open", "color": style["_highlight"]["color"],
+                    "line": {"width": style["_highlight"]["width"]}},
+            name=str(style["_highlight"]["label"]), legendgroup="_copylot_highlight_legend", showlegend=True)
 
     y_line = float(-np.log10(max(p_value_threshold, 1e-300)))
     max_y = max(y_line, float(volcano_df["neg_log10_selected_pval"].max()) if not volcano_df.empty else y_line)
@@ -1168,9 +1174,6 @@ _LABEL_OFFSETS = (
     (0, 34), (0, -36), (30, 14), (-30, 14),
     (0, 50), (0, -52), (44, 22), (-44, 22),
 )
-# Beyond this distance the connection between label and point stops being
-# obvious, so a leader line is drawn.
-_LABEL_LEADER_AFTER = 20.0
 
 
 def _place_volcano_labels(
@@ -1181,6 +1184,9 @@ def _place_volcano_labels(
     label_column: str,
     fontsize: float,
     color: str = "#111827",
+    connector: bool = True,
+    connector_color: str = "#000000",
+    connector_width: float = 0.5,
 ) -> int:
     """Label the named points without letting the labels land on each other.
 
@@ -1193,8 +1199,8 @@ def _place_volcano_labels(
     every box already placed; otherwise it is moved to the next candidate
     position. Labels are placed most-significant first, so the hit that matters
     most gets the position closest to its point and the crowding is pushed
-    outward onto the less important ones. A label that ends up far from home
-    gets a leader line. One that cannot be placed at all is dropped rather than
+    outward onto the less important ones. Each label gets an optional connector
+    to its point. One that cannot be placed at all is dropped rather than
     drawn on top of something -- returning the count so the caller can say so.
     """
     if hits.empty or label_column not in hits.columns:
@@ -1202,18 +1208,20 @@ def _place_volcano_labels(
 
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    placed: list[Any] = []
+    legend_artist = ax.get_legend()
+    placed: list[Any] = [legend_artist.get_window_extent(renderer)] if legend_artist is not None and legend_artist.get_visible() else []
     drawn = 0
 
     ordered = hits.sort_values("neg_log10_selected_pval", ascending=False, kind="mergesort")
     for row in ordered.itertuples():
         text = str(getattr(row, label_column, "") or "").strip()
+        if label_column == "ProteinNames":
+            text = text.split(";", 1)[0].strip()
         if not text:
             continue
         point = (float(row.log2FC), float(row.neg_log10_selected_pval))
         annotation = None
         for x_offset, y_offset in _LABEL_OFFSETS:
-            distance = (x_offset**2 + y_offset**2) ** 0.5
             annotation = ax.annotate(
                 text,
                 point,
@@ -1225,14 +1233,14 @@ def _place_volcano_labels(
                 va="bottom" if y_offset >= 0 else "top",
                 zorder=5,
                 arrowprops=(
-                    {"arrowstyle": "-", "color": "#9ca3af", "linewidth": 0.5,
+                    {"arrowstyle": "-", "color": connector_color, "linewidth": connector_width,
                      "shrinkA": 1.0, "shrinkB": 2.0}
-                    if distance > _LABEL_LEADER_AFTER
+                    if connector
                     else None
                 ),
             )
             box = annotation.get_window_extent(renderer=renderer)
-            inside = box.x0 >= 0 and box.y0 >= 0 and box.x1 <= fig.bbox.x1 and box.y1 <= fig.bbox.y1
+            inside = ax.bbox.contains(box.x0, box.y0) and ax.bbox.contains(box.x1, box.y1)
             # Cushioned, and more so vertically: two labels whose boxes merely
             # touch still read as one run of text at this size.
             cushioned = box.expanded(1.04, 1.35)
@@ -1323,14 +1331,16 @@ def _volcano_png_figure(
     picked = volcano_df.head(0)
     if normalized_highlights and label_column in volcano_df.columns:
         picked = volcano_df[volcano_df[label_column].apply(is_highlighted)]
+    top = _volcano_top_hits(volcano_df, label_column=label_column, up=label_top_up, down=label_top_down)
+    picked = volcano_df.loc[volcano_df.index.isin(picked.index) | volcano_df.index.isin(top.index)]
     if highlight_outline and not picked.empty:
         ax.scatter(
             picked["log2FC"],
             picked["neg_log10_selected_pval"],
-            s=marker_area(float(style["_highlight"]["size"])),
+            s=[marker_area(float(style[significance]["size"])) for significance in picked["significance"]],
             facecolors="none",
             edgecolors=str(style["_highlight"]["color"]),
-            linewidths=1.2,
+            linewidths=float(style["_highlight"]["width"]),
             label=str(style["_highlight"]["label"]) if style["_highlight"]["legend"] else "_nolegend_",
             zorder=4,
         )
@@ -1378,17 +1388,7 @@ def _volcano_png_figure(
     # display coordinates, and `tight_layout` moves the axes -- so labels chosen
     # before it are checked against positions the figure does not end up having,
     # and land on each other anyway.
-    hits = volcano_df.head(0)
-    if label_top_up > 0 or label_top_down > 0:
-        hits = _volcano_top_hits(
-            volcano_df, label_column=label_column, up=label_top_up, down=label_top_down
-        )
-    if highlight_labels and not picked.empty:
-        # The union, one label per feature: a highlighted gene that is also a
-        # top hit is labelled once (`_volcano_top_hits` resets the index, so
-        # the match is on the label itself).
-        extra = picked.loc[~picked[label_column].isin(hits[label_column])] if not hits.empty else picked
-        hits = pd.concat([hits, extra], ignore_index=True)
+    hits = picked if highlight_labels else volcano_df.head(0)
     if not hits.empty:
         _place_volcano_labels(
             fig,
@@ -1396,6 +1396,9 @@ def _volcano_png_figure(
             hits,
             label_column=label_column,
             fontsize=max(4.0, advanced_number(advanced, "volcanoLabelSize", 7.0)),
+            connector=(advanced or {}).get("volcanoLabelConnector") is not False,
+            connector_color=advanced_text(advanced, "volcanoLabelConnectorColor") or "#000000",
+            connector_width=max(0.0, advanced_number(advanced, "volcanoLabelConnectorWidth", 0.5)),
         )
     return fig, plt
 
@@ -1471,11 +1474,12 @@ def volcano_png(
 
 def volcano_html(
     payload: VolcanoRequest | VolcanoControlRequest, advanced: dict | None = None,
-    *, highlight_outline: bool = True,
+    *, highlight_outline: bool = True, label_top_up: int = 0, label_top_down: int = 0,
 ) -> str:
     """The same volcano as the interactive page."""
     df, figure_arguments = _volcano_inputs(payload)
-    fig = _volcano_figure(df, **figure_arguments, advanced=advanced, highlight_outline=highlight_outline)
+    fig = _volcano_figure(df, **figure_arguments, advanced=advanced, highlight_outline=highlight_outline,
+                          label_top_up=label_top_up, label_top_down=label_top_down)
     fig.update_layout(**advanced_plotly_layout(advanced))
     return _plotly_html(fig)
 
@@ -3140,11 +3144,11 @@ def pathway_heatmap_png(
             heatmap_data, context="pathway heatmap"
         )
         heatmap_data = heatmap_data.loc[pathway_completeness.kept]
-    if cluster_rows and heatmap_data.shape[0] > 1:
+    if cluster_matrix is not None and cluster_rows and heatmap_data.shape[0] > 1:
         row_order = leaves_list(linkage(pdist(cluster_matrix), method="average"))
         heatmap_data = heatmap_data.iloc[row_order]
         cluster_matrix = cluster_matrix[row_order]
-    if cluster_cols and heatmap_data.shape[1] > 1:
+    if cluster_matrix is not None and cluster_cols and heatmap_data.shape[1] > 1:
         col_order = leaves_list(linkage(pdist(cluster_matrix.T), method="average"))
         heatmap_data = heatmap_data.iloc[:, col_order]
 
@@ -3432,24 +3436,41 @@ def simulation_html(payload: SimulationRequest, advanced: dict | None = None) ->
     return _plotly_html(fig)
 
 
+# These API responses contain JSON records for every feature and sample.
+# Keep one immutable representation and give each caller its own typed rows.
+def _cache_stats_response(compute, response_type):
+    from functools import wraps
+    from pydantic_core import to_json
+    from app.services.runtime_cache import cached_call
+
+    @wraps(compute)
+    def wrapped(payload):
+        def encode():
+            return to_json(compute(payload).model_dump(), inf_nan_mode="constants")
+
+        encoded = cached_call(compute.__module__ + "." + compute.__name__, payload, encode, copy_result=False)
+        return response_type.model_validate_json(encoded)
+    return wrapped
+
+
+run_volcano = _cache_stats_response(run_volcano, VolcanoResultResponse)
+run_volcano_control = _cache_stats_response(run_volcano_control, VolcanoResultResponse)
+run_anova = _cache_stats_response(run_anova, AnovaResultResponse)
+run_simulation = _cache_stats_response(run_simulation, SimulationResultResponse)
+
+
 apply_cached_wrappers(
     globals(),
     [
         "statistical_options",
-        "run_volcano",
-        "run_volcano_control",
-        "run_anova",
         "anova_png",
         "volcano_html",
-        "volcano_control_html",
         "volcano_png",
-        "volcano_control_png",
         "pathway_options",
         "run_enrichment",
         "run_enrichment_from_list",
         "ora_plot_png",
         "pathway_heatmap_png",
-        "run_simulation",
         "simulation_html",
     ],
 )

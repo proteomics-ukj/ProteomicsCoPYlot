@@ -326,7 +326,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "rtPlot" ? (
         <>
           <SectionCard as="h2" title="RT Plot Options">
-            <OptionsLayout order="fields-toggles-size"
+            <OptionsLayout
               fields={[
                 <SelectField
                   key="method"
@@ -377,8 +377,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "modification" ? (
         <>
           <SectionCard as="h2" title="Modification Plot Options">
-            <OptionsLayout order="fields-toggles-size"
-              fields={[]}
+            <OptionsLayout
               size={
                 <SizeRow
                   widthCm={modification.widthCm}
@@ -406,7 +405,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "missedCleavage" ? (
         <>
           <SectionCard as="h2" title="Missed Cleavage Plot Options">
-            <OptionsLayout order="fields-toggles-size"
+            <OptionsLayout
               fields={[
                 <SelectField
                   key="protease"
@@ -445,7 +444,7 @@ export default function PeptideLevelPage({ activeTab, onContextModeChange, advan
       {activeTab === "sequenceCoverage" ? (
         <>
           <SectionCard as="h2" title="Sequence Coverage Options">
-            <OptionsLayout order="fields-toggles-size"
+            <OptionsLayout
               fields={[
                 <SelectField
                   key="species"

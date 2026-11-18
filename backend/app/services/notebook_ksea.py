@@ -1,12 +1,11 @@
 """Table-only Kinase Library preparation; no plotting or external analysis."""
 from functools import lru_cache
-import inspect
 import json
 import logging
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
 from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import bound_settings, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_volcano import (
     PROTEIN_CORRECTION_EXPLANATION, PROTEIN_STATS_CODE, frozen_protein_comparison, volcano_source)
 
@@ -32,9 +31,7 @@ def capture_table(**options):
     from app.services.session_context import get_session_id
 
     revision = runtime_cache_version()
-    bound = inspect.signature(phospho_tools.ksea_table).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(phospho_tools.ksea_table, **options)
     settings['source'] = str(settings['source']).strip().lower()
     settings['data_source'] = str(settings['data_source']).strip().lower()
     settings['organism'] = phospho_tools._resolve_ksea_organism(settings['organism'])

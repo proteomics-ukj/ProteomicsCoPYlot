@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 CASES = [
     ("PEPTIDEK", 0, 0, "textbook fully tryptic peptide"),

@@ -13,7 +13,7 @@ import pytest
 from proteomicscopylot import notebook_functions
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 EXPECTED_DATA = {
     "20260511_144120_20240822_JM_HEK293_WP_Report_PG.tsv",
     "20260511_144129_20240822_JM_HEK293_PP_Report_collapsed.tsv",

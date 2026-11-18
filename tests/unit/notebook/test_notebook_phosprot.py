@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import pandas as pd
@@ -60,10 +58,9 @@ def test_collapse_history_survives_reannotation_restore_and_notebook(phosphosite
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys; sys.path.insert(0, '.');\n" + cells],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
     if interactive:
         assert (tmp_path / 'reproduced.html').read_text(encoding='utf-8') == actual
@@ -143,10 +140,9 @@ def _execute_archive(recipe, tmp_path):
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys; sys.path.insert(0, '.');\n" + cells],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
 
 

@@ -1,15 +1,14 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from annotation_support import save_log2_protein_annotation
 from app.services.dataset_store import save_peptide_path
 from app.services.peptide_metadata_store import save_peptide_metadata
 from app.services.notebook_peptide import render_coverage
@@ -22,8 +21,9 @@ from app.services.session_context import get_session_id
 @pytest.mark.parametrize('level,counts,total', [('peptide', [1, 2], 2), ('precursor', [2, 3], 3)])
 @pytest.mark.parametrize('include_id', [False, True])
 def test_coverage_counts_parity_and_independent_notebook(peptide_input, tmp_path, level, counts, total, include_id):
-    options = dict(level=level, include_id=include_id, quantity_column='Precursor.Quantity', dpi=80,
-                   advanced={'conditionColors': {'A': '#771133'}}, reference_line=False)
+    options = dict(level=level, include_id=include_id, summary=include_id, text=True, text_size=12, random_seed=31, quantity_column='Precursor.Quantity', dpi=80,
+                   advanced={'conditionColors': {'A': '#771133'}, 'sampleLabels': {'run1': 'First run'},
+                             'conditionLabels': {'B': 'Group B'}}, reference_line=False)
     expected = qc_peptide_coverage_plot(**options)
     actual, token = render_coverage(**options)
     assert actual == expected
@@ -45,23 +45,22 @@ def test_coverage_counts_parity_and_independent_notebook(peptide_input, tmp_path
         archive.extractall(output)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((output / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, output)
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys; sys.path.insert(0, '.');\n" + cells],
-                            cwd=output, capture_output=True, text=True, timeout=60)
+    result = replay_cells(cells, output, timeout=60)
     assert result.returncode == 0, result.stderr
     assert (output / 'reproduced.png').read_bytes() == actual
     assert (output / 'reproduced_table.csv').exists()
 
 
-def test_quantity_selection_and_snapshot_are_independent(peptide_input):
+def test_old_quantity_override_does_not_change_snapshot_input(peptide_input):
     _, first = render_coverage(quantity_column='Precursor.Quantity', dpi=80)
     _, second = render_coverage(quantity_column='Alternative.Quantity', dpi=80)
     first_recipe = snapshots.get(get_session_id(), first)
     second_recipe = snapshots.get(get_session_id(), second)
     assert first_recipe.provenance['totalQuantifiedFeatures'] == 2
-    assert second_recipe.provenance['totalQuantifiedFeatures'] == 1
-    assert second_recipe.settings['quantity_column'] == 'Alternative.Quantity'
+    assert second_recipe.provenance['totalQuantifiedFeatures'] == 2
+    assert second_recipe.settings['quantity_column'] == 'Precursor.Quantity'
     assert snapshots.get(get_session_id(), first).resources == first_recipe.resources
 
 
@@ -96,10 +95,9 @@ def test_rt_exact_image_and_isolated_replay(rt_input, tmp_path, method, styled):
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    replay = replay_cells(cells, tmp_path, timeout=60)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
 
@@ -170,10 +168,9 @@ def test_interactive_rt_exact_figure_and_offline_replay(rt_input, tmp_path, monk
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    replay = replay_cells(cells, tmp_path, timeout=60)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.html').read_text(encoding='utf-8') == html
     assert "copylot-plot-ready" in html
@@ -249,13 +246,9 @@ def test_modification_counts_and_independent_plot_replay(modification_input, tmp
     from app.services.peptide_tools import peptide_modification_plot
     if protein_metadata:
         from app.services.dataset_store import save_table_dataset
-        from app.services.annotation_store import save_annotation
-        from app.schemas.annotation import AnnotationFilterConfig
         data = pd.DataFrame({'ProteinNames': ['P1'], **{name: [10.] for name in modification_input['sample']}})
         save_table_dataset('protein.csv', 'protein', data)
-        save_annotation(kind='protein', source_data=data, log2_data=data, filtered_data=data,
-            metadata=modification_input, is_log2_transformed=True, metadata_source='manual',
-            filter_config=AnnotationFilterConfig(), auto_detected=False, warnings=[])
+        save_log2_protein_annotation(data, modification_input)
     options = dict(include_id=include_id, dpi=80, header=not include_id, legend=not include_id,
                    advanced={'xTickLabelSize': 9, 'yTickLabelSize': 8})
     image, token = render_modification(**options)
@@ -273,10 +266,9 @@ def test_modification_counts_and_independent_plot_replay(modification_input, tmp
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    replay = replay_cells(cells, tmp_path, timeout=60)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / 'reproduced_modification_counts.csv', index_col=0), counts)
@@ -338,10 +330,9 @@ def test_cleavage_exact_counts_and_independent_replay(cleavage_input, tmp_path, 
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    replay = replay_cells(cells, tmp_path, timeout=60)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / 'reproduced_missed_cleavages.csv'), summary)

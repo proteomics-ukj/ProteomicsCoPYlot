@@ -6,11 +6,10 @@ import json
 import os
 import sys
 import warnings
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 NOTEBOOK = ROOT / "examples" / "example.ipynb"
 
 
@@ -86,7 +85,7 @@ def _compare_example_with_gui(notebook) -> None:
                     post(path, data={"kind": kind}, files={"file": (source.name, handle)})
             post("/api/annotations/generate", json={"kind": kind, "isLog2Transformed": True,
                  "filter": {"minPresent": 3, "mode": "per_group", "normalization": "none",
-                            "contaminants": {"enabled": True, "categories": [1, 2, 3, 4, 5]}}})
+                            "contaminants": {"enabled": True, "categories": [1, 2, 3, 4, 5, 6]}}})
         post("/api/annotations/phosprot/aggregate", json={"mode": "robust_site_median", "source": "non_imputed"})
         retained = client.get("/api/annotations/current/phosprot/filtered/download")
         assert retained.status_code == 200, retained.text
@@ -104,7 +103,6 @@ def _compare_example_with_gui(notebook) -> None:
 EXAMPLE_R = ROOT / "examples" / "example.R"
 
 
-from _r_runtime import RSCRIPT
 
 
 def test_the_r_example_exists() -> None:
@@ -113,11 +111,11 @@ def test_the_r_example_exists() -> None:
 
 @pytest.mark.slow
 @pytest.mark.requires_r("plotly", "reticulate")
-def test_the_r_example_runs(tmp_path) -> None:
+def test_the_r_example_runs(tmp_path, rscript) -> None:
     import subprocess
 
     completed = subprocess.run(
-        [RSCRIPT, str(EXAMPLE_R)],
+        [rscript, str(EXAMPLE_R)],
         env={**os.environ, "RETICULATE_PYTHON": sys.executable},
         capture_output=True,
         text=True,

@@ -18,7 +18,6 @@ from app.services.completeness_tools import (
     completeness_missing_value_plot,
 )
 from app.services.plot_images import (
-    distribution_qqnorm_plot,
     imputation_after_plot,
     imputation_before_plot,
     imputation_overall_fit_plot,
@@ -26,7 +25,7 @@ from app.services.plot_images import (
 from app.services.plot_styling import (
     parse_advanced_plot_settings,
 )
-from app.api.plot_responses import plot_errors, png_response
+from app.api.plot_responses import with_notebook_token, plot_errors, png_response
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -135,14 +134,20 @@ def distribution_qq_route(
     randomSeed: int = 1,
     advanced: str = "",
 ) -> Response:
+    from app.services.notebook_distribution import render_qqnorm
+
     with plot_errors("Failed to render QQ plot"):
-        return png_response(
-            distribution_qqnorm_plot(
-                kind,
-                random_seed=randomSeed,
-                advanced=parse_advanced_plot_settings(advanced),
-            )
-        )
+        from app.services.notebook_provenance import NotebookProvenanceError
+
+        try:
+            content, token = render_qqnorm(kind, random_seed=randomSeed, advanced=parse_advanced_plot_settings(advanced))
+        except NotebookProvenanceError as exc:
+            from app.services.plot_export import note_notebook_unavailable
+            from app.services.plot_images import distribution_qqnorm_plot
+            note_notebook_unavailable(exc)
+            return png_response(distribution_qqnorm_plot(kind, random_seed=randomSeed,
+                                                         advanced=parse_advanced_plot_settings(advanced)))
+        return with_notebook_token(png_response(content), token)
 
 
 @router.get("/completeness/{kind}/missing-value.png")
@@ -152,7 +157,7 @@ def completeness_missing_value_route(
     header: bool = True,
     text: bool = True,
     textSize: int = 8,
-    color: str = "#2563eb",
+    color: str = "",
     widthCm: float = 20,
     heightCm: float = 10,
     dpi: int = 300,
@@ -171,9 +176,7 @@ def completeness_missing_value_route(
                 color=color, width_cm=widthCm, height_cm=heightCm, dpi=dpi,
                 advanced=advanced_settings, quantity_column=quantityColumn or None)
             response = png_response(content)
-            if token:
-                response.headers["X-CoPYlot-Notebook"] = token
-            return response
+            return with_notebook_token(response, token)
         if kind_normalized in {"protein", "phospho", "phosprot"}:
             return _completeness_notebook_plot(
                 "missing-value",
@@ -234,6 +237,4 @@ def _completeness_notebook_plot(plot: str, *, kind: AnnotationKind, table_includ
         response.headers["X-CoPYlot-Notice"] = quote(f"Notebook export unavailable: {exc} The plot is unchanged.")
         return response
     response = png_response(content)
-    if token:
-        response.headers["X-CoPYlot-Notebook"] = token
-    return response
+    return with_notebook_token(response, token)

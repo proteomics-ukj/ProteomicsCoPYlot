@@ -23,8 +23,7 @@ import { OraPanel } from "../../src/features/stats/OraPanel";
 import { ANOVA_CLUSTER_METHOD_OPTIONS, restoreClusterCount, restoreClusterMethod, restorePValueThreshold } from "../../src/features/stats/statsHelpers";
 import * as api from "../../src/lib/api";
 import { captureCopylotSessionStorageState } from "../../src/lib/restoreUiState";
-import type { StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "../component/apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "../component/apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("../component/apiMock")).mockApiModule(original));
 
@@ -38,12 +37,11 @@ const KEY = "pcopylot.ui.stats.anova.v1";
 beforeEach(() => {
   silenceNetwork();
   serveDatasets(api);
-  vi.mocked(api.getStatisticalOptions).mockResolvedValue({
-    kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B", "C"],
-    samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"], C: ["c1", "c2"] }, pairIdsBySample: {},
-    availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }], warnings: [],
-    availableDataSources: ["data"], defaultDataSource: "data",
-  } as StatisticalOptionsResponse);
+  vi.mocked(api.getStatisticalOptions).mockResolvedValue(statisticalOptions({
+    availableConditions: ["A", "B", "C"],
+    samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"], C: ["c1", "c2"] },
+    availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }],
+  }));
 });
 
 /** What the panel saves after mounting on a given saved state. */

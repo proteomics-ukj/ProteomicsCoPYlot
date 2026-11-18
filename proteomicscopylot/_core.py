@@ -19,6 +19,77 @@ import numpy as np
 import pandas as pd
 from scipy.stats import t as _student_t
 
+COPYLOT_COLORS = (
+    '#2563EB',
+    '#FF4B5C',
+    '#6493D5',
+    '#008577',
+    '#8754AE',
+    '#B27600',
+    '#163D86',
+    '#9F2440',
+    '#B66D91',
+    '#627A32',
+    '#734600',
+    '#60A613',
+    '#B379F2',
+    '#801A80',
+    '#006040',
+    '#396699',
+    '#C64000',
+    '#6C9F80',
+    '#936053',
+    '#5340B3',
+    '#6C4666',
+    '#B33986',
+    '#D97960',
+    '#E666B3',
+    '#796CE6',
+    '#007300',
+    '#B959BF',
+    '#0086B3',
+    '#D24666',
+    '#009339',
+    '#999939',
+    '#7373A6',
+    '#13596C',
+    '#9F86BF',
+    '#536000',
+    '#866000',
+    '#0D86EC',
+    '#339FB3',
+    '#0053B3',
+    '#9F3900',
+)
+
+
+UKJ_COLORS = ('#004899', '#009FE3', '#96C11F', '#7E391B', '#0C3ADF', '#416024', '#244F60', '#D63DAD', '#23BFC7', '#CDA67A', '#2A89F4', '#55BE71', '#7C7E07', '#A6C15C', '#418DAA', '#407E07', '#4170AA', '#8B68DF', '#6CC3E5', '#2347C7')
+MATPLOTLIB_TAB10 = ('#1F77B4', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD', '#8C564B', '#E377C2', '#7F7F7F', '#BCBD22', '#17BECF')
+PLOT_COLOR_SETS = {
+    "copylot": COPYLOT_COLORS, "Proteomics CoPYlot Colors": COPYLOT_COLORS,
+    "ukj": UKJ_COLORS, "UKJ Colors": UKJ_COLORS,
+    "tab10": MATPLOTLIB_TAB10, "Matplotlib tab10 Colors": MATPLOTLIB_TAB10,
+}
+
+
+def resolve_plot_colors(n, plot_colors=None):
+    """Repeat a named palette or an explicit color sequence in stable order."""
+    colors = COPYLOT_COLORS if plot_colors is None else plot_colors
+    if isinstance(colors, str):
+        if colors not in PLOT_COLOR_SETS:
+            raise ValueError("Unknown color set. Use copylot, ukj, tab10, or a list of colors.")
+        colors = PLOT_COLOR_SETS[colors]
+    colors = list(colors)
+    if not colors:
+        raise ValueError("At least one plot color is required.")
+    return [colors[i % len(colors)] for i in range(n)]
+
+
+def copylot_colors(n):
+    """CoPYlot Balanced: fixed condition order, repeating after 40 colors."""
+    return [COPYLOT_COLORS[i % len(COPYLOT_COLORS)] for i in range(n)]
+
+
 _SAMPLE_DOTTED_SUFFIX = re.compile(
     r"(?:(?:\.(?:PG|GG|EG|FG|PEP|PR|Precursor|Protein|Peptide))?\."
     r"(?:(?:Avg|Average)?Log[._\s-]*2(?:Normal(?:i[sz]ed|isation|ization))?"
@@ -286,7 +357,7 @@ def contaminant_members(value):
 
 def contaminant_identity(member):
     member = member.removeprefix(">")
-    for prefix in ("CON__", "contam_"):
+    for prefix in ("CON__", "contam_", "cRAP-"):
         if member.startswith(prefix):
             member = member[len(prefix):]
             break
@@ -300,10 +371,41 @@ def contaminant_identity(member):
     return member, member
 
 
-def contaminant_mask(data, config=None, reference=None):
-    """True only when every identified member matches a selected category.
+def upstream_contaminant_mask(data):
+    """Explicit row flags, or groups whose supplied identifiers are all contaminant-prefixed.
 
-    Names and accessions are independent group annotations, not necessarily in
+    Within one identifier column every member must carry a prefix: a group that
+    pairs a prefixed entry with its unprefixed twin ("K2C1_HUMAN;cRAP-K2C1_HUMAN")
+    is left to the database categories. A column without any prefix (a bare
+    accession column beside prefixed names) may name the same proteins.
+    """
+    result = pd.Series(False, index=data.index, dtype=bool)
+    for column in data.columns:
+        if re.sub(r"[^a-z0-9]", "", str(column).lower()) == "potentialcontaminant":
+            result |= data[column].fillna("").astype(str).str.strip().eq("+")
+    columns = [column for column in ("ProteinNames", "Phosphoprotein", "ProteinAccessions", "Protein_group")
+               if column in data.columns]
+    if not columns:
+        return result
+    prefixed = []
+    for row in data[columns].itertuples(index=False, name=None):
+        groups = [contaminant_members(value) for value in row
+                  if value is not None and not pd.isna(value) and str(value).strip()]
+        is_marked = [[member.removeprefix(">").startswith(("CON__", "contam_", "cRAP-")) for member in group]
+                     for group in groups]
+        identifiers = {identifier for group, flags in zip(groups, is_marked)
+                       for member, flag in zip(group, flags) if flag for identifier in contaminant_identity(member)}
+        prefixed.append(bool(identifiers) and all(
+            all(flags) if any(flags)
+            else all(any(identifier in identifiers for identifier in contaminant_identity(member)) for member in group)
+            for group, flags in zip(groups, is_marked)))
+    return result | pd.Series(prefixed, index=data.index, dtype=bool)
+
+
+def contaminant_mask(data, config=None, reference=None):
+    """Combine selected upstream flags with conservative database group matching.
+
+    For database categories, names and accessions are independent group annotations, not necessarily in
     the same order. A complete accession group can resolve unfamiliar display
     names; a shorter accession list cannot resolve a larger named group.
     Unknown and empty group members preserve the row. Never match gene symbols,
@@ -313,11 +415,15 @@ def contaminant_mask(data, config=None, reference=None):
     result = pd.Series(False, index=data.index, dtype=bool)
     if not config.get("enabled", False):
         return result
+    categories = set(config.get("categories", [1, 2, 3, 4, 5, 6]))
+    if not categories or not categories <= {1, 2, 3, 4, 5, 6}:
+        raise ValueError("Select at least one valid contaminant category.")
+    if 6 in categories:
+        result = upstream_contaminant_mask(data)
+    if categories == {6}:
+        return result
     if reference is None:
         raise ValueError("The contaminant reference snapshot is required.")
-    categories = set(config.get("categories", [1, 2, 3, 4, 5]))
-    if not categories or not categories <= {1, 2, 3, 4, 5}:
-        raise ValueError("Select at least one valid contaminant category.")
     records = [r for r in reference["records"]
                if categories.intersection(int(value.strip()) for value in str(r["gpm_category_id"]).split(";"))]
     names = {r[key] for r in records for key in ("entry_name", "protein_name") if r[key]}
@@ -366,4 +472,4 @@ def contaminant_mask(data, config=None, reference=None):
             decision = False
         cache[key] = decision
         decisions.append(decision)
-    return pd.Series(decisions, index=data.index, dtype=bool)
+    return result | pd.Series(decisions, index=data.index, dtype=bool)

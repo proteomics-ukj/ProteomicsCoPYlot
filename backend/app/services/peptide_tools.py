@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 import gzip
 
 
@@ -24,7 +28,7 @@ from app.schemas.peptide import PeptideSpecies
 from app.services.annotation_store import get_annotation
 from app.services.dataset_reader import read_dataframe
 from app.services.dataset_store import get_current_dataset
-from app.services.functions import extract_sample_id as _extract_id_or_number
+from app.services.functions import extract_sample_id as _extract_id_or_number, sample_display_labels
 from app.services.functions import sample_id_map
 from app.services.peptide_metadata_store import get_peptide_metadata
 from app.services.plot_styling import (
@@ -129,32 +133,38 @@ def _peptide_dataset_path(stored=None) -> Path:
     return path
 
 
+def _detection_column(column: str) -> bool:
+    name = re.sub(r"[^a-z0-9]", "", str(column).lower())
+    return (name in {"run", "precursorquantity", "fgquantity", "fgcharge", "fglabeledsequence",
+                     # Spectronaut reports without FG.Quantity or a stripped sequence
+                     "egtotalquantitysettings", "pepquantity", "egmodifiedsequence",
+                     # MaxQuant evidence.txt
+                     "sequence", "modifiedsequence", "rawfile", "experiment", "intensity", "charge", "reverse",
+                     # Skyline transition export
+                     "proteinname", "peptidesequence", "peptidemodifiedsequence", "precursorcharge", "area",
+                     "isotopelabeltype"}
+            or ("file" in name and "name" in name)
+            or ("stripped" in name and "sequence" in name)
+            or ("precursor" in name and "id" in name)
+            # the quantity columns of a Spectronaut peptide pivot, one per run
+            or re.search(r"\.(?:EG\.TotalQuantity \(Settings\)|FG\.Quantity|FG\.MS2Quantity|PEP\.Quantity|PEP\.MS2Quantity)$",
+                         str(column).strip()) is not None)
+
+
 @lru_cache(maxsize=4)
-def _load_peptide_frame_cached(path_str: str, modified_ns: int, size: int = 0, changed_ns: int = 0) -> pd.DataFrame:
+def _load_peptide_frame_cached(path_str: str, modified_ns: int, size: int = 0, changed_ns: int = 0, detection_only: bool = False) -> pd.DataFrame:
     path = Path(path_str)
     with path.open("rb") as handle:
-        return read_dataframe(path.name, handle)
+        return read_dataframe(path.name, handle, select_column=_detection_column if detection_only else None, peptide=True)
 
 
-def get_peptide_frame(*, apply_contaminants: bool = True, columns: list[str] | None = None) -> pd.DataFrame:
+def get_peptide_frame(*, columns: list[str] | None = None, detection_only: bool = False) -> pd.DataFrame:
     # Retain the dataset while reading: session expiry must not release its file
     # between resolving the path and opening it.
     stored = get_current_dataset("peptide")
     path = _peptide_dataset_path(stored)
     stat = path.stat()
-    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns)
-    annotation = get_annotation("protein") if apply_contaminants else None
-    if annotation is not None and annotation.filter_config.contaminants.enabled:
-        from app.services.contaminant_filter import contaminant_mask, contaminant_reference
-        from app.services.peptide_preparation_cache import cached_peptide_preparation
-        import json
-        config = annotation.filter_config.contaminants.model_dump()
-        mask = cached_peptide_preparation('contaminant-mask',
-            (str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, json.dumps(config, sort_keys=True)),
-            lambda: contaminant_mask(frame, config, contaminant_reference()))
-        if columns is not None:
-            frame = frame[[column for column in columns if column in frame.columns]]
-        return frame.loc[~mask].copy()
+    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, detection_only)
     if columns is not None:
         frame = frame[[column for column in columns if column in frame.columns]]
     return frame.copy()
@@ -316,7 +326,7 @@ def _protein_names_column(frame: pd.DataFrame) -> str:
     return _require_column(frame, "ProteinNames")
 
 
-def _prepare_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
+def peptide_annotation_metadata() -> pd.DataFrame:
     protein_dataset = get_current_dataset("protein")
     if protein_dataset is not None:
         stored = get_annotation("protein")
@@ -355,18 +365,14 @@ def _prepare_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
             "Annotation metadata does not contain any usable sample/condition rows."
         )
 
+    return meta
+
+
+def _prepare_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
+    meta = peptide_annotation_metadata()
     meta["id"] = meta["sample"].apply(_extract_id_or_number)
     meta["sample_index"] = meta.groupby("condition").cumcount() + 1
-    if include_id:
-        meta["new_sample"] = meta.apply(
-            lambda row: f"{row['condition']}_{row['sample_index']}\n({row['id']})",
-            axis=1,
-        )
-    else:
-        meta["new_sample"] = meta.apply(
-            lambda row: f"{row['condition']}_{row['sample_index']}",
-            axis=1,
-        )
+    meta['new_sample'] = sample_display_labels(meta, index_column="sample_index", include_id=include_id)
     return meta
 
 
@@ -393,8 +399,31 @@ def _sample_rename_map(
     )
 
     mapping = {column: by_name[column] for column in run_columns if column in by_name}
-    leftover_columns = [column for column in run_columns if column not in by_name]
-    leftover_samples = [sample for sample in by_name if sample not in run_columns]
+    # Then the run's stem: a Spectronaut protein pivot names the sample
+    # "<run>.PG.Quantity" and MaxQuant "LFQ intensity <experiment>", while the
+    # peptide report of the same search carries the bare run. Only a stem that
+    # names one run and one sample is used.
+    def _run_stem(name: object) -> str:
+        import re  # local: this function is copied into exported notebooks
+        text = str(name).strip()
+        spectronaut = re.match(r"^(.+)\.(?:PG|PEP|EG|FG|PTM)\.[^.]+$", text)
+        if spectronaut is not None:
+            return spectronaut[1]
+        return re.sub(r"^(?:LFQ intensity|Intensity|iBAQ|MS/MS count) ", "", text)
+
+    stems: dict[str, list[str]] = {}
+    for sample in by_name:
+        if sample not in mapping:
+            stems.setdefault(_run_stem(sample), []).append(sample)
+    unmatched = [column for column in run_columns if column not in mapping]
+    by_stem: set[str] = set()
+    for column in unmatched:
+        named = stems.get(_run_stem(column), [])
+        if len(named) == 1 and sum(_run_stem(other) == _run_stem(column) for other in unmatched) == 1:
+            mapping[column] = by_name[named[0]]
+            by_stem.add(named[0])
+    leftover_columns = [column for column in run_columns if column not in mapping]
+    leftover_samples = [sample for sample in by_name if sample not in run_columns and sample not in by_stem]
     if leftover_columns and leftover_samples:
         # Both sides are checked: an ambiguous id is unusable whichever side it
         # comes from, and reporting it here names the offending files.
@@ -482,6 +511,7 @@ def peptide_rt_plot(
     height_cm: float = 15,
     dpi: int = 100,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     frame = get_peptide_frame()
@@ -500,7 +530,7 @@ def peptide_rt_plot(
     if method == "Scatter Plot":
         if len(data) > 100000:
             data = data.sample(n=100000, random_state=int(sampling_seed))
-        ax.scatter(data["Predicted.RT"], data["RT"], **marker_style(advanced, size=1.0, alpha=0.2))
+        ax.scatter(data["Predicted.RT"], data["RT"], **marker_style(advanced, size=1.0, alpha=0.2, color_default=resolve_plot_colors(1, plot_colors)[0]))
     elif method == "Density Plot":
         from matplotlib.colors import LogNorm
 
@@ -538,6 +568,7 @@ def peptide_rt_plot(
     return _to_png_bytes(fig, plt, dpi=dpi)
 
 
+
 def peptide_rt_interactive_html(
     *,
     add_line: bool = False,
@@ -546,6 +577,7 @@ def peptide_rt_interactive_html(
     width_cm: float = 20,
     height_cm: float = 15,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> str:
     go = _get_plotly()
     frame = get_peptide_frame()
@@ -601,7 +633,7 @@ def peptide_rt_interactive_html(
             x=data["predicted"],
             y=data["actual"],
             mode="markers",
-            marker=plotly_marker(advanced, size=4, alpha=0.35, color_default="#1f77b4"),
+            marker=plotly_marker(advanced, size=4, alpha=0.35, color_default=resolve_plot_colors(1, plot_colors)[0]),
             customdata=custom_data,
             hovertemplate=(
                 "Feature: %{customdata[3]}<br>"
@@ -646,6 +678,7 @@ def peptide_rt_interactive_html(
     return _plotly_html(fig)
 
 
+
 def peptide_modification_plot(
     *,
     include_id: bool = False,
@@ -655,6 +688,7 @@ def peptide_modification_plot(
     height_cm: float = 15,
     dpi: int = 100,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     frame = get_peptide_frame()
@@ -705,9 +739,9 @@ def peptide_modification_plot(
     plot_data = plot_data.sort_values("Sample")
 
     mod_colors = {
-        "Carbamidomethylation": "blue",
-        "Oxidation": "red",
-        "Acetylation": "green",
+        "Carbamidomethylation": resolve_plot_colors(3, plot_colors)[0],
+        "Oxidation": resolve_plot_colors(3, plot_colors)[1],
+        "Acetylation": resolve_plot_colors(3, plot_colors)[2],
     }
     found_mods = [
         value
@@ -744,6 +778,7 @@ def peptide_modification_plot(
     return _to_png_bytes(fig, plt, dpi=dpi)
 
 
+
 def peptide_missed_cleavage_plot(
     *,
     include_id: bool = False,
@@ -755,6 +790,7 @@ def peptide_missed_cleavage_plot(
     height_cm: float = 15,
     dpi: int = 100,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     resolved_protease = normalize_protease(protease)
     plt = _get_plt()
@@ -805,7 +841,8 @@ def peptide_missed_cleavage_plot(
             .reindex(sample_order)["Percentage"]
             .fillna(0.0)
         )
-        ax.bar(range(len(sample_order)), subset, bottom=bottom, label=str(count))
+        ax.bar(range(len(sample_order)), subset, bottom=bottom, label=str(count),
+               color=resolve_plot_colors(int(count) + 1, plot_colors)[int(count)])
         bottom += subset.to_numpy(dtype=float)
 
     ax.set_ylabel("Peptides by missed cleavages (%)")
@@ -848,6 +885,7 @@ def peptide_missed_cleavage_plot(
     apply_advanced_axes(ax, advanced)
     fig.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi)
+
 
 
 @lru_cache(maxsize=4)
@@ -1120,3 +1158,6 @@ def peptide_sequence_coverage(
         "sequenceText": coverage_text,
         "warnings": warnings,
     }
+
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['peptide_rt_plot', 'peptide_rt_interactive_html', 'peptide_modification_plot', 'peptide_missed_cleavage_plot'], kind='protein')

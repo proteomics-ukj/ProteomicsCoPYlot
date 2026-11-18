@@ -1,9 +1,8 @@
 """One list of outside references: the README table and the report cite the same entries."""
-from pathlib import Path
 
 from app.services.method_references import REFERENCES, cite, markdown_table
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 def test_readme_table_is_generated_from_the_reference_list():

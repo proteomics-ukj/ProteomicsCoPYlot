@@ -11,7 +11,7 @@ import pytest
 from packaging.version import Version
 
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 BUILD_SCRIPT = ROOT / "packaging" / "python" / "build_pip_package.py"
 
 

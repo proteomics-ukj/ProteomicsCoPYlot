@@ -334,6 +334,7 @@ def run_id_translation(payload: IdTranslationRequest) -> IdTranslationResponse:
         outputs={column: dict(zip(keys, [None if pd.isna(value) else str(value)
                                         for value in translated[column]])) for column in columns})
     save_table_dataset(filename=filename, kind=payload.kind, frame=translated,
+        source_path=current.source_path,
         phosprot_aggregation=current.phosprot_aggregation, phosprot_lineage=current.phosprot_lineage,
         id_translations=[*current.id_translations, step])
     download_filename, _ = _download_details(filename)

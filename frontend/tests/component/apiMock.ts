@@ -9,6 +9,7 @@
 import { vi } from "vitest";
 // Type-only: this module is loaded by the mock factory of src/lib/api itself.
 import type * as Api from "../../src/lib/api";
+import type { StatisticalOptionsResponse } from "../../src/lib/types";
 
 const pending = () => new Promise<never>(() => {});
 
@@ -43,4 +44,15 @@ export const DATASETS = {
 export function serveDatasets(api: typeof Api) {
   vi.mocked(api.resetBrowserSessionState).mockResolvedValue(undefined);
   vi.mocked(api.getCurrentDatasets).mockResolvedValue(DATASETS);
+}
+
+/** Fresh statistical options; tests override only their scenario-specific fields. */
+export function statisticalOptions(overrides: Partial<StatisticalOptionsResponse> = {}): StatisticalOptionsResponse {
+  return {
+    kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B"],
+    samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] }, pairIdsBySample: {},
+    availableIdentifiers: [{ key: "workflow", label: "Protein" }], warnings: [],
+    availableDataSources: ["data"], defaultDataSource: "data",
+    ...overrides,
+  };
 }

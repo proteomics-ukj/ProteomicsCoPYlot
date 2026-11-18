@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 PACKAGE = ROOT / "proteomicscopylot"
 FORBIDDEN_PREFIXES = ("app", "backend", "tests", "frontend", "proteomics_backend")
 

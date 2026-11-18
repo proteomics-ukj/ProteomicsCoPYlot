@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import pandas as pd
 
 from app.services import column_labels
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 
 def _typescript_labels() -> dict[str, str]:

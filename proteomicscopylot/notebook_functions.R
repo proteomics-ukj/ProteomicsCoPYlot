@@ -58,11 +58,30 @@ rm(.copylot_source_file)
   "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
 )
 
+.copylot_colors <- c(
+  "#2563EB", "#FF4B5C", "#6493D5", "#008577", "#8754AE",
+  "#B27600", "#163D86", "#9F2440", "#B66D91", "#627A32",
+  "#734600", "#60A613", "#B379F2", "#801A80", "#006040",
+  "#396699", "#C64000", "#6C9F80", "#936053", "#5340B3",
+  "#6C4666", "#B33986", "#D97960", "#E666B3", "#796CE6",
+  "#007300", "#B959BF", "#0086B3", "#D24666", "#009339",
+  "#999939", "#7373A6", "#13596C", "#9F86BF", "#536000",
+  "#866000", "#0D86EC", "#339FB3", "#0053B3", "#9F3900"
+)
+
+.ukj_colors <- c("#004899", "#009FE3", "#96C11F", "#7E391B", "#0C3ADF", "#416024", "#244F60", "#D63DAD", "#23BFC7", "#CDA67A", "#2A89F4", "#55BE71", "#7C7E07", "#A6C15C", "#418DAA", "#407E07", "#4170AA", "#8B68DF", "#6CC3E5", "#2347C7")
+
 .plot_colors <- function(n, plot_colors = NULL) {
   if (n < 1) return(character())
-
-  colors <- plot_colors %||% .tab10
-  rep(colors, length.out = n)
+  colors <- plot_colors %||% .copylot_colors
+  if (length(colors) == 1L) {
+    presets <- list(copylot=.copylot_colors, ukj=.ukj_colors, tab10=.tab10,
+      "Proteomics CoPYlot Colors"=.copylot_colors, "UKJ Colors"=.ukj_colors,
+      "Matplotlib tab10 Colors"=.tab10)
+    if (colors %in% names(presets)) colors <- presets[[colors]]
+  }
+  if (!length(colors)) stop("At least one plot color is required.", call.=FALSE)
+  rep(colors, length.out=n)
 }
 
 .set_notebook_plot_size <- function(width, height, units = "cm") {
@@ -378,13 +397,22 @@ rename_cols <- function(df) {
   rename_map <- c(Run="File.Name", PG.ProteinNames="ProteinNames", PG.ProteinGroups="ProteinNames",
     Protein.IDs="ProteinNames", PG.Genes="GeneNames", Protein.Names="ProteinNames",
     "Protein IDs"="ProteinNames", Genes="GeneNames", "Gene names"="GeneNames",
-    PEP.StrippedSequence="Stripped.Sequence", Sequence="Stripped.Sequence",
+    PEP.StrippedSequence="Stripped.Sequence", EG.PrecursorId="Precursor.Id", Sequence="Stripped.Sequence",
     EG.ModifiedSequence="Modified.Sequence", R.FileName="File.Name",
     EG.iRTPredicted="Predicted.RT", EG.iRTEmpirical="RT")
   tq <- grep("^EG\\.TotalQuantity", names(df), value = TRUE)
-  if (length(tq)) rename_map[tq[1]] <- "Precursor.Quantity"
+  if (!"Precursor.Quantity" %in% names(df)) {
+    if ("FG.Quantity" %in% names(df)) rename_map["FG.Quantity"] <- "Precursor.Quantity"
+    else if (length(tq)) rename_map[tq[1]] <- "Precursor.Quantity"
+  }
   hit <- intersect(names(rename_map), names(df))
   names(df)[match(hit, names(df))] <- unname(rename_map[hit])
+  if (!"Precursor.Id" %in% names(df) && all(c("FG.LabeledSequence", "FG.Charge") %in% names(df))) {
+    sequence <- trimws(as.character(df[["FG.LabeledSequence"]]))
+    charge <- suppressWarnings(as.numeric(as.character(df[["FG.Charge"]])))
+    valid <- !is.na(sequence) & nzchar(sequence) & is.finite(charge) & charge > 0 & charge == trunc(charge)
+    df[["Precursor.Id"]] <- ifelse(valid, paste(sequence, charge, sep="/"), NA_character_)
+  }
   if (all(c("GeneNames", "ProteinNames", "Raw file", "Intensity") %in% names(df))) {
     df$Intensity <- suppressWarnings(as.numeric(df$Intensity))
     df$Intensity[is.na(df$Intensity)] <- 0
@@ -736,12 +764,46 @@ inverse_log2_transform_data <- function(data, meta) {
 
 # Optional Cambridge filtering. Row names survive for normalize_data(fit_rows=).
 # Exact names/accessions, every member must match; never match gene symbols.
-filter_contaminants <- function(data, enabled = FALSE, categories = 1:5,
+filter_contaminants <- function(data, enabled = FALSE, categories = 1:6,
                                 match_accessions = TRUE, database = NULL) {
   if (!enabled) return(data)
-  if (!length(categories) || anyNA(categories) || !all(categories %in% 1:5)) {
+  if (!length(categories) || anyNA(categories) || !all(categories %in% 1:6)) {
     stop("Select at least one valid contaminant category.", call. = FALSE)
   }
+  upstream <- rep(FALSE, nrow(data))
+  if (6 %in% categories) {
+    for (column in names(data)[gsub("[^a-z0-9]", "", tolower(names(data))) == "potentialcontaminant"]) {
+      flags <- trimws(as.character(data[[column]]))
+      upstream <- upstream | (!is.na(flags) & flags == "+")
+    }
+    columns <- intersect(c("ProteinNames", "Phosphoprotein", "ProteinAccessions", "Protein_group"), names(data))
+    # Within one identifier column every member must carry a prefix; a column
+    # without any prefix may name the same proteins (see the Python core).
+    prefixed <- vapply(seq_len(nrow(data)), function(i) {
+      values <- vapply(columns, function(column) as.character(data[[column]][i]), character(1))
+      values <- values[!is.na(values) & nzchar(trimws(values))]
+      groups <- lapply(values, function(value) {
+        parts <- strsplit(paste0(value, ";.sentinel"), ";", fixed = TRUE)[[1]]
+        trimws(parts[-length(parts)])
+      })
+      is_marked <- lapply(groups, function(group) grepl("^(CON__|contam_|cRAP-)", sub("^>", "", group)))
+      marked <- unlist(mapply(function(group, flags) group[flags], groups, is_marked, SIMPLIFY = FALSE), use.names = FALSE)
+      ids <- function(member) {
+        member <- sub("^(CON__|contam_|cRAP-)", "", sub("^>", "", member))
+        parts <- strsplit(strsplit(member, " ", fixed = TRUE)[[1]][1], "|", fixed = TRUE)[[1]]
+        if (length(parts) == 3L && parts[1] %in% c("sp", "tr")) return(c(parts[3], parts[2]))
+        if (length(parts) == 4L && parts[1] %in% c("sp", "tr") && startsWith(parts[2], "cRAP")) return(c(parts[4], parts[3]))
+        c(member, member)
+      }
+      identifiers <- unlist(lapply(marked, ids), use.names = FALSE)
+      length(marked) > 0L && all(vapply(seq_along(groups), function(k) {
+        if (any(is_marked[[k]])) return(all(is_marked[[k]]))
+        all(vapply(groups[[k]], function(member) any(ids(member) %in% identifiers), logical(1)))
+      }, logical(1)))
+    }, logical(1))
+    upstream <- upstream | prefixed
+  }
+  if (all(categories == 6)) return(data[!upstream, , drop = FALSE])
   if (is.null(database)) {
     candidates <- c(file.path(.copylot_source_dir, "data", "crap_ccp_metadata.csv"),
                     file.path(dirname(.copylot_source_dir), "data", "db", "crap_ccp_metadata.csv"))
@@ -769,7 +831,7 @@ filter_contaminants <- function(data, enabled = FALSE, categories = 1:5,
     trimws(parts[-length(parts)])
   }
   identity <- function(member) {
-    member <- sub("^(CON__|contam_)", "", sub("^>", "", member))
+    member <- sub("^(CON__|contam_|cRAP-)", "", sub("^>", "", member))
     token <- strsplit(member, " ", fixed = TRUE)[[1]][1]
     parts <- strsplit(token, "|", fixed = TRUE)[[1]]
     if (length(parts) == 3L && parts[1] %in% c("sp", "tr")) return(c(parts[3], parts[2]))
@@ -799,7 +861,7 @@ filter_contaminants <- function(data, enabled = FALSE, categories = 1:5,
     if (has_accessions) return(matches(accession))
     FALSE
   }, logical(1))
-  data[!removed, , drop = FALSE]
+  data[!(removed | upstream), , drop = FALSE]
 }
 
 filter_data <- function(data, meta, num, mode = "per_group", method = "at_least_n", percentage = 70) {
@@ -1081,7 +1143,7 @@ transform_phosprot <- function(
   output
 }
 
-qqnorm_plot <- function(data, meta, seed = 1) {
+qqnorm_plot <- function(data, meta, seed = 1, plot_colors=NULL) {
   values <- as.vector(.numeric_matrix(data, meta$sample))
   values <- values[is.finite(values)]
 
@@ -1096,7 +1158,7 @@ qqnorm_plot <- function(data, meta, seed = 1) {
     ylab = "Sample Quantiles",
     pch = 16,
     cex = 0.45,
-    col = grDevices::adjustcolor(.tab10[1], alpha.f = 0.55)
+    col = grDevices::adjustcolor(.plot_colors(1, plot_colors)[1], alpha.f = 0.55)
   )
   qqline(values, col = "red", lwd = 1.5)
 
@@ -1112,7 +1174,7 @@ qqnorm_plot <- function(data, meta, seed = 1) {
 # the collapsed matrix. Retain the non-imputed site matrix for coverage checks;
 # aggregate imputed log2 values with data_scale="log2".
 # This generic helper cannot infer biological dataset level from an arbitrary frame.
-impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TRUE, seed=1, method="quantile", down_shift=1.8, width=0.3) {
+impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TRUE, seed=1, method="quantile", down_shift=1.8, width=0.3, plot_colors=NULL) {
   .validate_meta_samples(meta)
   .validate_sample_values(data, meta)
   method <- tolower(trimws(method))
@@ -1142,7 +1204,7 @@ impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TR
       complete_values,
       breaks = 50,
       probability = TRUE,
-      col = grDevices::adjustcolor(.tab10[1], alpha.f = 0.45),
+      col = grDevices::adjustcolor(.plot_colors(2, plot_colors)[1], alpha.f = 0.45),
       border = NA,
       xlab = "log2 Intensity",
       ylab = "Density",
@@ -1152,14 +1214,14 @@ impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TR
       incomplete_values,
       breaks = 50,
       probability = TRUE,
-      col = grDevices::adjustcolor(.tab10[2], alpha.f = 0.45),
+      col = grDevices::adjustcolor(.plot_colors(2, plot_colors)[2], alpha.f = 0.45),
       border = NA,
       add = TRUE
     )
     legend(
       "topright",
       c("Without Missing Values", "With Missing Values"),
-      fill = grDevices::adjustcolor(.tab10[1:2], alpha.f = 0.45),
+      fill = grDevices::adjustcolor(.plot_colors(2, plot_colors), alpha.f = 0.45),
       border = NA,
       bty = "n"
     )
@@ -1242,7 +1304,7 @@ impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TR
       non_imputed,
       breaks = 50,
       probability = TRUE,
-      col = grDevices::adjustcolor(.tab10[1], alpha.f = 0.45),
+      col = grDevices::adjustcolor(.plot_colors(2, plot_colors)[1], alpha.f = 0.45),
       border = NA,
       xlab = "log2 Intensity",
       ylab = "Density",
@@ -1252,14 +1314,14 @@ impute_values <- function(data, meta, q=0.01, adj_std=0.3, ret=0, sample_wise=TR
       imputed,
       breaks = 50,
       probability = TRUE,
-      col = grDevices::adjustcolor(.tab10[2], alpha.f = 0.45),
+      col = grDevices::adjustcolor(.plot_colors(2, plot_colors)[2], alpha.f = 0.45),
       border = NA,
       add = TRUE
     )
     legend(
       "topright",
       c("Non-Imputed Values", "Imputed Values"),
-      fill = grDevices::adjustcolor(.tab10[1:2], alpha.f = 0.45),
+      fill = grDevices::adjustcolor(.plot_colors(2, plot_colors), alpha.f = 0.45),
       border = NA,
       bty = "n"
     )
@@ -1543,6 +1605,9 @@ coverage_plot_pep <- function(
     quantity_column = "Precursor.Quantity",
     level = "peptide"
 ) {
+  if (!identical(quantity_column, "Precursor.Quantity")) {
+    stop("This plot uses Precursor.Quantity for peptide and precursor detection.", call.=FALSE)
+  }
   if (!level %in% c("peptide", "precursor")) stop("Coverage level must be peptide or precursor.", call.=FALSE)
   feature_column <- if (level == "precursor") "Precursor.Id" else "Stripped.Sequence"
   data <- if (is.data.frame(data2_path)) {
@@ -2428,15 +2493,37 @@ abundance_axis_label <- function(workflow, centered = FALSE) {
   }
 }
 
-abundance_plot <- function(data, meta, workflow="Protein", plot_colors=NULL, width_cm=20, height_cm=10, dpi=300, legend=TRUE, header=TRUE, data_scale="log2", centered=FALSE) {
+.abundance_selection <- function(features, values, search = NULL, top_high = 0, top_low = 0) {
+  if (!length(search) && top_high <= 0 && top_low <= 0) return(rep(FALSE, length(values)))
+  normalize <- function(x) sub("_(human|mouse)$", "", tolower(trimws(as.character(x))))
+  terms <- normalize(unlist(strsplit(search %||% character(), "[[:space:]]+")))
+  terms <- terms[!is.na(terms) & nzchar(terms)]
+  selected <- vapply(as.character(features), function(feature) {
+    normalize(feature) %in% terms || any(normalize(strsplit(feature, "[;,]")[[1]]) %in% terms)
+  }, logical(1))
+  ordered <- order(values, decreasing = TRUE, na.last = NA)
+  ordered <- ordered[is.finite(values[ordered])]
+  selected[head(ordered, max(0L, as.integer(top_high)))] <- TRUE
+  selected[tail(ordered, max(0L, as.integer(top_low)))] <- TRUE
+  unname(selected & is.finite(values))
+}
+
+abundance_plot <- function(data, meta, workflow="Protein", plot_colors=NULL, width_cm=20, height_cm=10, dpi=300, legend=TRUE, header=TRUE, data_scale="log2", centered=FALSE,
+                           top_high=0, top_low=0, search=NULL, highlight_outline=TRUE, highlight_labels=FALSE,
+                           highlight_color="#333333", highlight_size=NULL, label_size=7, label_column=NULL, point_size=2.7, highlight_width=1) {
   data <- .prepare_intensity_data(data, meta$sample, data_scale)
   if (tolower(trimws(data_scale)) == "log2") {
     data <- inverse_log2_transform_data(data, meta)
   }
-  key_col <- .workflow_col(workflow)
+  key_col <- .resolve_volcano_label_column(data, workflow, label_column)
+  if (!is.null(label_column)) {
+    missing_label <- is.na(data[[key_col]]) | !nzchar(trimws(data[[key_col]]))
+    data[[key_col]][missing_label] <- data[[.workflow_col(workflow)]][missing_label]
+  }
   conditions <- unique(meta$condition)
   colors <- .plot_colors(length(conditions), plot_colors)
 
+  ranked_features <- list()
   ranked_values <- lapply(conditions, function(condition) {
     columns <- meta$sample[meta$condition == condition]
     # log10 of the value, with no pseudocount: the axis names the quantity, so
@@ -2445,7 +2532,10 @@ abundance_plot <- function(data, meta, workflow="Protein", plot_colors=NULL, wid
     means <- rowMeans(.numeric_matrix(data, columns), na.rm = TRUE)
     means[!is.na(means) & means <= 0] <- NA_real_
     values <- log10(means)
-    sort(values[is.finite(values)], decreasing = TRUE)
+    ordered <- order(values, decreasing = TRUE, na.last = NA)
+    ordered <- ordered[is.finite(values[ordered])]
+    ranked_features[[as.character(condition)]] <<- as.character(data[[key_col]][ordered])
+    values[ordered]
   })
 
   x_max <- max(c(1L, lengths(ranked_values)))
@@ -2466,23 +2556,52 @@ abundance_plot <- function(data, meta, workflow="Protein", plot_colors=NULL, wid
     bty = "l"
   )
 
+  placed <- list()
+  has_highlights <- FALSE
   for (i in seq_along(ranked_values)) {
     points(
       seq_along(ranked_values[[i]]),
       ranked_values[[i]],
       pch = 16,
-      cex = 0.45,
+      cex = point_size / 6,
       col = colors[i]
     )
+    features <- ranked_features[[as.character(conditions[i])]]
+    selected <- .abundance_selection(features, ranked_values[[i]], search, top_high, top_low)
+    has_highlights <- has_highlights || (highlight_outline && any(selected))
+    x <- which(selected)
+    y <- ranked_values[[i]][selected]
+    if (highlight_outline && length(x)) points(x, y, pch=1, cex=point_size / 6, col=highlight_color %||% "#333333", lwd=highlight_width)
+    if (highlight_labels && length(x)) {
+      labels <- features[selected]
+      if (length(conditions) > 1) labels <- paste0(labels, " (", conditions[i], ")")
+      for (j in seq_along(x)) {
+        width <- strwidth(labels[j], cex=label_size / 12)
+        height <- strheight(labels[j], cex=label_size / 12)
+        label_x <- max(par("usr")[1] + width/2, min(x[j], par("usr")[2] - width/2))
+        for (offset in c(1, -1, 2, -2, 3, -3, 4, -4, 5, -5)) {
+          label_y <- y[j] + offset * height * 1.5
+          box <- c(label_x - width/2, label_x + width/2, label_y - height/2, label_y + height/2)
+          overlaps <- vapply(placed, function(old) box[1] < old[2] && box[2] > old[1] && box[3] < old[4] && box[4] > old[3], logical(1))
+          if (!any(overlaps) && box[1] >= par("usr")[1] && box[2] <= par("usr")[2] && box[3] >= par("usr")[3] && box[4] <= par("usr")[4]) {
+            segments(x[j], y[j], label_x, label_y, col=colors[i], lwd=0.5)
+            text(label_x, label_y, labels=labels[j], col=colors[i], cex=label_size / 12)
+            placed[[length(placed) + 1L]] <- box
+            break
+          }
+        }
+      }
+    }
   }
 
   if (legend) {
     legend(
-      "topright",
-      inset = c(-0.28, 0),
-      legend = conditions,
-      col = colors,
-      pch = 16,
+      x = par("usr")[2] + strwidth("M") * 0.6, y = par("usr")[4],
+      xjust = 0, yjust = 1,
+      legend = c(conditions, if (has_highlights) "Highlighted"),
+      col = c(colors, if (has_highlights) highlight_color %||% "#333333"),
+      pch = c(rep(16, length(conditions)), if (has_highlights) 1),
+      pt.lwd = c(rep(1, length(conditions)), if (has_highlights) highlight_width),
       title = "Condition",
       bty = "n"
     )
@@ -2500,124 +2619,72 @@ interactive_abundance_plot <- function(
     search = NULL,
     max_ptms = 5,
     data_scale = "log2",
-    centered = FALSE
+    centered = FALSE,
+    top_high = 0, top_low = 0,
+    highlight_outline = TRUE, highlight_labels = FALSE,
+    highlight_color = "#333333", highlight_size = NULL, label_size = 7,
+    plot_colors = NULL, label_column = NULL, point_size = 6, highlight_width = 1
 ) {
   .require_pkg("plotly")
 
-  feature_col <- .workflow_col(workflow)
-  sample_columns <- meta$sample[meta$condition == condition]
-  data <- .prepare_intensity_data(data, sample_columns, data_scale)
-  if (tolower(trimws(data_scale)) == "log2") {
-    data <- inverse_log2_transform_data(data, meta[meta$condition == condition, , drop = FALSE])
+  feature_col <- .resolve_volcano_label_column(data, workflow, label_column)
+  if (!is.null(label_column)) {
+    missing_label <- is.na(data[[feature_col]]) | !nzchar(trimws(data[[feature_col]]))
+    data[[feature_col]][missing_label] <- data[[.workflow_col(workflow)]][missing_label]
   }
-  # See plot_abundance: log10 of the value, no pseudocount.
-  condition_means <- rowMeans(.numeric_matrix(data, sample_columns), na.rm = TRUE)
-  condition_means[!is.na(condition_means) & condition_means <= 0] <- NA_real_
-  condition_means <- log10(condition_means)
-
-  plot_data <- data.frame(
-    Feature = sub(";.*$", "", as.character(data[[feature_col]])),
-    log10Intensity = condition_means,
-    stringsAsFactors = FALSE
-  )
-  plot_data <- plot_data[is.finite(plot_data$log10Intensity), , drop = FALSE]
-
-  if (!nrow(plot_data)) {
-    return(plotly::layout(
-      plotly::plot_ly(x = numeric(), y = numeric(), type = "scatter", mode = "markers"),
-      title = paste0("Abundance plot - ", condition, " (", workflow, ")"),
-      xaxis = list(title = paste(workflow, "Rank")),
-      yaxis = list(title = abundance_axis_label(workflow, centered))
-    ))
-  }
-
-  if (workflow == "Phosphoprotein") {
-    plot_data$site_num <- if ("site_num" %in% names(data)) {
-      data$site_num[match(plot_data$Feature, data$Phosphoprotein)]
-    } else {
-      1
-    }
-
-    ptm_values <- if ("PTM_Collapse_keys" %in% names(data)) {
-      as.character(data$PTM_Collapse_keys[match(plot_data$Feature, data$Phosphoprotein)])
-    } else {
-      rep("", nrow(plot_data))
-    }
-
-    truncate_ptms <- function(value) {
-      sites <- strsplit(value, ";", fixed = TRUE)[[1]]
-      displayed <- paste(head(sites, max_ptms), collapse = ";")
-      if (length(sites) > max_ptms) paste0(displayed, ";...") else displayed
-    }
-
-    plot_data$HoverLabel <- paste0(
-      plot_data$Feature,
-      " (", plot_data$site_num, " sites)<br>",
-      vapply(ptm_values, truncate_ptms, character(1))
-    )
-  } else {
-    plot_data$HoverLabel <- plot_data$Feature
-  }
-
-  plot_data <- plot_data[
-    order(plot_data$log10Intensity, decreasing = TRUE),
-    ,
-    drop = FALSE
-  ]
-  plot_data$Rank <- seq_len(nrow(plot_data))
-  search <- search %||% character()
-  plot_data$highlight <- plot_data$Feature %in% search
-  plot_data$TextLabel <- ifelse(plot_data$highlight, plot_data$Feature, "")
-
-  hover_text <- paste0(
-    plot_data$HoverLabel,
-    "<br>Rank: ", plot_data$Rank,
-    "<br>log10 intensity: ", signif(plot_data$log10Intensity, 4)
-  )
-
+  conditions <- if (condition == "All Conditions") unique(meta$condition) else condition
+  colors <- .plot_colors(length(conditions), plot_colors)
+  samples <- meta$sample[meta$condition %in% conditions]
+  data <- .prepare_intensity_data(data, samples, data_scale)
+  if (tolower(trimws(data_scale)) == "log2") data[samples] <- lapply(data[samples], function(x) 2^as.numeric(x))
   fig <- plotly::plot_ly()
-  fig <- plotly::add_markers(
-    fig,
-    data = plot_data,
-    x = ~Rank,
-    y = ~log10Intensity,
-    text = hover_text,
-    hoverinfo = "text",
-    marker = list(size = 6, color = "#1f77b4", opacity = 0.8),
-    showlegend = FALSE
-  )
-
-  highlighted_data <- plot_data[plot_data$highlight, , drop = FALSE]
-  if (nrow(highlighted_data)) {
-    highlighted_hover <- hover_text[plot_data$highlight]
-    fig <- plotly::add_trace(
-      fig,
-      data = highlighted_data,
-      x = ~Rank,
-      y = ~log10Intensity,
-      text = ~Feature,
-      hovertext = highlighted_hover,
-      hoverinfo = "text",
-      textposition = "top center",
-      textfont = list(size = 10, color = "#d62728"),
-      type = "scatter",
-      mode = "markers+text",
-      marker = list(
-        size = 8,
-        color = "#d62728",
-        line = list(color = "black", width = 1)
-      ),
-      showlegend = FALSE
-    )
+  has_highlights <- FALSE
+  for (i in seq_along(conditions)) {
+    cond <- conditions[i]
+    columns <- meta$sample[meta$condition == cond]
+    means <- rowMeans(.numeric_matrix(data, columns), na.rm=TRUE)
+    means[!is.na(means) & means <= 0] <- NA_real_
+    values <- log10(means)
+    ordered <- order(values, decreasing=TRUE, na.last=NA)
+    ordered <- ordered[is.finite(values[ordered])]
+    values <- values[ordered]
+    features <- as.character(data[[feature_col]][ordered])
+    ranks <- seq_along(values)
+    hover_labels <- features
+    if (workflow == "Phosphoprotein") {
+      site_counts <- if ("site_num" %in% names(data)) data$site_num[ordered] else rep(1, length(ordered))
+      ptms <- if ("PTM_Collapse_keys" %in% names(data)) as.character(data$PTM_Collapse_keys[ordered]) else rep("", length(ordered))
+      displayed <- vapply(strsplit(ptms, ";", fixed=TRUE), function(sites) {
+        paste0(paste(head(sites, max_ptms), collapse=";"), if (length(sites) > max_ptms) ";..." else "")
+      }, character(1))
+      hover_labels <- paste0(features, " (", site_counts, " sites)<br>", displayed)
+    }
+    hover <- paste0(hover_labels, "<br>Condition: ", cond, "<br>Rank: ", ranks, "<br>log10 intensity: ", signif(values, 4))
+    fig <- plotly::add_trace(fig, x=ranks, y=values, type="scatter", mode="markers",
+                            marker=list(size=point_size, color=colors[i]), name=as.character(cond),
+                            legendgroup=as.character(cond), text=hover, hoverinfo="text")
+    selected <- .abundance_selection(features, values, search, top_high, top_low)
+    outline <- highlight_outline
+    labels <- FALSE
+    if (any(selected) && (outline || labels)) {
+      has_highlights <- has_highlights || outline
+      texts <- features[selected]
+      if (length(conditions) > 1) texts <- paste0(texts, " (", cond, ")")
+      fig <- plotly::add_trace(fig, x=ranks[selected], y=values[selected], type="scatter",
+        mode=if (outline && labels) "markers+text" else if (outline) "markers" else "text",
+        marker=if (outline) list(size=point_size, color=highlight_color %||% "#333333", symbol="circle-open", line=list(width=highlight_width)) else NULL,
+        text=if (labels) texts else NULL, textposition="top center",
+        textfont=if (labels) list(color=colors[i], size=label_size * 96 / 72) else NULL,
+        hovertext=hover[selected], hoverinfo="text", name=paste(cond, "(Highlighted)"),
+        legendgroup=as.character(cond), showlegend=FALSE)
+    }
   }
-
-  plotly::layout(
-    fig,
-    title = paste0("Abundance plot - ", condition, " (", workflow, ")"),
-    xaxis = list(title = paste(workflow, "Rank")),
-    yaxis = list(title = abundance_axis_label(workflow, centered)),
-    hovermode = "closest"
-  )
+  if (has_highlights) fig <- plotly::add_trace(fig, x=I(list(NA_real_)), y=I(list(NA_real_)), type="scatter", mode="markers",
+    marker=list(size=6, color=highlight_color %||% "#333333", symbol="circle-open", line=list(width=highlight_width)),
+    name="Highlighted", legendgroup="_copylot_highlight_legend", showlegend=TRUE, hoverinfo="skip", inherit=FALSE)
+  return(plotly::layout(fig, title=paste0("Abundance plot - ", condition, " (", workflow, ")"),
+                        xaxis=list(title=paste(workflow, "Rank")),
+                        yaxis=list(title=abundance_axis_label(workflow, centered))))
 }
 
 sample_correlation_matrix <- function(data, meta, id=TRUE, data_scale="log2") {
@@ -3307,7 +3374,8 @@ volcano_data_f_control <- function(data, meta, condition1, condition2, condition
     in_log2fc,
     uncorrected,
     highlight_terms = NULL,
-    max_chars = 100
+    max_chars = 100, top_up = 0, top_down = 0,
+    highlight_outline = TRUE, point_size = 5, highlight_width = 1, highlight_color = "lime"
 ) {
   .require_pkg("plotly")
 
@@ -3325,13 +3393,13 @@ volcano_data_f_control <- function(data, meta, condition1, condition2, condition
   normalized_terms <- if (is.null(highlight_terms)) {
     character()
   } else {
-    tolower(sub("_.*$", "", as.character(highlight_terms)))
+    sub("_(human|mouse)$", "", tolower(trimws(unlist(strsplit(as.character(highlight_terms), "[[:space:]]+")))))
   }
 
   normalized_labels <- vapply(
-    strsplit(as.character(volcano_df[[label_col]]), ";", fixed = TRUE),
+    strsplit(as.character(volcano_df[[label_col]]), "[;,]"),
     function(values) {
-      paste(tolower(sub("_.*$", "", values)), collapse = ";")
+      paste(sub("_(human|mouse)$", "", tolower(trimws(values))), collapse = ";")
     },
     character(1)
   )
@@ -3341,13 +3409,20 @@ volcano_data_f_control <- function(data, meta, condition1, condition2, condition
     logical(1)
   )
 
+  for (direction in c("Upregulated", "Downregulated")) {
+    count <- if (direction == "Upregulated") top_up else top_down
+    candidates <- which(volcano_df$significance == direction)
+    ordered <- candidates[order(-volcano_df$neg_log10_selected_pval[candidates], -abs(volcano_df$log2FC[candidates]))]
+    highlighted[head(ordered, max(0L, as.integer(count)))] <- TRUE
+  }
+  highlighted <- highlighted & highlight_outline
   fig <- plotly::plot_ly()
 
   for (significance in names(color_mapping)) {
     significance_rows <- volcano_df$significance == significance
 
     for (highlight_state in c(FALSE, TRUE)) {
-      rows <- significance_rows & highlighted == highlight_state
+      rows <- if (highlight_state) significance_rows & highlighted else significance_rows
       if (!any(rows)) next
 
       subset <- volcano_df[rows, , drop = FALSE]
@@ -3367,19 +3442,23 @@ volcano_data_f_control <- function(data, meta, condition1, condition2, condition
         mode = "markers",
         text = hover_text,
         hoverinfo = "text",
-        name = trace_name,
+        name = trace_name, legendgroup = significance, showlegend = !highlight_state,
         marker = list(
           color = unname(color_mapping[significance]),
-          size = if (highlight_state) 8 else 5,
+          size = point_size,
           line = list(
-            color = if (highlight_state) "lime" else unname(color_mapping[significance]),
-            width = if (highlight_state) 3 else 0
+            color = if (highlight_state) highlight_color else unname(color_mapping[significance]),
+            width = if (highlight_state) highlight_width else 0
           )
         ),
         inherit = FALSE
       )
     }
   }
+
+  if (any(highlighted)) fig <- plotly::add_trace(fig, x=I(list(NA_real_)), y=I(list(NA_real_)), type="scatter", mode="markers",
+    marker=list(size=6, color=highlight_color, symbol="circle-open", line=list(width=highlight_width)),
+    name="Highlighted", legendgroup="_copylot_highlight_legend", showlegend=TRUE, hoverinfo="skip", inherit=FALSE)
 
   shapes <- list(
     list(
@@ -3451,7 +3530,8 @@ volcano_plot_h <- function(
     in_log2fc = 1,
     uncorrected = FALSE,
     highlight_terms = NULL,
-    max_chars = 100
+    max_chars = 100, top_up = 0, top_down = 0,
+    highlight_outline = TRUE, point_size = 5, highlight_width = 1, highlight_color = "lime"
 ) {
   .volcano_plot_base(
     volcano_df,
@@ -3461,7 +3541,8 @@ volcano_plot_h <- function(
     in_log2fc,
     uncorrected,
     highlight_terms = highlight_terms,
-    max_chars = max_chars
+    max_chars = max_chars, top_up = top_up, top_down = top_down,
+    highlight_outline = highlight_outline, point_size = point_size, highlight_width = highlight_width, highlight_color = highlight_color
   )
 }
 
@@ -4524,7 +4605,7 @@ anova_plot <- function(
   mtext(
     paste0("ANOVA heatmap (", nrow(plot_data), " rows)"),
     outer = TRUE,
-    line = -1.2,
+    line = 0.5,
     cex = 1.1,
     font = 2
   )
@@ -4702,7 +4783,7 @@ anova_plot_cluster <- function(
   mtext(
     paste0("ANOVA cluster heatmap (", nrow(anova_cluster_df), " rows)"),
     outer = TRUE,
-    line = -1.2,
+    line = 0.5,
     cex = 1.1,
     font = 2
   )
@@ -5677,8 +5758,7 @@ rt_vs_pred_rt_plot <- function(
     width = 8,
     height = 6,
     dpi = 100,
-    seed = 1
-) {
+    seed = 1, plot_colors=NULL) {
   data <- read_data(data_path)
   if (!all(c("Predicted.RT", "RT") %in% names(data))) {
     stop("Data must contain 'Predicted.RT' and 'RT' columns.", call. = FALSE)
@@ -5702,7 +5782,7 @@ rt_vs_pred_rt_plot <- function(
       data$RT,
       pch = 16,
       cex = 0.2,
-      col = grDevices::adjustcolor("black", alpha.f = 0.2),
+      col = grDevices::adjustcolor(.plot_colors(1, plot_colors)[1], alpha.f = 0.2),
       xlab = "Predicted RT",
       ylab = "Actual RT",
       main = if (header) "Retention Time Plot" else ""
@@ -5746,7 +5826,7 @@ rt_vs_pred_rt_plot <- function(
   .plot_result()
 }
 
-modification_plot <- function(data2_path, meta, id=TRUE, header=TRUE, legend=TRUE, width=10, height=6, dpi=100) {
+modification_plot <- function(data2_path, meta, id=TRUE, header=TRUE, legend=TRUE, width=10, height=6, dpi=100, plot_colors=NULL) {
   data <- if (is.data.frame(data2_path)) {
     data2_path
   } else {
@@ -5787,11 +5867,8 @@ modification_plot <- function(data2_path, meta, id=TRUE, header=TRUE, legend=TRU
   counts <- t(counts)
   keep <- rowSums(counts) > 0
   counts <- counts[keep, , drop = FALSE]
-  modification_colors <- c(
-    Carbamidomethylation = "blue",
-    Oxidation = "red",
-    Acetylation = "green"
-  )
+  modification_colors <- setNames(.plot_colors(3, plot_colors),
+    c("Carbamidomethylation", "Oxidation", "Acetylation"))
 
   .set_notebook_plot_size(width, height, units = "in")
   old_par <- .set_plot_margins(legend = legend, rotated_labels = TRUE)
@@ -5852,7 +5929,7 @@ count_missed_cleavages <- function(sequence, protease = "trypsin") {
   vapply(matches, function(m) if (m[1] == -1L) 0L else length(m), integer(1))
 }
 
-missed_cleavage_plot <- function(data2_path, meta, id=TRUE, text=TRUE, text_size=8, header=TRUE, protease="trypsin", width=10, height=6, dpi=100) {
+missed_cleavage_plot <- function(data2_path, meta, id=TRUE, text=TRUE, text_size=8, header=TRUE, protease="trypsin", width=10, height=6, dpi=100, plot_colors=NULL) {
   resolved_protease <- normalize_protease(protease)
   data <- sanitize_dataframe(read_data(data2_path))
   file_col <- grep("file", names(data), ignore.case = TRUE, value = TRUE)[1]
@@ -5894,7 +5971,7 @@ missed_cleavage_plot <- function(data2_path, meta, id=TRUE, text=TRUE, text_size
   }
   rownames(percentages) <- cleavage_levels
   colnames(percentages) <- samples
-  colors <- grDevices::hcl.colors(length(cleavage_levels), "Set 2")
+  colors <- .plot_colors(max(as.integer(cleavage_levels)) + 1L, plot_colors)[as.integer(cleavage_levels) + 1L]
 
   .set_notebook_plot_size(width, height, units = "in")
   old_par <- .set_plot_margins(legend = TRUE, rotated_labels = TRUE)
@@ -6374,12 +6451,13 @@ phossite_on_prot_regulation <- function(data, meta, protein, conditions=NULL, id
   )
 }
 
-phossite_coverage_plot <- function(data, meta, id=FALSE, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI="blue", color_notclassI="orange", is_log2=TRUE, localization_cutoff=0) {
+phossite_coverage_plot <- function(data, meta, id=FALSE, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI=NULL, color_notclassI=NULL, is_log2=TRUE, localization_cutoff=0, plot_colors=NULL) {
   data <- filter_localization(data, localization_cutoff)
   counts <- .phossite_coverage_counts(data, meta, is_log2)
   meta <- .sample_meta(meta, id=id, newline=TRUE, zero_based=TRUE)
   if (!any(counts["Unclassified", ] > 0)) counts <- counts[1:2, , drop=FALSE]
-  colors <- c(color_classI, color_notclassI, "#94a3b8")[seq_len(nrow(counts))]
+  colors <- c(color_classI %||% .plot_colors(3, plot_colors)[1],
+    color_notclassI %||% .plot_colors(3, plot_colors)[2], .plot_colors(3, plot_colors)[3])[seq_len(nrow(counts))]
   .set_notebook_plot_size(width, height)
   old_par <- .set_plot_margins(legend=legend, rotated_labels=TRUE)
   on.exit(par(old_par), add=TRUE)
@@ -6390,13 +6468,13 @@ phossite_coverage_plot <- function(data, meta, id=FALSE, header=TRUE, legend=TRU
   .plot_result()
 }
 
-sty_plot <- function(data, localization_cutoff=0) {
+sty_plot <- function(data, localization_cutoff=0, plot_colors=NULL) {
   data <- filter_localization(data, localization_cutoff)
   tab <- phospho_sty_table(data)
   counts <- setNames(tab$Count, tab$Residue)
   percentages <- tab$Percentage
   total <- sum(counts)
-  colors <- c(S = "#4C78A8", T = "#F58518", Y = "#54A24B")
+  colors <- setNames(.plot_colors(3, plot_colors), c("S", "T", "Y"))
 
   old_par <- par(mar = c(4.5, 4.5, 3.5, 4.5))
   on.exit(par(old_par), add = TRUE)
@@ -6430,7 +6508,7 @@ sty_plot <- function(data, localization_cutoff=0) {
   .plot_result()
 }
 
-phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI="blue", color_notclassI="orange", seed=1, is_log2=TRUE, localization_cutoff=0) {
+phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE, width=20, height=10, dpi=300, color_classI=NULL, color_notclassI=NULL, seed=1, is_log2=TRUE, localization_cutoff=0, plot_colors=NULL) {
   data <- filter_localization(data, localization_cutoff)
   counts <- .phossite_coverage_counts(data, meta, is_log2)
   if (!any(counts["Unclassified", ] > 0)) counts <- counts[1:2, , drop=FALSE]
@@ -6439,7 +6517,8 @@ phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE,
   means <- do.call(cbind, lapply(groups, rowMeans))
   sds <- do.call(cbind, lapply(groups, function(group) apply(group, 1, sd)))
   sds[!is.finite(sds)] <- 0
-  colors <- c(color_classI, color_notclassI, "#94a3b8")[seq_len(nrow(counts))]
+  colors <- c(color_classI %||% .plot_colors(3, plot_colors)[1],
+    color_notclassI %||% .plot_colors(3, plot_colors)[2], .plot_colors(3, plot_colors)[3])[seq_len(nrow(counts))]
   .set_notebook_plot_size(width, height)
   old_par <- .set_plot_margins(legend=legend, rotated_labels=TRUE)
   on.exit(par(old_par), add=TRUE)
@@ -6461,7 +6540,7 @@ phossite_coverage_plot_summary <- function(data, meta, header=TRUE, legend=TRUE,
   .plot_result()
 }
 
-simple_phos_site_plot <- function(data, filter_value=0, width_cm=15, height_cm=10, dpi=100, color="skyblue") {
+simple_phos_site_plot <- function(data, filter_value=0, width_cm=15, height_cm=10, dpi=100, color=NULL, plot_colors=NULL) {
   filtered_data <- data[data$PTM_localization >= filter_value, , drop = FALSE]
   cleaned_sequences <- toupper(gsub("[^[:alnum:]_]", "", filtered_data$UPD_seq))
   counts <- c(
@@ -6478,7 +6557,7 @@ simple_phos_site_plot <- function(data, filter_value=0, width_cm=15, height_cm=1
   mids <- barplot(
     counts,
     horiz = TRUE,
-    col = color,
+    col = color %||% .plot_colors(1, plot_colors)[1],
     border = NA,
     axes = FALSE,
     xlim = c(0, max(counts) * 1.12),
@@ -6670,7 +6749,7 @@ kinase_tree_data_fc <- function(data_st, data_tnc) {
   ]
 }
 
-phossite_dist <- function(data, cutoff=0, width=20, height=15, dpi=300, header=TRUE) {
+phossite_dist <- function(data, cutoff=0, width=20, height=15, dpi=300, header=TRUE, plot_colors=NULL) {
   if (!all(c("Phosphoprotein", "site_num") %in% names(data))) {
     stop("Data must contain 'Phosphoprotein' and 'site_num' columns.", call. = FALSE)
   }
@@ -6692,7 +6771,7 @@ phossite_dist <- function(data, cutoff=0, width=20, height=15, dpi=300, header=T
   barplot(
     as.numeric(counts),
     names.arg = x_values,
-    col = .tab10[1],
+    col = .plot_colors(1, plot_colors)[1],
     border = NA,
     xlab = "Number of phosphosites per phosphoprotein",
     ylab = "Frequency",
@@ -6705,7 +6784,7 @@ phossite_dist <- function(data, cutoff=0, width=20, height=15, dpi=300, header=T
 }
 
 # COMPARISON
-correlation_xy_intensity_single <- function(data, sample1, sample2, alias1=NULL, alias2=NULL, color="blue", dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=TRUE) {
+correlation_xy_intensity_single <- function(data, sample1, sample2, alias1=NULL, alias2=NULL, color=NULL, dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=TRUE, plot_colors=NULL) {
   valid_data <- data[, c(sample1, sample2), drop = FALSE]
   valid_data <- valid_data[complete.cases(valid_data), , drop = FALSE]
   if (!nrow(valid_data)) {
@@ -6728,7 +6807,7 @@ correlation_xy_intensity_single <- function(data, sample1, sample2, alias1=NULL,
     x,
     y,
     pch = 21,
-    bg = grDevices::adjustcolor(color, alpha.f = 0.7),
+    bg = grDevices::adjustcolor(color %||% .plot_colors(1, plot_colors)[1], alpha.f = 0.7),
     col = "black",
     cex = sqrt(dot_size) / 4,
     xlab = paste(label1, "(log2 intensity)"),
@@ -6758,7 +6837,7 @@ correlation_xy_intensity_single <- function(data, sample1, sample2, alias1=NULL,
   .plot_result()
 }
 
-correlation_xy_intensity <- function(data, meta, condition1, condition2, alias1=NULL, alias2=NULL, color="blue", dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=TRUE, min_present=1) {
+correlation_xy_intensity <- function(data, meta, condition1, condition2, alias1=NULL, alias2=NULL, color=NULL, dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=TRUE, min_present=1, plot_colors=NULL) {
   condition1_samples <- meta$sample[meta$condition == condition1]
   condition2_samples <- meta$sample[meta$condition == condition2]
   if (!length(condition1_samples) || !length(condition2_samples)) {
@@ -6785,7 +6864,7 @@ correlation_xy_intensity <- function(data, meta, condition1, condition2, alias1=
     "condition2",
     alias1 = paste(label1, "mean"),
     alias2 = paste(label2, "mean"),
-    color = color,
+    color = color %||% .plot_colors(1, plot_colors)[1],
     dot_size = dot_size,
     width_cm = width_cm,
     height_cm = height_cm,
@@ -6812,7 +6891,7 @@ correlation_xy_intensity <- function(data, meta, condition1, condition2, alias1=
 .venn_base <- function(sets, labels, colors=NULL, show_header=TRUE) {
   .require_pkg("VennDiagram")
 
-  colors <- colors %||% .tab10[seq_along(sets)]
+  colors <- .plot_colors(length(sets), colors)
   # With file logging off, VennDiagram logs every argument to the console as
   # INFO messages instead; they say nothing about the result.
   venn <- suppressMessages(VennDiagram::venn.diagram(
@@ -6972,9 +7051,8 @@ missing_value_plot <- function(
     width = 7.87,
     height = 3.94,
     dpi = 300,
-    color = "blue",
-    data_scale = "log2"
-) {
+    color = NULL,
+    data_scale = "log2", plot_colors=NULL) {
   data <- .prepare_intensity_data(data, meta$sample, data_scale)
   intensity_matrix <- .numeric_matrix(data, meta$sample)
   missing_counts <- rowSums(is.na(intensity_matrix))
@@ -6998,7 +7076,7 @@ missing_value_plot <- function(
     header,
     text,
     text_size,
-    color
+    color %||% .plot_colors(1, plot_colors)[1]
   )
 }
 
@@ -7012,9 +7090,11 @@ missing_value_plot_prec <- function(
     width = 10,
     height = 6,
     dpi = 100,
-    color = "blue",
-    quantity_column = "Precursor.Quantity"
-) {
+    color = NULL,
+    quantity_column = "Precursor.Quantity", plot_colors=NULL) {
+  if (!identical(quantity_column, "Precursor.Quantity")) {
+    stop("This plot uses Precursor.Quantity for peptide and precursor detection.", call.=FALSE)
+  }
   precursor_data <- sanitize_dataframe(read_data(data_path))
   wide_data <- .pivot_wide(
     precursor_data,
@@ -7040,7 +7120,7 @@ missing_value_plot_prec <- function(
     header,
     text,
     text_size,
-    color
+    color %||% .plot_colors(1, plot_colors)[1]
   )
 }
 
@@ -7054,9 +7134,11 @@ missing_value_plot_pep <- function(
     width = 10,
     height = 6,
     dpi = 100,
-    color = "blue",
-    quantity_column = "Precursor.Quantity"
-) {
+    color = NULL,
+    quantity_column = "Precursor.Quantity", plot_colors=NULL) {
+  if (!identical(quantity_column, "Precursor.Quantity")) {
+    stop("This plot uses Precursor.Quantity for peptide and precursor detection.", call.=FALSE)
+  }
   peptide_data <- sanitize_dataframe(read_data(data_path))
 
   if ("File.Name" %in% names(peptide_data)) {
@@ -7085,7 +7167,7 @@ missing_value_plot_pep <- function(
     header,
     text,
     text_size,
-    color
+    color %||% .plot_colors(1, plot_colors)[1]
   )
 }
 

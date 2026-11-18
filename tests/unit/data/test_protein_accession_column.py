@@ -9,10 +9,6 @@ import pandas as pd
 from app.services.dataset_reader import rename_cols
 
 
-def _renamed(**columns):
-    return rename_cols(pd.DataFrame({name: ["x"] for name in columns.values()}))
-
-
 def test_each_engines_accession_column_is_aliased() -> None:
     assert "ProteinAccessions" in rename_cols(pd.DataFrame({"PG.ProteinAccessions": ["P1"], "PG.ProteinNames": ["N_HUMAN"]}))
     diann = rename_cols(pd.DataFrame({"Protein.Group": ["P1"], "Protein.Ids": ["P1;P2"]}))

@@ -9,7 +9,6 @@ different answer for the same request. All three now refuse it with one message.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,7 +16,7 @@ import pytest
 
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 MESSAGE = ("Control-corrected volcano analysis requires four distinct conditions; "
            "an experimental condition cannot be used as its own control.")
 SAMPLES = [f"{c}{i}" for c in "ABCD" for i in range(1, 4)]

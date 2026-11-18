@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.schemas.annotation import AnnotationKind, DataSource
+from app.schemas.annotation import AnnotationKind, DataSource, MetadataAnnotationKind
 from app.schemas.stats import StatsIdentifier, StatsTestType, VolcanoRenderType
 
 
@@ -55,12 +55,34 @@ class SummaryVolcanoEntry(BaseModel):
     highlightLabels: bool = False
 
 
+ReportEntryType = Literal["volcano", "pearson", "venn", "anova", "ora", "single_box", "single_line"]
+
+
+class SummaryPlotEntry(BaseModel):
+    """One plot added to the report, as it was when it was added.
+
+    `request` holds the page's options for that plot, `render` how it was drawn
+    (type Normal or Interactive, widthCm, heightCm, dpi) and `advanced` its
+    advanced appearance. The report has a protein and a phosphosite level, so
+    those are the levels an entry can belong to.
+    """
+
+    type: ReportEntryType
+    kind: MetadataAnnotationKind
+    request: dict[str, Any] = Field(default_factory=dict)
+    render: dict[str, Any] = Field(default_factory=dict)
+    advanced: dict[str, Any] | None = None
+
+
 class SummaryReportContext(BaseModel):
     completenessSettings: dict[str, Any] = Field(default_factory=dict)
     qcSettings: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Volcano entries of a browser tab opened before `entries` existed.
     volcanoEntries: list[SummaryVolcanoEntry] = Field(default_factory=list)
+    entries: list[SummaryPlotEntry] = Field(default_factory=list)
     advancedPlotMode: bool = False
     advancedPlotSettingsByKey: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    workflowPlotSettings: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
     qcAdvancedSettingsByTab: dict[str, dict[str, Any]] = Field(default_factory=dict)
     completenessAdvancedSettingsByTab: dict[str, dict[str, Any]] = Field(default_factory=dict)
 

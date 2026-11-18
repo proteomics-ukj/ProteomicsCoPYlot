@@ -19,16 +19,11 @@ import QCPipelinePage from "../../src/features/qc/QCPipelinePage";
 import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import * as api from "../../src/lib/api";
 import type { StatisticalOptionsResponse, VolcanoResultResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "../component/apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "../component/apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("../component/apiMock")).mockApiModule(original));
 
-const STATS_OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B"],
-  samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] }, pairIdsBySample: {},
-  availableIdentifiers: [{ key: "workflow", label: "Protein" }], warnings: [],
-  availableDataSources: ["data"], defaultDataSource: "data",
-};
+const STATS_OPTIONS: StatisticalOptionsResponse = statisticalOptions();
 const VOLCANO = {
   kind: "protein", sourceUsed: "data", totalRows: 1, upregulatedCount: 0, downregulatedCount: 0,
   notSignificantCount: 1, rows: [{ ProteinNames: "P1", log2FC: 0.1, pval: 0.5 }], warnings: [],

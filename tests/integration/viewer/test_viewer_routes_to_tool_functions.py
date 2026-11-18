@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.schemas.data_tools import ImputationRunRequest
 from app.services import viewer_bootstrap

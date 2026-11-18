@@ -1,5 +1,6 @@
 import gc
 import io
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +30,26 @@ def owned_file(directory='table_uploads', name='data.csv'):
 def save(path, package=None):
     return store.save_table_dataset('data.csv', 'protein', pd.DataFrame({'A1': [10]}),
                                     source_path=str(path), package_name=package)
+
+
+def test_owned_upload_is_released_with_an_aliased_system_temp(tmp_path, monkeypatch):
+    actual = tmp_path / "system temp with a long name"
+    actual.mkdir()
+    if os.name == "nt":
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(actual), buffer, len(buffer))
+        if not 0 < length < len(buffer) or Path(buffer.value) == actual:
+            pytest.skip("8.3 directory aliases are unavailable on this volume")
+        alias = Path(buffer.value)
+    else:
+        alias = tmp_path / "temp-alias"
+        alias.symlink_to(actual, target_is_directory=True)
+    monkeypatch.setattr(managed_temp.tempfile, "gettempdir", lambda: str(alias))
+    with temporary_file_scope():
+        path = owned_file()
+        assert path.is_file()
+    assert not path.exists()
 
 
 @pytest.mark.parametrize('kind', ['protein', 'peptide'])
@@ -162,7 +183,7 @@ def test_peptide_read_keeps_file_during_replacement(temp_root, monkeypatch):
     path = owned_file('peptide_uploads')
     store.save_peptide_path(str(path))
 
-    def read_while_replaced(path_str, modified_ns, size, changed_ns):
+    def read_while_replaced(path_str, modified_ns, size, changed_ns, detection_only):
         store.save_peptide_path(str(owned_file('peptide_uploads', 'replacement.csv')))
         gc.collect()
         assert path.exists()

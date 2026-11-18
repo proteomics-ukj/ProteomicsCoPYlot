@@ -1,3 +1,4 @@
+import { usePhosphoOptionsLoader } from "./usePhosphoOptions";
 import NumberField from "../../components/NumberField";
 import { AssistantInput, AssistantSelect } from "../../components/AssistantFields";
 import CheckboxField from "../../components/CheckboxField";
@@ -41,6 +42,9 @@ type Props = {
   onContextModeChange?: (mode: ContextMode | null) => void;
   advancedPlotOptions?: ReactNode;
 };
+
+// The volcano is drawn from uploaded files, so its export belongs to the last drawn figure and is not asked again.
+const KINASE_VOLCANO_EXPORT = "kinase-library-volcano";
 
 export default function KseaPage({ advancedPlotOptions, onContextModeChange }: Props) {
   const persisted = useMemo(
@@ -94,6 +98,7 @@ export default function KseaPage({ advancedPlotOptions, onContextModeChange }: P
   const [annotateHits, setAnnotateHits] = useState(() => Boolean(persisted.annotateHits ?? false));
   const [volcanoHtml, setVolcanoHtml] = useState("");
   const [externalEvidenceToken, setExternalEvidenceToken] = useState("");
+  const [volcanoNotebookToken, setVolcanoNotebookToken] = useState("");
   const [volcanoLoading, setVolcanoLoading] = useState(false);
   const [volcanoError, setVolcanoError] = useState<string | null>(null);
   useEffect(() => {
@@ -141,34 +146,9 @@ export default function KseaPage({ advancedPlotOptions, onContextModeChange }: P
     annotateHits,
   ]);
 
-  useEffect(() => {
-    if (!hasPhosphoDataset) {
-      setOptions(null);
-      setOptionsLoading(false);
-      setOptionsError("No phospho dataset loaded.");
-      return;
-    }
-    const controller = new AbortController();
-    setOptionsLoading(true);
-    setOptionsError(null);
-    getPhosphoOptions({ signal: controller.signal })
-      .then((payload) => {
-        setOptions(payload);
-        applyDataSourceChoices(payload);
-      })
-      .catch((err) => {
-        if (isAbortError(err)) return;
-        setOptions(null);
-        setOptionsError(err instanceof Error ? err.message : "Failed to load phospho options");
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        setOptionsLoading(false);
-      });
-    return () => {
-      controller.abort();
-    };
-  }, [hasPhosphoDataset, applyDataSourceChoices]);
+  usePhosphoOptionsLoader(
+    hasPhosphoDataset, applyDataSourceChoices, setOptions, setOptionsLoading, setOptionsError,
+  );
 
   useEffect(() => {
     const conditionOptions = options?.conditions ?? [];
@@ -332,6 +312,7 @@ export default function KseaPage({ advancedPlotOptions, onContextModeChange }: P
       });
       setVolcanoHtml(html.html);
       setExternalEvidenceToken(html.evidenceToken);
+      setVolcanoNotebookToken(html.notebookToken);
     } catch (err) {
       setVolcanoHtml("");
       setExternalEvidenceToken("");
@@ -590,7 +571,14 @@ export default function KseaPage({ advancedPlotOptions, onContextModeChange }: P
 
       {volcanoHtml ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-900">Kinase Library Volcano</h3>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold text-slate-900">Kinase Library Volcano</h3>
+            <NotebookDownload
+              outputLabel="plot"
+              plotUrl={KINASE_VOLCANO_EXPORT}
+              rendered={{ url: KINASE_VOLCANO_EXPORT, token: volcanoNotebookToken || null }}
+            />
+          </div>
           <div className="mt-4">
             <iframe
               sandbox="allow-scripts allow-downloads"

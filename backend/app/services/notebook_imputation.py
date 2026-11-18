@@ -20,7 +20,7 @@ def imputation_source():
             function_definition(plots, "_imputation_density_histogram_spec")]
     code.extend(function_definition(plots, name) for name in names)
     code.append(function_definition(science, "intensity_unit_label"))
-    return extract_notebook_source(merge_source(*code), (*names, "impute_values_with_diagnostics"))
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, *code), (*names, "impute_values_with_diagnostics"))
 
 
 def applied_imputation_notebook(kind, normalization, show_imputation_draw, advanced):
@@ -47,10 +47,12 @@ def applied_imputation_notebook(kind, normalization, show_imputation_draw, advan
                     down_shift=1.8 if info.downShift is None else info.downShift, width=0.3 if info.width is None else info.width)
     diagnostics = plot_images.impute_values_with_diagnostics(frame, meta["sample"].tolist(), **settings)
     centered = plot_images.phosprot_values_are_centred(kind)
+    from app.services.condition_palette_store import get_category_palette
+    plot_colors = get_category_palette(kind)
     references = {
-        "before/original.png": plot_images.render_imputation_before(diagnostics, centered, advanced),
+        "before/original.png": plot_images.render_imputation_before(diagnostics, centered, advanced, plot_colors),
         "fit/original.png": plot_images.render_imputation_fit(diagnostics, centered, advanced, info.mode, show_imputation_draw),
-        "after/original.png": plot_images.render_imputation_after(diagnostics, centered, advanced, info.mode, normalization),
+        "after/original.png": plot_images.render_imputation_after(diagnostics, centered, advanced, info.mode, normalization, plot_colors),
     }
     recipe = NotebookRecipe(
         plot_name="Applied Imputation", source=imputation_source(), original_filename=dataset.filename,
@@ -59,7 +61,7 @@ def applied_imputation_notebook(kind, normalization, show_imputation_draw, advan
         resources={"input.parquet": dataframe_bytes(frame), "metadata.parquet": dataframe_bytes(meta),
                    "imputed.parquet": dataframe_bytes(annotation.imputed_data), **references},
         settings={"imputation": settings, "plot": dict(centered=centered, method=info.mode, normalization=normalization,
-                  show_imputation_draw=show_imputation_draw, advanced=advanced)},
+                  show_imputation_draw=show_imputation_draw, advanced=advanced, plot_colors=plot_colors)},
         calculation="from IPython.display import Image, display\n"
             "diagnostics = functions.impute_values_with_diagnostics(data, metadata['sample'].tolist(), **settings['imputation'])\n"
             "table = diagnostics.imputed_data\n"
@@ -67,9 +69,9 @@ def applied_imputation_notebook(kind, normalization, show_imputation_draw, advan
             "table.to_csv('reproduced_imputed.csv', index=False)\ndisplay(table)\n"
             "p = settings['plot']\n"
             "args = (diagnostics, p['centered'], p['advanced'])\n"
-            "for name, image in [('before', functions.render_imputation_before(*args)),\n"
+            "for name, image in [('before', functions.render_imputation_before(*args, plot_colors=p['plot_colors'])),\n"
             "                    ('fit', functions.render_imputation_fit(*args, p['method'], p['show_imputation_draw'])),\n"
-            "                    ('after', functions.render_imputation_after(*args, p['method'], p['normalization']))]:\n"
+            "                    ('after', functions.render_imputation_after(*args, p['method'], p['normalization'], plot_colors=p['plot_colors']))]:\n"
             "    folder = Path('outputs') / name\n    folder.mkdir(parents=True, exist_ok=True)\n"
             "    (folder / 'reproduced.png').write_bytes(image)\n    display(Image(data=image))",
     )

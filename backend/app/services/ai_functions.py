@@ -1184,12 +1184,10 @@ def _coverage_text_from_rows(
     lines.append(
         f"coverage_overview|workflow={workflow}|entity={entity_plural}|samples={sample_count}|conditions={condition_count}|total_features={total_features if total_features is not None else 'unknown'}"
     )
-    lines.append(
-        "coverage_formula|detected_features=total_features-missing_values_per_sample"
-    )
-    lines.append(
-        "coverage_visual|bars=detected_features_per_sample|bar_color=condition"
-    )
+    lines.extend([
+        "coverage_formula|detected_features=total_features-missing_values_per_sample",
+        "coverage_visual|bars=detected_features_per_sample|bar_color=condition",
+    ])
     lines.append(
         "coverage_reference_line|color=red|value="
         f"{total_features if total_features is not None else 'unknown'}|"
@@ -1388,12 +1386,10 @@ def qc_boxplot_intensity(workflow: str = "protein", mode: ContextMode | None = N
     lines.append(
         f"boxplot_overview|workflow={workflow_key}|entity={entity_plural}|mode={mode_key}|rows={int(table.shape[0])}"
     )
-    lines.append(
-        "boxplot_general|per_condition_processing=for_each_entity_extract_condition_values_from_replicates"
-    )
-    lines.append(
-        "boxplot_definition|median=50th_percentile|IQR=Q3-Q1|whiskers=outermost_observed_values_within_the_1.5_IQR_fences|fences=Q1-1.5xIQR_to_Q3+1.5xIQR|outliers=observations_outside_the_fences"
-    )
+    lines.extend([
+        "boxplot_general|per_condition_processing=for_each_entity_extract_condition_values_from_replicates",
+        "boxplot_definition|median=50th_percentile|IQR=Q3-Q1|whiskers=outermost_observed_values_within_the_1.5_IQR_fences|fences=Q1-1.5xIQR_to_Q3+1.5xIQR|outliers=observations_outside_the_fences",
+    ])
 
     if mode_key == "Single":
         lines.append(
@@ -1560,18 +1556,12 @@ def qc_cov_plot(workflow: str = "protein", mode: ContextMode | None = None) -> d
     lines.append(
         f"cov_overview|workflow={workflow_key}|entity={entity_plural}|rows={int(table.shape[0])}"
     )
-    lines.append(
-        "cov_general|description=condition_wise_coefficient_of_variation_distributions_visualized_as_boxplots"
-    )
-    lines.append(
-        "cov_general|purpose=assess_replicate_consistency_within_each_condition_using_relative_variability"
-    )
-    lines.append(
-        "cov_processing|minimum_replicates_per_condition=2"
-    )
-    lines.append(
-        "cov_processing|steps=extract_condition_samples_compute_featurewise_mean_and_sd_compute_cv_remove_undefined_values_build_condition_distribution"
-    )
+    lines.extend([
+        "cov_general|description=condition_wise_coefficient_of_variation_distributions_visualized_as_boxplots",
+        "cov_general|purpose=assess_replicate_consistency_within_each_condition_using_relative_variability",
+        "cov_processing|minimum_replicates_per_condition=2",
+        "cov_processing|steps=extract_condition_samples_compute_featurewise_mean_and_sd_compute_cv_remove_undefined_values_build_condition_distribution",
+    ])
     normalization = _annotation_normalization(_workflow_kind(workflow_key))
     source = {
         "none": "uploaded_unnormalized_non_imputed_data_back_transformed_to_linear",
@@ -1591,19 +1581,21 @@ def qc_cov_plot(workflow: str = "protein", mode: ContextMode | None = None) -> d
         lines.append(f"cov_active_view|outlier_points_enabled={outlier_display}")
     else:
         lines.append("cov_active_view|outlier_points_enabled=unknown")
-    lines.append(
-        "cov_display_control|page=QC Pipeline / CV Plot|section=Options|label=Toggle Outliers|"
-        "operation=manual_only|checked=show_outlier_markers|unchecked=hide_outlier_markers|"
-        "guidance=The user can tick this checkbox to see the markers. Its absence from assistant controls "
-        "does not mean the UI lacks it; do not propose changing it through the assistant."
-    )
-    lines.append(
-        "cov_inference_rule|The outlier toggle controls display only; hiding points does not remove observations. "
-        "Quartiles and whiskers alone do not establish whether any outliers exist. "
-        "Each cov_condition line below carries outliers_beyond_fences, the number of features the plot draws as "
-        "individual points when the toggle is on (the same 1.5 x IQR rule); there is no rendered-image evidence, "
-        "so distinguish the display setting from the count, and never claim dots were visually inspected."
-    )
+    lines.extend([
+        (
+            "cov_display_control|page=QC Pipeline / CV Plot|section=Options|label=Toggle Outliers|"
+            "operation=manual_only|checked=show_outlier_markers|unchecked=hide_outlier_markers|"
+            "guidance=The user can tick this checkbox to see the markers. Its absence from assistant controls "
+            "does not mean the UI lacks it; do not propose changing it through the assistant."
+        ),
+        (
+            "cov_inference_rule|The outlier toggle controls display only; hiding points does not remove observations. "
+            "Quartiles and whiskers alone do not establish whether any outliers exist. "
+            "Each cov_condition line below carries outliers_beyond_fences, the number of features the plot draws as "
+            "individual points when the toggle is on (the same 1.5 x IQR rule); there is no rendered-image evidence, "
+            "so distinguish the display setting from the count, and never claim dots were visually inspected."
+        ),
+    ])
 
     if table.empty:
         lines.append("cov_data|status=empty")
@@ -1654,12 +1646,10 @@ def qc_cov_plot(workflow: str = "protein", mode: ContextMode | None = None) -> d
             "quality_cutoff_applied=false"
         )
 
-    lines.append(
-        "cov_quality_guidance|general_check=similar_box_shapes_comparable_IQR_and_medians_support_replicate_consistency"
-    )
-    lines.append(
-        "cov_quality_guidance|general_warning_signals=wide_boxes_high_medians_or_many_outliers_can_indicate_higher_variability_or_reproducibility_issues"
-    )
+    lines.extend([
+        "cov_quality_guidance|general_check=similar_box_shapes_comparable_IQR_and_medians_support_replicate_consistency",
+        "cov_quality_guidance|general_warning_signals=wide_boxes_high_medians_or_many_outliers_can_indicate_higher_variability_or_reproducibility_issues",
+    ])
 
     return _text_payload("qc_cov_plot", "\n".join(lines))
 
@@ -1691,39 +1681,19 @@ def qc_pca_plot_context(workflow: str = "protein", mode: ContextMode | None = No
             scaling=mode_pairs.get("scaling", "auto"),
         )
     )
-    lines.append(
-        "pca_description|goal=reduce_dimensionality_and_visualize_relationships_between_samples_based_on_measured_entities"
-    )
-    lines.append(
-        "pca_points|each_point_represents=one_sample"
-    )
-    lines.append(
-        "pca_components|principal_components=linear_combinations_of_all_measured_entities_using_variance_and_covariance_structure"
-    )
-    lines.append(
-        "pca_component_order|PC1=max_variance|PC2=next_variance_orthogonal_to_PC1|PCn=remaining_orthogonal_variance"
-    )
-    lines.append(
-        "pca_projection|benefit=condense_high_dimensional_information_into_few_axes_to_reveal_sample_patterns_clusters_and_trends"
-    )
-    lines.append(
-        "pca_reproducibility|PCA_is_deterministic|UMAP_tSNE_and_KMeans_use_the_exposed_request_local_random_state"
-    )
-    lines.append(
-        "pca_quality_guidance|type=checklist_only_not_findings|check=inspect_within_condition_replicate_compactness"
-    )
-    lines.append(
-        "pca_quality_guidance|type=checklist_only_not_findings|check=inspect_between_condition_separation_and_overlap_patterns"
-    )
-    lines.append(
-        "pca_quality_guidance|type=checklist_only_not_findings|check=inspect_for_possible_outlier_samples"
-    )
-    lines.append(
-        "pca_quality_guidance|coordinates_and_geometry_may_be_reported_descriptively|outlier_or_clean_separation_labels_require_a_defined_rule"
-    )
-    lines.append(
-        "pca_usage|supports=identify_outliers_assess_condition_separation_evaluate_overall_dataset_structure"
-    )
+    lines.extend([
+        "pca_description|goal=reduce_dimensionality_and_visualize_relationships_between_samples_based_on_measured_entities",
+        "pca_points|each_point_represents=one_sample",
+        "pca_components|principal_components=linear_combinations_of_all_measured_entities_using_variance_and_covariance_structure",
+        "pca_component_order|PC1=max_variance|PC2=next_variance_orthogonal_to_PC1|PCn=remaining_orthogonal_variance",
+        "pca_projection|benefit=condense_high_dimensional_information_into_few_axes_to_reveal_sample_patterns_clusters_and_trends",
+        "pca_reproducibility|PCA_is_deterministic|UMAP_tSNE_and_KMeans_use_the_exposed_request_local_random_state",
+        "pca_quality_guidance|type=checklist_only_not_findings|check=inspect_within_condition_replicate_compactness",
+        "pca_quality_guidance|type=checklist_only_not_findings|check=inspect_between_condition_separation_and_overlap_patterns",
+        "pca_quality_guidance|type=checklist_only_not_findings|check=inspect_for_possible_outlier_samples",
+        "pca_quality_guidance|coordinates_and_geometry_may_be_reported_descriptively|outlier_or_clean_separation_labels_require_a_defined_rule",
+        "pca_usage|supports=identify_outliers_assess_condition_separation_evaluate_overall_dataset_structure",
+    ])
 
 
     conditions = _conditions_for_workflow(workflow_key)
@@ -1743,45 +1713,25 @@ def qc_abundance_plot_context(
     lines.append(
         f"abundance_overview|workflow={workflow_key}|entity={entity_plural}"
     )
-    lines.append(
-        "abundance_scope|purpose=inspect_global_intensity_patterns_and_explore_specific_entities_of_interest"
-    )
-    lines.append(
-        "abundance_processing|step=group_samples_by_condition_and_compute_featurewise_mean_across_replicates"
-    )
-    lines.append(
-        "abundance_transform|formula=log10(mean_intensity_across_replicates+1)|reason=avoid_undefined_values_at_zero"
-    )
-    lines.append(
-        "abundance_ranking|x_axis=feature_rank_within_condition_sorted_by_transformed_intensity_descending"
-    )
-    lines.append(
-        "abundance_axes|x=rank_high_to_low_intensity|y=log10_transformed_mean_intensity"
-    )
-    lines.append(
-        "abundance_points|each_point_represents=one_entity_mean_within_one_condition"
-    )
+    lines.extend([
+        "abundance_scope|purpose=inspect_global_intensity_patterns_and_explore_specific_entities_of_interest",
+        "abundance_processing|step=group_samples_by_condition_and_compute_featurewise_mean_across_replicates",
+        "abundance_transform|formula=log10(mean_intensity_across_replicates+1)|reason=avoid_undefined_values_at_zero",
+        "abundance_ranking|x_axis=feature_rank_within_condition_sorted_by_transformed_intensity_descending",
+        "abundance_axes|x=rank_high_to_low_intensity|y=log10_transformed_mean_intensity",
+        "abundance_points|each_point_represents=one_entity_mean_within_one_condition",
+    ])
     lines.append(
         f"abundance_focus|supports=highlight_or_prioritize_selected_{entity_plural}_during_interpretation"
     )
-    lines.append(
-        "abundance_interpretation|rank_order_view_supports=assess_dynamic_range_compare_conditions_and_inspect_overall_intensity_distribution_shape"
-    )
-    lines.append(
-        "abundance_special_case|phosphoprotein_context=optional_truncation_of_extended_ptm_text_for_readability"
-    )
-    lines.append(
-        "abundance_quality_guidance|type=checklist_only_not_findings|check=inspect_curve_smoothness_and_gradual_intensity_decay"
-    )
-    lines.append(
-        "abundance_quality_guidance|type=checklist_only_not_findings|check=inspect_pattern_consistency_across_conditions_or_replicates"
-    )
-    lines.append(
-        "abundance_quality_guidance|type=checklist_only_not_findings|check=inspect_for_sharp_deviations_or_possible_outlier_entities"
-    )
-    lines.append(
-        "abundance_quality_guidance|ranked_entities_and_values_may_be_reported_descriptively|curve_shape_or_quality_claims_require_matching_evidence_and_a_defined_rule"
-    )
+    lines.extend([
+        "abundance_interpretation|rank_order_view_supports=assess_dynamic_range_compare_conditions_and_inspect_overall_intensity_distribution_shape",
+        "abundance_special_case|phosphoprotein_context=optional_truncation_of_extended_ptm_text_for_readability",
+        "abundance_quality_guidance|type=checklist_only_not_findings|check=inspect_curve_smoothness_and_gradual_intensity_decay",
+        "abundance_quality_guidance|type=checklist_only_not_findings|check=inspect_pattern_consistency_across_conditions_or_replicates",
+        "abundance_quality_guidance|type=checklist_only_not_findings|check=inspect_for_sharp_deviations_or_possible_outlier_entities",
+        "abundance_quality_guidance|ranked_entities_and_values_may_be_reported_descriptively|curve_shape_or_quality_claims_require_matching_evidence_and_a_defined_rule",
+    ])
     lines.extend(
         _abundance_data_lines(
             workflow_key,
@@ -1803,54 +1753,24 @@ def qc_correlation_plot_context(
     lines.append(
         f"correlation_overview|workflow={workflow_key}|entity={entity_plural}|modes=matrix_and_ellipse"
     )
-    lines.append(
-        "correlation_scope|purpose=visualize_pairwise_sample_similarity_assess_replicate_consistency_and_flag_possible_anomalies"
-    )
-    lines.append(
-        "correlation_input|vectors=original_scale_sample_intensity_vectors_used_by_the_rendered_plot"
-    )
-    lines.append(
-        "correlation_formula|pearson_r=cov(x_i,x_j)/(sigma_x_i*sigma_x_j)"
-    )
-    lines.append(
-        "correlation_distance|d_ij=1-r_ij"
-    )
-    lines.append(
-        "correlation_clustering|step=apply_hierarchical_clustering_on_distance_matrix_then_reorder_by_dendrogram"
-    )
-    lines.append(
-        "correlation_structure|effect=reordered_map_groups_similar_samples_and_reveals_block_patterns"
-    )
-    lines.append(
-        "correlation_matrix_mode|representation=reordered_correlation_matrix_with_diverging_scale"
-    )
-    lines.append(
-        "correlation_matrix_mode|interpretation=one_end_high_positive_other_end_weak_or_negative_center_near_zero"
-    )
-    lines.append(
-        "correlation_ellipse_mode|encoding=ellipse_shape_and_orientation_represent_magnitude_and_sign_of_correlation"
-    )
-    lines.append(
-        "correlation_ellipse_mode|magnitude_rule=abs_r_toward_1_narrower_abs_r_toward_0_more_circular"
-    )
-    lines.append(
-        "correlation_ellipse_mode|sign_rule=orientation_differs_for_positive_vs_negative_correlation"
-    )
-    lines.append(
-        "correlation_usage|supports=global_sample_relationship_review_and_detection_of_possible_batch_or_labeling_issues"
-    )
-    lines.append(
-        "correlation_quality_guidance|type=checklist_only_not_findings|check=inspect_within_group_similarity_patterns"
-    )
-    lines.append(
-        "correlation_quality_guidance|type=checklist_only_not_findings|check=inspect_clustering_smoothness_and_block_consistency"
-    )
-    lines.append(
-        "correlation_quality_guidance|type=checklist_only_not_findings|check=inspect_for_weak_or_asymmetric_sample_relationships"
-    )
-    lines.append(
-        "correlation_quality_guidance|pairwise_coefficients_and_group_summaries_may_be_reported_descriptively|quality_or_outlier_labels_require_a_defined_rule"
-    )
+    lines.extend([
+        "correlation_scope|purpose=visualize_pairwise_sample_similarity_assess_replicate_consistency_and_flag_possible_anomalies",
+        "correlation_input|vectors=original_scale_sample_intensity_vectors_used_by_the_rendered_plot",
+        "correlation_formula|pearson_r=cov(x_i,x_j)/(sigma_x_i*sigma_x_j)",
+        "correlation_distance|d_ij=1-r_ij",
+        "correlation_clustering|step=apply_hierarchical_clustering_on_distance_matrix_then_reorder_by_dendrogram",
+        "correlation_structure|effect=reordered_map_groups_similar_samples_and_reveals_block_patterns",
+        "correlation_matrix_mode|representation=reordered_correlation_matrix_with_diverging_scale",
+        "correlation_matrix_mode|interpretation=one_end_high_positive_other_end_weak_or_negative_center_near_zero",
+        "correlation_ellipse_mode|encoding=ellipse_shape_and_orientation_represent_magnitude_and_sign_of_correlation",
+        "correlation_ellipse_mode|magnitude_rule=abs_r_toward_1_narrower_abs_r_toward_0_more_circular",
+        "correlation_ellipse_mode|sign_rule=orientation_differs_for_positive_vs_negative_correlation",
+        "correlation_usage|supports=global_sample_relationship_review_and_detection_of_possible_batch_or_labeling_issues",
+        "correlation_quality_guidance|type=checklist_only_not_findings|check=inspect_within_group_similarity_patterns",
+        "correlation_quality_guidance|type=checklist_only_not_findings|check=inspect_clustering_smoothness_and_block_consistency",
+        "correlation_quality_guidance|type=checklist_only_not_findings|check=inspect_for_weak_or_asymmetric_sample_relationships",
+        "correlation_quality_guidance|pairwise_coefficients_and_group_summaries_may_be_reported_descriptively|quality_or_outlier_labels_require_a_defined_rule",
+    ])
     lines.extend(
         _correlation_data_lines(
             workflow_key,
@@ -1881,16 +1801,12 @@ def peptide_rt_plot_context(workflow: str = "peptide", mode: ContextMode | None 
     lines.append(
         f"peptide_rt_parameters|method={_safe_context_text(method)}|add_line={'true' if add_line else 'false'}|header={'true' if header else 'false'}|bins={bins}|random_seed={random_seed}|width_cm={_fmt_value(width_cm)}|height_cm={_fmt_value(height_cm)}|dpi={dpi}"
     )
-    lines.append(
-        "peptide_rt_general|description=retention_time_agreement_plot_between_predicted_and_observed_retention_times_for_peptide_entries"
-    )
-    lines.append("peptide_rt_axes|x_axis=predicted_RT|y_axis=actual_RT|point_definition=one_peptide_measurement")
-    lines.append(
-        "peptide_rt_methods|scatter=points|hexbin=hexagonal_bin_counts|density=2D_histogram_density"
-    )
-    lines.append(
-        "peptide_rt_diagonal_rule|optional_identity_line_if_enabled=predicted_RT_equals_actual_RT_reference"
-    )
+    lines.extend([
+        "peptide_rt_general|description=retention_time_agreement_plot_between_predicted_and_observed_retention_times_for_peptide_entries",
+        "peptide_rt_axes|x_axis=predicted_RT|y_axis=actual_RT|point_definition=one_peptide_measurement",
+        "peptide_rt_methods|scatter=points|hexbin=hexagonal_bin_counts|density=2D_histogram_density",
+        "peptide_rt_diagonal_rule|optional_identity_line_if_enabled=predicted_RT_equals_actual_RT_reference",
+    ])
 
     try:
         frame = get_peptide_frame()
@@ -1975,27 +1891,23 @@ def peptide_modification_plot_context(workflow: str = "peptide", mode: ContextMo
     lines.append(
         f"peptide_modification_parameters|include_id={'true' if include_id else 'false'}|header={'true' if header else 'false'}|legend={'true' if legend else 'false'}|width_cm={_fmt_value(width_cm)}|height_cm={_fmt_value(height_cm)}|dpi={dpi}"
     )
-    lines.append(
-        "peptide_modification_general|description=bar_plot_of_modified_peptide_counts_per_sample_for_selected_modification_classes"
-    )
-    lines.append(
-        "peptide_modification_classes|tracked=Carbamidomethylation,Oxidation,Acetylation"
-    )
-    lines.append(
-        "peptide_modification_logic|count_unit=distinct_modified_sequence_per_class_per_sample|"
-        "detection_rule=finite_nonzero_quantity|repeated_same_class_within_one_sequence_counts_once"
-    )
-    lines.append(
-        "peptide_modification_identifier_rule|unimod_ids=exact_numeric_identifier_boundary|"
-        "text_names=case_insensitive_whole_term|examples=UniMod:4_does_not_match_UniMod:40_or_UniMod:400"
-    )
-    lines.append(
-        "peptide_modification_overlap_rule|a_sequence_with_multiple_tracked_classes_counts_once_in_each_class|"
-        "class_assignment_total_can_exceed_unique_tracked_modified_peptides"
-    )
-    lines.append(
-        "peptide_modification_metadata_rule|protein_annotation_metadata_with_sample_and_condition_is_required_for_sample_mapping"
-    )
+    lines.extend([
+        "peptide_modification_general|description=bar_plot_of_modified_peptide_counts_per_sample_for_selected_modification_classes",
+        "peptide_modification_classes|tracked=Carbamidomethylation,Oxidation,Acetylation",
+        (
+            "peptide_modification_logic|count_unit=distinct_modified_sequence_per_class_per_sample|"
+            "detection_rule=finite_nonzero_quantity|repeated_same_class_within_one_sequence_counts_once"
+        ),
+        (
+            "peptide_modification_identifier_rule|unimod_ids=exact_numeric_identifier_boundary|"
+            "text_names=case_insensitive_whole_term|examples=UniMod:4_does_not_match_UniMod:40_or_UniMod:400"
+        ),
+        (
+            "peptide_modification_overlap_rule|a_sequence_with_multiple_tracked_classes_counts_once_in_each_class|"
+            "class_assignment_total_can_exceed_unique_tracked_modified_peptides"
+        ),
+        "peptide_modification_metadata_rule|protein_annotation_metadata_with_sample_and_condition_is_required_for_sample_mapping",
+    ])
 
     try:
         frame = get_peptide_frame()
@@ -2139,20 +2051,18 @@ def peptide_missed_cleavage_plot_context(workflow: str = "peptide", mode: Contex
     lines.append(
         f"peptide_missed_cleavage_parameters|include_id={'true' if include_id else 'false'}|text={'true' if show_text else 'false'}|text_size={text_size}|header={'true' if header else 'false'}|protease={resolved_protease}|protease_label={_safe_context_text(_PROTEASE_LABELS[resolved_protease])}|width_cm={_fmt_value(width_cm)}|height_cm={_fmt_value(height_cm)}|dpi={dpi}"
     )
-    lines.append(
-        "peptide_missed_cleavage_general|description=stacked_bar_distribution_of_missed_cleavage_counts_per_sample_reported_as_percentages"
-    )
-    lines.append(
-        "peptide_missed_cleavage_logic|count_definition=internal_cleavable_K_or_R_sites_excluding_the_expected_C_terminal_cut|"
-        "trypsin_blocks_KP_and_RP|trypsin_lysc_cleaves_KP_but_still_blocks_RP"
-    )
-    lines.append(
-        "peptide_missed_cleavage_logic|count_unit=distinct_stripped_sequence_per_sample|"
-        "sample_assignment=finite_nonzero_raw_quantity"
-    )
-    lines.append(
-        "peptide_missed_cleavage_metadata_rule|protein_annotation_metadata_with_sample_and_condition_is_required_for_sample_mapping"
-    )
+    lines.extend([
+        "peptide_missed_cleavage_general|description=stacked_bar_distribution_of_missed_cleavage_counts_per_sample_reported_as_percentages",
+        (
+            "peptide_missed_cleavage_logic|count_definition=internal_cleavable_K_or_R_sites_excluding_the_expected_C_terminal_cut|"
+            "trypsin_blocks_KP_and_RP|trypsin_lysc_cleaves_KP_but_still_blocks_RP"
+        ),
+        (
+            "peptide_missed_cleavage_logic|count_unit=distinct_stripped_sequence_per_sample|"
+            "sample_assignment=finite_nonzero_raw_quantity"
+        ),
+        "peptide_missed_cleavage_metadata_rule|protein_annotation_metadata_with_sample_and_condition_is_required_for_sample_mapping",
+    ])
 
     try:
         frame = get_peptide_frame()
@@ -2304,15 +2214,11 @@ def peptide_sequence_coverage_context(workflow: str = "peptide", mode: ContextMo
     lines.append(
         f"peptide_sequence_coverage_parameters|species={species}|protein={_safe_context_text(protein or 'not_selected')}|chunk_size={chunk_size}"
     )
-    lines.append(
-        "peptide_sequence_coverage_general|description=textual_sequence_map_of_selected_protein_with_matched_peptides_overlay_and_coverage_percent"
-    )
-    lines.append(
-        "peptide_sequence_coverage_logic|coverage_percent=covered_amino_acid_positions_divided_by_total_protein_length_times_100"
-    )
-    lines.append(
-        "peptide_sequence_coverage_database|supported_species=human_or_mouse_fasta_database_selected_by_ui_parameter"
-    )
+    lines.extend([
+        "peptide_sequence_coverage_general|description=textual_sequence_map_of_selected_protein_with_matched_peptides_overlay_and_coverage_percent",
+        "peptide_sequence_coverage_logic|coverage_percent=covered_amino_acid_positions_divided_by_total_protein_length_times_100",
+        "peptide_sequence_coverage_database|supported_species=human_or_mouse_fasta_database_selected_by_ui_parameter",
+    ])
 
     try:
         overview = _peptide_overview()
@@ -2381,33 +2287,17 @@ def completeness_missing_value_plot_context(workflow: str = "protein", mode: Con
     lines.append(
         f"missing_overview|workflow={workflow_key}|dataset_level={kind}|entity={entity_plural}"
     )
-    lines.append(
-        "missing_functions|wide_format=missing_value_plot|long_format=missing_value_plot_prec_and_missing_value_plot_pep"
-    )
-    lines.append(
-        "missing_format_logic|protein_and_phosphosite_levels=wide_format|full_report_precursor_and_peptide_levels=long_format"
-    )
-    lines.append(
-        "missing_calculation|step1=count_missing_values_per_feature_row"
-    )
-    lines.append(
-        "missing_calculation|step2=aggregate_feature_counts_by_missing_value_count"
-    )
-    lines.append(
-        "missing_plot_encoding|x_axis=number_of_missing_values_per_feature|y_axis=number_of_features_with_that_missing_value_count"
-    )
-    lines.append(
-        "missing_interpretation_example|zero_missing_values_means_feature_detected_in_all_samples"
-    )
-    lines.append(
-        "missing_interpretation_example|one_missing_value_means_feature_detected_in_total_samples_minus_one"
-    )
-    lines.append(
-        "missing_interpretation_example|high_missing_value_counts_mean_feature_detected_in_few_samples"
-    )
-    lines.append(
-        "missing_usage|supports=quick_overview_of_data_completeness_and_missingness_pattern_detection"
-    )
+    lines.extend([
+        "missing_functions|wide_format=missing_value_plot|long_format=missing_value_plot_prec_and_missing_value_plot_pep",
+        "missing_format_logic|protein_and_phosphosite_levels=wide_format|full_report_precursor_and_peptide_levels=long_format",
+        "missing_calculation|step1=count_missing_values_per_feature_row",
+        "missing_calculation|step2=aggregate_feature_counts_by_missing_value_count",
+        "missing_plot_encoding|x_axis=number_of_missing_values_per_feature|y_axis=number_of_features_with_that_missing_value_count",
+        "missing_interpretation_example|zero_missing_values_means_feature_detected_in_all_samples",
+        "missing_interpretation_example|one_missing_value_means_feature_detected_in_total_samples_minus_one",
+        "missing_interpretation_example|high_missing_value_counts_mean_feature_detected_in_few_samples",
+        "missing_usage|supports=quick_overview_of_data_completeness_and_missingness_pattern_detection",
+    ])
 
     overall_missing, sample_count, feature_rows, error = _completeness_feature_rows(kind)
     if error is not None:
@@ -2436,15 +2326,11 @@ def completeness_missing_value_plot_context(workflow: str = "protein", mode: Con
                 f"detected_samples_per_feature={detected_count}"
             )
 
-    lines.append(
-        "missing_quality_guidance|type=checklist_only_not_findings|check=inspect_where_mass_of_distribution_sits_across_missing_value_bins"
-    )
-    lines.append(
-        "missing_quality_guidance|type=checklist_only_not_findings|check=inspect_for_large_tails_at_high_missing_value_counts"
-    )
-    lines.append(
-        "missing_quality_guidance|hard_claim_gate=do_not_state_any_of_the_above_as_observed_dataset_findings_without_explicit_numeric_evidence_and_defined_cutoff_rules"
-    )
+    lines.extend([
+        "missing_quality_guidance|type=checklist_only_not_findings|check=inspect_where_mass_of_distribution_sits_across_missing_value_bins",
+        "missing_quality_guidance|type=checklist_only_not_findings|check=inspect_for_large_tails_at_high_missing_value_counts",
+        "missing_quality_guidance|hard_claim_gate=do_not_state_any_of_the_above_as_observed_dataset_findings_without_explicit_numeric_evidence_and_defined_cutoff_rules",
+    ])
 
     return _text_payload("completeness_missing_value_plot", "\n".join(lines))
 
@@ -2458,24 +2344,14 @@ def completeness_missing_value_heatmap_context(workflow: str = "protein", mode: 
     lines.append(
         f"missing_heatmap_overview|workflow={workflow_key}|dataset_level={kind}|entity={entity_plural}"
     )
-    lines.append(
-        "missing_heatmap_relation|similar_to_missing_value_plot=true|difference=preserves_structural_pattern_of_missingness"
-    )
-    lines.append(
-        "missing_heatmap_encoding|missing_and_present_values_are_shown_with_distinct_visual_classes"
-    )
-    lines.append(
-        "missing_heatmap_structure|rows=features|columns=samples|pattern_preservation=enabled"
-    )
-    lines.append(
-        "missing_heatmap_pattern_example|vertical_missing_band=sample_with_many_missing_values"
-    )
-    lines.append(
-        "missing_heatmap_pattern_example|horizontal_missing_band=feature_missing_across_multiple_samples"
-    )
-    lines.append(
-        "missing_heatmap_usage|supports=quick_detection_of_systematic_missingness_and_missing-data_trends"
-    )
+    lines.extend([
+        "missing_heatmap_relation|similar_to_missing_value_plot=true|difference=preserves_structural_pattern_of_missingness",
+        "missing_heatmap_encoding|missing_and_present_values_are_shown_with_distinct_visual_classes",
+        "missing_heatmap_structure|rows=features|columns=samples|pattern_preservation=enabled",
+        "missing_heatmap_pattern_example|vertical_missing_band=sample_with_many_missing_values",
+        "missing_heatmap_pattern_example|horizontal_missing_band=feature_missing_across_multiple_samples",
+        "missing_heatmap_usage|supports=quick_detection_of_systematic_missingness_and_missing-data_trends",
+    ])
     overall_missing, sample_count, sample_rows, feature_rows, _, error = _completeness_tables_payload(
         kind,
         outlier_threshold=100.0,
@@ -2514,18 +2390,12 @@ def completeness_missing_value_heatmap_context(workflow: str = "protein", mode: 
         lines.append(
             "missing_heatmap_evidence_rule|sample_summaries_support_column_level_comparisons|specific_row_or_block_patterns_require_the_rendered_heatmap_or_row_level_matrix"
         )
-    lines.append(
-        "missing_heatmap_scope|aggregated_sample_findings_are_data_specific|visual_row_and_block_patterns_are_not_available_in_context"
-    )
-    lines.append(
-        "missing_heatmap_quality_guidance|type=checklist_only_not_findings|check=inspect_for_column_wise_missingness_patterns"
-    )
-    lines.append(
-        "missing_heatmap_quality_guidance|type=checklist_only_not_findings|check=inspect_for_row_wise_missingness_patterns"
-    )
-    lines.append(
-        "missing_heatmap_quality_guidance|sample_missingness_values_may_be_reported_descriptively|quality_or_outlier_labels_require_a_defined_rule"
-    )
+    lines.extend([
+        "missing_heatmap_scope|aggregated_sample_findings_are_data_specific|visual_row_and_block_patterns_are_not_available_in_context",
+        "missing_heatmap_quality_guidance|type=checklist_only_not_findings|check=inspect_for_column_wise_missingness_patterns",
+        "missing_heatmap_quality_guidance|type=checklist_only_not_findings|check=inspect_for_row_wise_missingness_patterns",
+        "missing_heatmap_quality_guidance|sample_missingness_values_may_be_reported_descriptively|quality_or_outlier_labels_require_a_defined_rule",
+    ])
 
     return _text_payload("completeness_missing_value_heatmap", "\n".join(lines))
 
@@ -2890,12 +2760,10 @@ def stats_volcano_plot(
     lines.append(
         f"volcano_overview|workflow={workflow_key}|dataset_level={kind}|entity={entity_plural}|source={source}"
     )
-    lines.append(
-        "volcano_functions|data_function=volcano_data_f|plot_functions=volcano_plot_and_volcano_plot_h"
-    )
-    lines.append(
-        "volcano_functions|control_variant=volcano_control_uses_same_output_table_structure"
-    )
+    lines.extend([
+        "volcano_functions|data_function=volcano_data_f|plot_functions=volcano_plot_and_volcano_plot_h",
+        "volcano_functions|control_variant=volcano_control_uses_same_output_table_structure",
+    ])
     lines.append(
         "volcano_formula|log2FC="
         + (
@@ -2923,15 +2791,11 @@ def stats_volcano_plot(
             "volcano_pairing|identity=explicit_pair_id_metadata_column|"
             "requirements=identical_unique_pair_ids_in_both_conditions"
         )
-    lines.append(
-        "volcano_multiple_testing|method=benjamini_hochberg_fdr_control"
-    )
-    lines.append(
-        "volcano_classification_rule|upregulated=(adj_p_or_selected_p<alpha_and_log2FC>tau)|downregulated=(adj_p_or_selected_p<alpha_and_log2FC<-tau)|not_significant=otherwise"
-    )
-    lines.append(
-        "volcano_axes|x=log2FC|y=negative_log10_of_selected_p_metric"
-    )
+    lines.extend([
+        "volcano_multiple_testing|method=benjamini_hochberg_fdr_control",
+        "volcano_classification_rule|upregulated=(adj_p_or_selected_p<alpha_and_log2FC>tau)|downregulated=(adj_p_or_selected_p<alpha_and_log2FC<-tau)|not_significant=otherwise",
+        "volcano_axes|x=log2FC|y=negative_log10_of_selected_p_metric",
+    ])
 
     lines.append(
         f"volcano_parameters|source={source}|identifier={identifier}|test_type={test_type}|data_source={data_source}|p_value_threshold={_fmt_value(p_value_threshold)}|log2fc_threshold={_fmt_value(log2fc_threshold)}|use_uncorrected={'true' if use_uncorrected else 'false'}|protein_correction={'true' if protein_correction else 'false'}"
@@ -3285,12 +3149,10 @@ def stats_ora_plot(workflow: str = "protein", mode: ContextMode | None = None) -
             f"selected_test={effective_test_type(test_type, with_controls=source == 'volcano_control')}|"
             f"selected_test_description={_stats_test_description(test_type, control=source == 'volcano_control')}"
         )
-        lines.append(
-            "ora_flow|upregulated_cluster=upregulated_genes_to_enriched_pathways"
-        )
-        lines.append(
-            "ora_flow|downregulated_cluster=downregulated_genes_to_enriched_pathways"
-        )
+        lines.extend([
+            "ora_flow|upregulated_cluster=upregulated_genes_to_enriched_pathways",
+            "ora_flow|downregulated_cluster=downregulated_genes_to_enriched_pathways",
+        ])
     lines.append(
         f"ora_parameters|source={source}|data_source={data_source}|test_type={test_type}|p_value_threshold={_fmt_value(p_value_threshold)}|log2fc_threshold={_fmt_value(log2fc_threshold)}|use_uncorrected={'true' if use_uncorrected else 'false'}|background_mode={background_mode}|organism={_safe_context_text(organism)}"
     )
@@ -3513,12 +3375,10 @@ def stats_pathway_heatmap_plot(workflow: str = "protein", mode: ContextMode | No
         )
     else:
         lines.append("pathway_heatmap_conditions|selection=all_available")
-    lines.append(
-        "pathway_heatmap_value_mode|log2=log2_intensities|z_score=row_wise_standardization_per_gene_across_selected_samples"
-    )
-    lines.append(
-        "pathway_heatmap_gene_aggregation|unit=gene|duplicate_features=per_sample_median_ignoring_missing|all_missing=missing|source_feature_count=reported"
-    )
+    lines.extend([
+        "pathway_heatmap_value_mode|log2=log2_intensities|z_score=row_wise_standardization_per_gene_across_selected_samples",
+        "pathway_heatmap_gene_aggregation|unit=gene|duplicate_features=per_sample_median_ignoring_missing|all_missing=missing|source_feature_count=reported",
+    ])
 
     if not pathway:
         lines.append("pathway_heatmap_data|status=incomplete_parameters|detail=pathway_not_selected")
@@ -3658,18 +3518,12 @@ def comparison_pearson_correlation(workflow: str = "protein", mode: ContextMode 
     lines.append(
         f"comparison_pearson_overview|workflow={workflow_key}|dataset_level={kind}|entity={entity_plural}|data_source={data_source}"
     )
-    lines.append(
-        "comparison_pearson_scope|purpose=interactive_view_of_linear_relationships_for_reproducibility_outlier_screening_and_sample_or_condition_comparison"
-    )
-    lines.append(
-        "comparison_pearson_functions|single_mode_function=correlation_xy_intensity_single|mean_mode_function=correlation_xy_intensity"
-    )
-    lines.append(
-        "comparison_pearson_workflow|steps=extract_values_remove_missing_compute_pearson_and_p_value_scatter_plot_with_regression_line"
-    )
-    lines.append(
-        "comparison_pearson_rule|alias_priority=true|when_alias_is_provided_use_alias_labels_instead_of_raw_sample_or_condition_names"
-    )
+    lines.extend([
+        "comparison_pearson_scope|purpose=interactive_view_of_linear_relationships_for_reproducibility_outlier_screening_and_sample_or_condition_comparison",
+        "comparison_pearson_functions|single_mode_function=correlation_xy_intensity_single|mean_mode_function=correlation_xy_intensity",
+        "comparison_pearson_workflow|steps=extract_values_remove_missing_compute_pearson_and_p_value_scatter_plot_with_regression_line",
+        "comparison_pearson_rule|alias_priority=true|when_alias_is_provided_use_alias_labels_instead_of_raw_sample_or_condition_names",
+    ])
     if selected_mode == "Single":
         lines.append(
             "comparison_pearson_mode|selected=Single|comparison_level=sample_vs_sample|point_definition=one_entity_value_in_sample1_compared_with_sample2"
@@ -3678,12 +3532,10 @@ def comparison_pearson_correlation(workflow: str = "protein", mode: ContextMode 
             f"comparison_pearson_selection|left={_safe_context_text(left_input)}|right={_safe_context_text(right_input)}"
         )
     else:
-        lines.append(
-            "comparison_pearson_mode|selected=Mean|comparison_level=condition_mean_vs_condition_mean|point_definition=one_entity_mean_across_replicates_in_condition1_compared_with_condition2"
-        )
-        lines.append(
-            "comparison_pearson_mean_definition|per_entity_condition_value=mean_across_all_available_replicates_within_each_condition"
-        )
+        lines.extend([
+            "comparison_pearson_mode|selected=Mean|comparison_level=condition_mean_vs_condition_mean|point_definition=one_entity_mean_across_replicates_in_condition1_compared_with_condition2",
+            "comparison_pearson_mean_definition|per_entity_condition_value=mean_across_all_available_replicates_within_each_condition",
+        ])
         lines.append(
             f"comparison_pearson_selection|left={_safe_context_text(left_input)}|right={_safe_context_text(right_input)}"
         )
@@ -3806,18 +3658,12 @@ def comparison_venn_diagram(workflow: str = "protein", mode: ContextMode | None 
     lines.append(
         f"comparison_venn_overview|workflow={workflow_key}|dataset_level={kind}|entity={entity_plural}|set_count={set_count}|data_source={data_source}"
     )
-    lines.append(
-        "comparison_venn_scope|purpose=visualize_shared_and_unique_entities_across_samples_or_conditions"
-    )
-    lines.append(
-        "comparison_venn_functions|single_mode_function=overlap_plot_single|mean_mode_function=overlap_plot_condition"
-    )
-    lines.append(
-        "comparison_venn_processing|step1=extract_non_missing_entities_preserving_valid_log2_zeroes|step2=convert_to_sets|step3=render_venn2_or_venn3"
-    )
-    lines.append(
-        "comparison_venn_rule|alias_priority=true|when_alias_is_provided_use_alias_labels_instead_of_raw_sample_or_condition_names"
-    )
+    lines.extend([
+        "comparison_venn_scope|purpose=visualize_shared_and_unique_entities_across_samples_or_conditions",
+        "comparison_venn_functions|single_mode_function=overlap_plot_single|mean_mode_function=overlap_plot_condition",
+        "comparison_venn_processing|step1=extract_non_missing_entities_preserving_valid_log2_zeroes|step2=convert_to_sets|step3=render_venn2_or_venn3",
+        "comparison_venn_rule|alias_priority=true|when_alias_is_provided_use_alias_labels_instead_of_raw_sample_or_condition_names",
+    ])
     if selected_mode == "Single":
         lines.append(
             "comparison_venn_mode|selected=Single|comparison_level=sample_vs_sample_or_sample_triplet|presence_rule=entity_is_present_if_non_missing_in_each_selected_sample"
@@ -3931,21 +3777,13 @@ def phospho_phosphosite_plot(workflow: str = "phosphosite", mode: ContextMode | 
     lines.append(
         f"phosphosite_summary_cutoff|ptm_localization_probability_min={_fmt_value(cutoff)}"
     )
-    lines.append(
-        "phosphosite_summary_cutoff_rule|filter=retain_rows_where_PTM_localization_is_greater_than_or_equal_to_cutoff|missing_probability_excluded_when_cutoff_above_zero|shared_by_every_phosphosite_module"
-    )
-    lines.append(
-        "phosphosite_summary_entities|phosphoproteins=distinct_protein_groups_with_at_least_one_site_passing_cutoff|phosphopeptides=unique_modified_peptide_sequences|phosphosites=unique_PTM_collapse_keys"
-    )
-    lines.append(
-        "phosphosite_summary_visual|plot=horizontal_bar_chart|ordering=descending_by_count|labels=exact_count_shown_at_bar_end"
-    )
-    lines.append(
-        "phosphosite_summary_general|expected_hierarchy=phosphopeptides_and_phosphosites_often_exceed_phosphoproteins_due_to_modification_hierarchy"
-    )
-    lines.append(
-        "phosphosite_summary_general|cutoff_interpretation=sharp_count_drop_with_higher_cutoff_can_indicate_many_low_confidence_localizations_while_stable_counts_can_indicate_robust_localization"
-    )
+    lines.extend([
+        "phosphosite_summary_cutoff_rule|filter=retain_rows_where_PTM_localization_is_greater_than_or_equal_to_cutoff|missing_probability_excluded_when_cutoff_above_zero|shared_by_every_phosphosite_module",
+        "phosphosite_summary_entities|phosphoproteins=distinct_protein_groups_with_at_least_one_site_passing_cutoff|phosphopeptides=unique_modified_peptide_sequences|phosphosites=unique_PTM_collapse_keys",
+        "phosphosite_summary_visual|plot=horizontal_bar_chart|ordering=descending_by_count|labels=exact_count_shown_at_bar_end",
+        "phosphosite_summary_general|expected_hierarchy=phosphopeptides_and_phosphosites_often_exceed_phosphoproteins_due_to_modification_hierarchy",
+        "phosphosite_summary_general|cutoff_interpretation=sharp_count_drop_with_higher_cutoff_can_indicate_many_low_confidence_localizations_while_stable_counts_can_indicate_robust_localization",
+    ])
 
     try:
         table = _phospho_tools.phosphosite_plot_table().copy()
@@ -4009,24 +3847,14 @@ def phospho_phosphosite_coverage_plot(workflow: str = "phosphosite", mode: Conte
     lines.append(
         f"phospho_coverage_overview|workflow={workflow_key}|dataset_level=phospho|entity=phosphosites|mode={plot_mode}"
     )
-    lines.append(
-        "phospho_coverage_functions|per_sample_view=phossite_coverage_plot|summary_view=phossite_coverage_plot_summary"
-    )
-    lines.append(
-        "phospho_coverage_class_rule|class_i=PTM_localization_greater_than_or_equal_to_0.75|not_class_i=PTM_localization_less_than_0.75"
-    )
-    lines.append(
-        "phospho_coverage_calculation|per_sample_detected_sites=total_sites_minus_missing_values|computed_separately_for_class_i_and_not_class_i"
-    )
-    lines.append(
-        "phospho_coverage_visual_encoding|color_mapping=class_i_vs_not_class_i|not_colored_by_condition"
-    )
-    lines.append(
-        "phospho_coverage_normal_view|bars=stacked_per_sample|stack_order=class_i_bottom_then_not_class_i_top"
-    )
-    lines.append(
-        "phospho_coverage_summary_view|bars=condition_level_mean_for_class_i_and_not_class_i|points=replicate_values|error_bars=standard_deviation"
-    )
+    lines.extend([
+        "phospho_coverage_functions|per_sample_view=phossite_coverage_plot|summary_view=phossite_coverage_plot_summary",
+        "phospho_coverage_class_rule|class_i=PTM_localization_greater_than_or_equal_to_0.75|not_class_i=PTM_localization_less_than_0.75",
+        "phospho_coverage_calculation|per_sample_detected_sites=total_sites_minus_missing_values|computed_separately_for_class_i_and_not_class_i",
+        "phospho_coverage_visual_encoding|color_mapping=class_i_vs_not_class_i|not_colored_by_condition",
+        "phospho_coverage_normal_view|bars=stacked_per_sample|stack_order=class_i_bottom_then_not_class_i_top",
+        "phospho_coverage_summary_view|bars=condition_level_mean_for_class_i_and_not_class_i|points=replicate_values|error_bars=standard_deviation",
+    ])
     lines.append(
         f"phospho_coverage_parameters|include_id={'true' if include_id else 'false'}|conditions={_safe_context_text(','.join(selected_conditions)) if selected_conditions else 'all_available'}"
     )
@@ -4183,18 +4011,12 @@ def phospho_phosphosite_distribution_plot(workflow: str = "phosphosite", mode: C
     lines.append(
         f"phospho_distribution_overview|workflow={workflow_key}|dataset_level=phospho|entity=phosphoproteins_and_phosphosites"
     )
-    lines.append(
-        "phospho_distribution_scope|purpose=show_how_many_phosphosites_are_detected_per_phosphoprotein"
-    )
-    lines.append(
-        "phospho_distribution_function|plot_function=phossite_dist"
-    )
-    lines.append(
-        "phospho_distribution_required_columns|primary=Phosphoprotein_and_site_num|fallback=Protein_group_or_Phosphoprotein_with_PTM_Collapse_key"
-    )
-    lines.append(
-        "phospho_distribution_computation|x_axis=number_of_phosphosites_per_phosphoprotein|y_axis=frequency_number_of_phosphoproteins_with_that_site_count"
-    )
+    lines.extend([
+        "phospho_distribution_scope|purpose=show_how_many_phosphosites_are_detected_per_phosphoprotein",
+        "phospho_distribution_function|plot_function=phossite_dist",
+        "phospho_distribution_required_columns|primary=Phosphoprotein_and_site_num|fallback=Protein_group_or_Phosphoprotein_with_PTM_Collapse_key",
+        "phospho_distribution_computation|x_axis=number_of_phosphosites_per_phosphoprotein|y_axis=frequency_number_of_phosphoproteins_with_that_site_count",
+    ])
     lines.append(
         f"phospho_distribution_cutoff|value={_fmt_value(cutoff)}|type=upper_quantile_filter_on_site_count_distribution"
     )
@@ -4248,12 +4070,10 @@ def phospho_phosphosite_distribution_plot(workflow: str = "phosphosite", mode: C
             f"site_count={int(row['SiteCount'])}|frequency={int(row['Frequency'])}"
         )
 
-    lines.append(
-        "phospho_distribution_general_pattern|often_right_skewed_with_many_proteins_having_few_sites_and_fewer_proteins_having_many_sites"
-    )
-    lines.append(
-        "phospho_distribution_general_pattern|broad_or_multimodal_patterns_can_reflect_complex_signaling_or_dataset_specific_characteristics"
-    )
+    lines.extend([
+        "phospho_distribution_general_pattern|often_right_skewed_with_many_proteins_having_few_sites_and_fewer_proteins_having_many_sites",
+        "phospho_distribution_general_pattern|broad_or_multimodal_patterns_can_reflect_complex_signaling_or_dataset_specific_characteristics",
+    ])
     return _text_payload("phospho_phosphosite_distribution_plot", "\n".join(lines))
 
 
@@ -4264,15 +4084,11 @@ def phospho_sty_plot(workflow: str = "phosphosite", mode: ContextMode | None = N
     lines.append(
         f"phospho_sty_overview|workflow={workflow_key}|dataset_level=phospho|entity=phosphosites"
     )
-    lines.append(
-        "phospho_sty_scope|purpose=report_number_and_percentage_of_phosphosites_on_serine_S_threonine_T_and_tyrosine_Y"
-    )
-    lines.append(
-        "phospho_sty_visual|plot=bar_chart_with_residue_categories_S_T_Y|y_axis=count|labels=percentage_annotations"
-    )
-    lines.append(
-        "phospho_sty_table_definition|columns=Residue_Count_Percentage"
-    )
+    lines.extend([
+        "phospho_sty_scope|purpose=report_number_and_percentage_of_phosphosites_on_serine_S_threonine_T_and_tyrosine_Y",
+        "phospho_sty_visual|plot=bar_chart_with_residue_categories_S_T_Y|y_axis=count|labels=percentage_annotations",
+        "phospho_sty_table_definition|columns=Residue_Count_Percentage",
+    ])
 
     try:
         table = _phospho_tools.phospho_sty_table().copy()
@@ -4365,12 +4181,10 @@ def phospho_phosprot_regulation_plot(workflow: str = "phosphoprotein", mode: Con
     lines.append(
         f"phosprot_regulation_overview|workflow={workflow_key}|dataset_level=phospho|entity=phosphoproteins|data_source={data_source}"
     )
-    lines.append(
-        "phosprot_regulation_scope|purpose=descriptive_protein_level_view_of_cumulative_significant_phosphosite_log2_fold_change_contributions"
-    )
-    lines.append(
-        "phosprot_regulation_function|plot_function=phosprot_regulation"
-    )
+    lines.extend([
+        "phosprot_regulation_scope|purpose=descriptive_protein_level_view_of_cumulative_significant_phosphosite_log2_fold_change_contributions",
+        "phosprot_regulation_function|plot_function=phosprot_regulation",
+    ])
     lines.append(
         f"phosprot_regulation_parameters|condition1={_safe_context_text(condition1)}|condition2={_safe_context_text(condition2)}|p_value_threshold={_fmt_value(p_value_threshold)}|log2fc_threshold={_fmt_value(log2fc_threshold)}|test_type={test_type}|use_uncorrected={'true' if use_uncorrected else 'false'}|max_hover_sites={max_hover_sites}|show_phosphosites={'true' if show_phosphosites else 'false'}|data_source={data_source}|protein_correction={'true' if protein_correction else 'false'}"
     )
@@ -4378,21 +4192,13 @@ def phospho_phosprot_regulation_plot(workflow: str = "phosphoprotein", mode: Con
         f"phosprot_regulation_testing|selected_test={test_type}|"
         f"selected_test_description={_stats_test_description(test_type)}"
     )
-    lines.append(
-        "phosprot_regulation_core_steps|step1=compute_phosphosite_log2_fold_changes_between_selected_conditions|step2=classify_sites_that_pass_the_selected_p_value_and_absolute_log2fc_thresholds|step3=sum_positive_significant_site_log2fc_for_x_and_absolute_negative_significant_site_log2fc_for_y"
-    )
-    lines.append(
-        "phosprot_regulation_coordinate_definition|x_axis=cumulative_significant_up_site_log2fc|y_axis=cumulative_significant_down_site_absolute_log2fc|point=one_protein|score_type=descriptive_not_a_protein_level_fold_change"
-    )
-    lines.append(
-        "phosprot_regulation_hover_definition|hover_can_include_significant_up_and_down_site_counts_identifiers_and_individual_log2fc_values_with_optional_truncation"
-    )
-    lines.append(
-        "phosprot_regulation_table_definition|columns=Protein_group_Upregulated_sites_Downregulated_sites_Upregulated_site_effects_Downregulated_site_effects_Upregulated_count_Downregulated_count_Upregulated_log2FC_sum_Downregulated_log2FC_sum_x_y_color_val"
-    )
-    lines.append(
-        "phosprot_regulation_parameter_note|only_sites_passing_both_the_selected_p_value_and_absolute_log2fc_thresholds_contribute|proteins_without_significant_sites_are_omitted"
-    )
+    lines.extend([
+        "phosprot_regulation_core_steps|step1=compute_phosphosite_log2_fold_changes_between_selected_conditions|step2=classify_sites_that_pass_the_selected_p_value_and_absolute_log2fc_thresholds|step3=sum_positive_significant_site_log2fc_for_x_and_absolute_negative_significant_site_log2fc_for_y",
+        "phosprot_regulation_coordinate_definition|x_axis=cumulative_significant_up_site_log2fc|y_axis=cumulative_significant_down_site_absolute_log2fc|point=one_protein|score_type=descriptive_not_a_protein_level_fold_change",
+        "phosprot_regulation_hover_definition|hover_can_include_significant_up_and_down_site_counts_identifiers_and_individual_log2fc_values_with_optional_truncation",
+        "phosprot_regulation_table_definition|columns=Protein_group_Upregulated_sites_Downregulated_sites_Upregulated_site_effects_Downregulated_site_effects_Upregulated_count_Downregulated_count_Upregulated_log2FC_sum_Downregulated_log2FC_sum_x_y_color_val",
+        "phosprot_regulation_parameter_note|only_sites_passing_both_the_selected_p_value_and_absolute_log2fc_thresholds_contribute|proteins_without_significant_sites_are_omitted",
+    ])
     lines.append(
         "phosprot_regulation_interpretation_scope|supports_descriptive_comparison_of_cumulative_significant_up_and_down_site_effects|does_not_estimate_a_protein_level_fold_change"
         + ("|site_changes_are_corrected_for_parent_protein_abundance_before_summing" if protein_correction
@@ -4430,22 +4236,18 @@ def single_protein_boxplot(workflow: str = "protein", mode: ContextMode | None =
     lines.append(
         f"single_protein_boxplot_selection|selected_input={_safe_context_text(selected_protein)}|conditions={_safe_context_text(','.join(selected_conditions)) if selected_conditions else 'all_available'}|outliers={'true' if outliers else 'false'}|dots={'true' if dots else 'false'}|random_seed={random_seed}|header={'true' if header else 'false'}|legend={'true' if legend else 'false'}"
     )
-    lines.append(
-        "single_protein_boxplot_general|description=distribution_of_log2_transformed_intensity_values_for_one_selected_entity_across_conditions"
-    )
-    lines.append(
-        "single_protein_boxplot_general|per_condition_processing=for_selected_entity_extract_all_intensity_values_from_replicates_in_each_condition"
-    )
+    lines.extend([
+        "single_protein_boxplot_general|description=distribution_of_log2_transformed_intensity_values_for_one_selected_entity_across_conditions",
+        "single_protein_boxplot_general|per_condition_processing=for_selected_entity_extract_all_intensity_values_from_replicates_in_each_condition",
+    ])
     if identifier == "genes":
         lines.append(
             "single_protein_boxplot_gene_aggregation|biological_unit=sample|duplicate_mapped_features=per_sample_median_ignoring_missing|sample_count_and_source_feature_count=reported_separately"
         )
-    lines.append(
-        "single_protein_boxplot_general|interpretation_scope=compare_conditions_detect_shifts_outliers_and_distribution_shape_symmetry_spread_skewness"
-    )
-    lines.append(
-        "single_protein_boxplot_definition|median=50th_percentile|IQR=Q3-Q1|whiskers=outermost_observed_values_within_the_1.5_IQR_fences|fences=Q1-1.5xIQR_to_Q3+1.5xIQR|outliers=observations_outside_the_fences"
-    )
+    lines.extend([
+        "single_protein_boxplot_general|interpretation_scope=compare_conditions_detect_shifts_outliers_and_distribution_shape_symmetry_spread_skewness",
+        "single_protein_boxplot_definition|median=50th_percentile|IQR=Q3-Q1|whiskers=outermost_observed_values_within_the_1.5_IQR_fences|fences=Q1-1.5xIQR_to_Q3+1.5xIQR|outliers=observations_outside_the_fences",
+    ])
     lines.append(
         f"single_protein_boxplot_labels|entity_terms={entity_singular}/{entity_plural}"
     )
@@ -4572,22 +4374,18 @@ def single_protein_lineplot(workflow: str = "protein", mode: ContextMode | None 
     lines.append(
         f"single_protein_lineplot_selection|proteins={_safe_context_text(','.join(selected_proteins)) if selected_proteins else 'none_selected'}|conditions={_safe_context_text(','.join(selected_conditions)) if selected_conditions else 'all_available'}|include_id={'true' if include_id else 'false'}|header={'true' if header else 'false'}|legend={'true' if legend else 'false'}"
     )
-    lines.append(
-        "single_protein_lineplot_context_policy|data_volume_control=per_entity_min_max_mean_median_plus_per_sample_values_when_at_most_40_points"
-    )
-    lines.append(
-        "single_protein_lineplot_general|description=each_selected_entity_is_plotted_as_an_independent_trajectory_across_ordered_samples_and_conditions"
-    )
+    lines.extend([
+        "single_protein_lineplot_context_policy|data_volume_control=per_entity_min_max_mean_median_plus_per_sample_values_when_at_most_40_points",
+        "single_protein_lineplot_general|description=each_selected_entity_is_plotted_as_an_independent_trajectory_across_ordered_samples_and_conditions",
+    ])
     if identifier == "genes":
         lines.append(
             "single_protein_lineplot_gene_aggregation|biological_unit=sample|duplicate_mapped_features=per_sample_median_ignoring_missing|sample_count_and_source_feature_count=reported_separately"
         )
-    lines.append(
-        "single_protein_lineplot_axes|x_axis=samples|y_axis=log2_intensity|conditions_define_sample_grouping_and_ordering"
-    )
-    lines.append(
-        "single_protein_lineplot_general|sample_ordering=samples_follow_user_selected_condition_sequence_for_consistent_experimental_alignment"
-    )
+    lines.extend([
+        "single_protein_lineplot_axes|x_axis=samples|y_axis=log2_intensity|conditions_define_sample_grouping_and_ordering",
+        "single_protein_lineplot_general|sample_ordering=samples_follow_user_selected_condition_sequence_for_consistent_experimental_alignment",
+    ])
     lines.append(
         "single_protein_lineplot_general|missing_values=" + (
             "NA_positions_have_display_only_log2_0_vertices_without_markers_not_measurements_or_imputation"
@@ -4762,12 +4560,10 @@ def single_protein_phosphosite_heatmap(workflow: str = "phosphosite", mode: Cont
     lines.append(
         f"single_protein_heatmap_selection|protein={_safe_context_text(selected_protein)}|conditions={_safe_context_text(','.join(selected_conditions)) if selected_conditions else 'all_available'}|include_id={'true' if include_id else 'false'}|header={'true' if header else 'false'}|filter_m1={'true' if filter_m1 else 'false'}|cluster_rows={'true' if cluster_rows else 'false'}|cluster_cols={'true' if cluster_cols else 'false'}|value_type={value_type}"
     )
-    lines.append(
-        "single_protein_heatmap_visual|x_axis=samples|y_axis=phosphosites_for_selected_protein|cells=transformed_intensity_values"
-    )
-    lines.append(
-        "single_protein_heatmap_general|description=heatmap_shows_selected_protein_with_site_rows_listed_in_context_across_samples"
-    )
+    lines.extend([
+        "single_protein_heatmap_visual|x_axis=samples|y_axis=phosphosites_for_selected_protein|cells=transformed_intensity_values",
+        "single_protein_heatmap_general|description=heatmap_shows_selected_protein_with_site_rows_listed_in_context_across_samples",
+    ])
 
     if not selected_protein:
         lines.append("single_protein_heatmap_data|status=incomplete_parameters|detail=protein_not_selected")

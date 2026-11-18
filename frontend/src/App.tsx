@@ -1,3 +1,5 @@
+import { useVisibleTab } from "./lib/useVisibleTab";
+import { lastPlotWorkflow, workflowPageForPlot } from "./lib/persistedUiState";
 import { compactAdvancedPlotSettings } from "./lib/plotSerialization";
 import { CONTEXT_SLOTS, activeContextSlot, contextText, keepOnly, withContextMode, type ContextModes, type ContextSlot } from "./lib/contextModes";
 import type { ContextMode } from "./lib/types";
@@ -213,12 +215,24 @@ export default function App() {
     [activeSection, activeDataTab, activeStatsTab, activePeptideTab,
       activeSingleProteinTab, activePhosphoTab, activeComparisonTab]
   );
-  const activeAdvancedSettings = activeAdvancedPlotKey
-    ? advancedByKey[activeAdvancedPlotKey] ?? styleTemplate() ?? EMPTY_ADVANCED_PLOT_SETTINGS
+  // The viewer has no simulation panel; its statistics page shows the volcano there.
+  const effectiveStatsTab = IS_VIEWER_MODE && activeStatsTab === "simulation" ? "volcano" : activeStatsTab;
+  const activeSlot = activeContextSlot({
+    section: activeSection, dataTab: activeDataTab, qcTab: activeQcTab, statsTab: effectiveStatsTab,
+    completenessTab: activeCompletenessTab, peptideTab: activePeptideTab,
+    singleProteinTab: activeSingleProteinTab, comparisonTab: activeComparisonTab, phosphoTab: activePhosphoTab,
+  });
+  const appearancePage = activeAdvancedPlotKey && workflowPageForPlot(activeAdvancedPlotKey);
+  const appearanceKind = activeSlot && contextText(contextModes[activeSlot], "kind");
+  const appearanceKey = appearancePage && activeAdvancedPlotKey
+    ? activeAdvancedPlotKey + ":" + (appearanceKind || lastPlotWorkflow(activeAdvancedPlotKey, appearancePage))
+    : activeAdvancedPlotKey;
+  const activeAdvancedSettings = appearanceKey
+    ? advancedByKey[appearanceKey] ?? styleTemplate() ?? EMPTY_ADVANCED_PLOT_SETTINGS
     : EMPTY_ADVANCED_PLOT_SETTINGS;
   // Named styles and "this style on every plot" (lib/plotStyles.ts) reach these settings here.
-  const styleStoreState = useRef({ key: activeAdvancedPlotKey, byKey: advancedByKey });
-  useEffect(() => { styleStoreState.current = { key: activeAdvancedPlotKey, byKey: advancedByKey }; }, [activeAdvancedPlotKey, advancedByKey]);
+  const styleStoreState = useRef({ key: appearanceKey, byKey: advancedByKey });
+  useEffect(() => { styleStoreState.current = { key: appearanceKey, byKey: advancedByKey }; }, [appearanceKey, advancedByKey]);
   useEffect(() => registerStyleStore("app", {
     active: () => {
       const { key, byKey } = styleStoreState.current;
@@ -285,6 +299,14 @@ export default function App() {
     };
   }, []);
 
+  const lastAppearanceKey = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (lastAppearanceKey.current !== appearanceKey) {
+      lastAppearanceKey.current = appearanceKey;
+      setActiveAdvancedPlotSettings(appearanceKey ? compactAdvancedPlotSettings(activeAdvancedSettings) : null);
+    }
+  }, [appearanceKey, activeAdvancedSettings]);
+
   // The active plot's settings apply whether the panel is open or not: the
   // mode only decides whether the panel is shown.
   useEffect(() => {
@@ -296,7 +318,7 @@ export default function App() {
       setActiveAdvancedPlotSettings(compactAdvancedPlotSettings(activeAdvancedSettings));
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [activeAdvancedPlotKey, activeAdvancedSettings]);
+  }, [appearanceKey, activeAdvancedSettings, activeAdvancedPlotKey]);
 
   useEffect(() => {
     if (!annotationMode) return;
@@ -432,83 +454,19 @@ export default function App() {
     }
   }, [activeSection, visibleSections]);
 
-  useEffect(() => {
-    if (!visibleDataTabs.some((tab) => tab.key === activeDataTab)) {
-      setActiveDataTab(visibleDataTabs[0]?.key ?? "upload");
-    }
-  }, [activeDataTab, visibleDataTabs]);
+  useVisibleTab(activeDataTab, visibleDataTabs, "upload", setActiveDataTab);
 
-  useEffect(() => {
-    if (!visibleStatsTabs.some((tab) => tab.key === activeStatsTab)) {
-      setActiveStatsTab(visibleStatsTabs[0]?.key ?? "volcano");
-    }
-  }, [activeStatsTab, visibleStatsTabs]);
+  useVisibleTab(activeStatsTab, visibleStatsTabs, "volcano", setActiveStatsTab);
 
-  useEffect(() => {
-    if (!visiblePeptideTabs.some((tab) => tab.key === activePeptideTab)) {
-      setActivePeptideTab(visiblePeptideTabs[0]?.key ?? "rtPlot");
-    }
-  }, [activePeptideTab, visiblePeptideTabs]);
+  useVisibleTab(activePeptideTab, visiblePeptideTabs, "rtPlot", setActivePeptideTab);
 
-  useEffect(() => {
-    if (!visibleSingleProteinTabs.some((tab) => tab.key === activeSingleProteinTab)) {
-      setActiveSingleProteinTab(visibleSingleProteinTabs[0]?.key ?? "boxplot");
-    }
-  }, [activeSingleProteinTab, visibleSingleProteinTabs]);
+  useVisibleTab(activeSingleProteinTab, visibleSingleProteinTabs, "boxplot", setActiveSingleProteinTab);
 
-  useEffect(() => {
-    if (!visibleExternalTabs.some((tab) => tab.key === activeExternalTab)) {
-      setActiveExternalTab(visibleExternalTabs[0]?.key ?? "gonetView");
-    }
-  }, [activeExternalTab, visibleExternalTabs]);
+  useVisibleTab(activeExternalTab, visibleExternalTabs, "gonetView", setActiveExternalTab);
 
-  useEffect(() => {
-    if (!visibleSummaryTabs.some((tab) => tab.key === activeSummaryTab)) {
-      setActiveSummaryTab(visibleSummaryTabs[0]?.key ?? "tables");
-    }
-  }, [activeSummaryTab, visibleSummaryTabs]);
+  useVisibleTab(activeSummaryTab, visibleSummaryTabs, "tables", setActiveSummaryTab);
 
-  useEffect(() => {
-    if (!visiblePhosphoTabs.some((tab) => tab.key === activePhosphoTab)) {
-      setActivePhosphoTab(visiblePhosphoTabs[0]?.key ?? "phosphositePlot");
-    }
-  }, [activePhosphoTab, visiblePhosphoTabs]);
-
-  const topManual = useMemo(() => {
-    const tab = {
-      data: activeDataTab,
-      qc: activeQcTab,
-      completeness: activeCompletenessTab,
-      stats: activeStatsTab,
-      peptide: activePeptideTab,
-      singleProtein: activeSingleProteinTab,
-      phospho: activePhosphoTab,
-      comparison: activeComparisonTab,
-      summary: activeSummaryTab,
-      external: activeExternalTab,
-    }[activeSection as string];
-    const chapter = tab ? MANUAL_CHAPTERS[`${activeSection}.${tab}`] : undefined;
-    return chapter ? { title: `${chapter.title} Manual`, path: manualPath(`${chapter.file}.pdf`) } : null;
-  }, [
-    activeSection,
-    activeDataTab,
-    activeQcTab,
-    activeCompletenessTab,
-    activeStatsTab,
-    activePeptideTab,
-    activeSingleProteinTab,
-    activePhosphoTab,
-    activeComparisonTab,
-    activeSummaryTab,
-    activeExternalTab,
-  ]);
-
-  const topManualButton = useMemo(
-    () => topManual ? (
-      <ManualEmbed pdfPath={topManual.path} title={topManual.title} fullManualPath={manualPath(FULL_MANUAL)} buttonLabel="Manual" />
-    ) : null,
-    [topManual]
-  );
+  useVisibleTab(activePhosphoTab, visiblePhosphoTabs, "phosphositePlot", setActivePhosphoTab);
 
   const activeModuleKey = useMemo(() => {
     if (activeSection === "data") return `data.${activeDataTab}`;
@@ -537,6 +495,20 @@ export default function App() {
     activeExternalTab,
   ]);
 
+  const topManual = useMemo(() => {
+    const chapter = activeSection === "analysis" || activeSection === "settings"
+      ? undefined
+      : MANUAL_CHAPTERS[activeModuleKey];
+    return chapter ? { title: `${chapter.title} Manual`, path: manualPath(`${chapter.file}.pdf`) } : null;
+  }, [activeSection, activeModuleKey]);
+
+  const topManualButton = useMemo(
+    () => topManual ? (
+      <ManualEmbed pdfPath={topManual.path} title={topManual.title} fullManualPath={manualPath(FULL_MANUAL)} buttonLabel="Manual" />
+    ) : null,
+    [topManual]
+  );
+
   const activeWorkflowScope = useMemo(() => {
     if (activeSection === "qc") {
       const scoped = qcWorkflowScope.trim().toLowerCase();
@@ -549,7 +521,8 @@ export default function App() {
       return "peptide";
     }
     if (activeSection === "singleProtein") {
-      return activeSingleProteinTab === "heatmap" ? "phosphosite" : "protein";
+      const kind = activeSingleProteinTab === "heatmap" ? "phospho" : contextText(contextModes.singleProtein, "kind");
+      return kind === "phospho" ? "phosphosite" : kind === "phosprot" ? "phosphoprotein" : "protein";
     }
     if (activeSection === "comparison" && (activeComparisonTab === "pearson" || activeComparisonTab === "venn")) {
       const kind = contextText(contextModes.comparison, "kind");
@@ -558,6 +531,10 @@ export default function App() {
       return "protein";
     }
 
+    if (activeSection === "stats" || (activeSection === "data" && activeDataTab === "distribution")) {
+      const kind = activeSlot ? contextText(contextModes[activeSlot], "kind") : "";
+      if (kind) return kind === "phospho" ? "phosphosite" : kind === "phosprot" ? "phosphoprotein" : kind;
+    }
     const hasProtein = Boolean(datasets?.protein);
     const hasPhospho = Boolean(datasets?.phospho);
     const hasPhosprot = Boolean(datasets?.phosprot);
@@ -571,18 +548,13 @@ export default function App() {
     activePhosphoTab,
     activeSingleProteinTab,
     activeComparisonTab,
+    activeSlot,
+    activeDataTab,
     contextModes,
     datasets,
     qcWorkflowScope,
   ]);
 
-  // The viewer has no simulation panel; its statistics page shows the volcano there.
-  const effectiveStatsTab = IS_VIEWER_MODE && activeStatsTab === "simulation" ? "volcano" : activeStatsTab;
-  const activeSlot = activeContextSlot({
-    section: activeSection, dataTab: activeDataTab, qcTab: activeQcTab, statsTab: effectiveStatsTab,
-    completenessTab: activeCompletenessTab, peptideTab: activePeptideTab,
-    singleProteinTab: activeSingleProteinTab, comparisonTab: activeComparisonTab, phosphoTab: activePhosphoTab,
-  });
   // A view's selections belong to it while it is on screen. Leaving drops them,
   // so coming back never shows the last visit's selections before the page has
   // reported its current ones.
@@ -647,15 +619,12 @@ export default function App() {
   ) : null;
 
   const topBar = useMemo(() => {
+    function renderTabs<T extends string>(tabs: { key: T; label: string }[], activeTab: T, onChange: (tab: T) => void) {
+      return <TopTabs tabs={tabs} activeTab={activeTab} onChange={onChange} rightContent={topManualButton} />;
+    }
+
     if (activeSection === "data") {
-      return (
-        <TopTabs
-          tabs={visibleDataTabs}
-          activeTab={activeDataTab}
-          onChange={setActiveDataTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visibleDataTabs, activeDataTab, setActiveDataTab);
     }
 
     if (activeSection === "analysis") {
@@ -663,102 +632,39 @@ export default function App() {
     }
 
     if (activeSection === "qc") {
-      return (
-        <TopTabs
-          tabs={qcTabs}
-          activeTab={activeQcTab}
-          onChange={setActiveQcTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(qcTabs, activeQcTab, setActiveQcTab);
     }
 
     if (activeSection === "completeness") {
-      return (
-        <TopTabs
-          tabs={completenessTabs}
-          activeTab={activeCompletenessTab}
-          onChange={setActiveCompletenessTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(completenessTabs, activeCompletenessTab, setActiveCompletenessTab);
     }
 
     if (activeSection === "stats") {
-      return (
-        <TopTabs
-          tabs={visibleStatsTabs}
-          activeTab={activeStatsTab}
-          onChange={setActiveStatsTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visibleStatsTabs, activeStatsTab, setActiveStatsTab);
     }
 
     if (activeSection === "peptide") {
-      return (
-        <TopTabs
-          tabs={visiblePeptideTabs}
-          activeTab={activePeptideTab}
-          onChange={setActivePeptideTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visiblePeptideTabs, activePeptideTab, setActivePeptideTab);
     }
 
     if (activeSection === "singleProtein") {
-      return (
-        <TopTabs
-          tabs={visibleSingleProteinTabs}
-          activeTab={activeSingleProteinTab}
-          onChange={setActiveSingleProteinTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visibleSingleProteinTabs, activeSingleProteinTab, setActiveSingleProteinTab);
     }
 
     if (activeSection === "phospho") {
-      return (
-        <TopTabs
-          tabs={visiblePhosphoTabs}
-          activeTab={activePhosphoTab}
-          onChange={setActivePhosphoTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visiblePhosphoTabs, activePhosphoTab, setActivePhosphoTab);
     }
 
     if (activeSection === "comparison") {
-      return (
-        <TopTabs
-          tabs={comparisonTabs}
-          activeTab={activeComparisonTab}
-          onChange={setActiveComparisonTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(comparisonTabs, activeComparisonTab, setActiveComparisonTab);
     }
 
     if (activeSection === "summary") {
-      return (
-        <TopTabs
-          tabs={visibleSummaryTabs}
-          activeTab={activeSummaryTab}
-          onChange={setActiveSummaryTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visibleSummaryTabs, activeSummaryTab, setActiveSummaryTab);
     }
 
     if (activeSection === "external") {
-      return (
-        <TopTabs
-          tabs={visibleExternalTabs}
-          activeTab={activeExternalTab}
-          onChange={setActiveExternalTab}
-          rightContent={topManualButton}
-        />
-      );
+      return renderTabs(visibleExternalTabs, activeExternalTab, setActiveExternalTab);
     }
 
     return null;
@@ -804,7 +710,7 @@ export default function App() {
 
   function buildUiStateSnapshot(): Record<string, unknown> {
     return {
-      version: 2,
+      version: 3,
       app: {
         activeSection,
         activeDataTab,
@@ -859,7 +765,7 @@ export default function App() {
     applyCopylotSessionStorageState({
       ...(localStorageState && typeof localStorageState === "object" ? localStorageState : {}),
       ...(sessionStorageState && typeof sessionStorageState === "object" ? sessionStorageState : {}),
-    });
+    }, Number(payload?.version) >= 3);
     const restoredAdvancedMode = getAdvancedPlotMode();
     const restoredAdvancedSettings = getAdvancedPlotSettingsByKey();
     setAdvancedModeEnabled(restoredAdvancedMode);
@@ -874,7 +780,7 @@ export default function App() {
       setAdvancedPlotSettingsByKey(settingsByKey);
       setAdvancedPlotMode(enabled);
       setAdvancedModeEnabled(enabled);
-      setAdvancedByKey(settingsByKey);
+      setAdvancedByKey(getAdvancedPlotSettingsByKey());
     } else {
       setAdvancedPlotSettingsByKey(restoredAdvancedSettings);
       setAdvancedPlotMode(restoredAdvancedMode);
@@ -888,46 +794,21 @@ export default function App() {
       setActiveSection(nextSection);
     }
 
-    const nextData = String(next.activeDataTab ?? "upload").trim() as DataTab;
-    if (dataTabs.some((item) => item.key === nextData)) {
-      setActiveDataTab(nextData);
+    function restoreTab<T extends string>(value: unknown, fallback: T, tabs: { key: T }[], setTab: (tab: T) => void) {
+      const candidate = String(value ?? fallback).trim() as T;
+      if (tabs.some((item) => item.key === candidate)) setTab(candidate);
     }
-    const nextQc = String(next.activeQcTab ?? "coverage").trim() as QcTab;
-    if (qcTabs.some((item) => item.key === nextQc)) {
-      setActiveQcTab(nextQc);
-    }
-    const nextCompleteness = String(next.activeCompletenessTab ?? "missingPlot").trim() as CompletenessTab;
-    if (completenessTabs.some((item) => item.key === nextCompleteness)) {
-      setActiveCompletenessTab(nextCompleteness);
-    }
-    const nextStats = String(next.activeStatsTab ?? "volcano").trim() as StatsTab;
-    if (statsTabs.some((item) => item.key === nextStats)) {
-      setActiveStatsTab(nextStats);
-    }
-    const nextPeptide = String(next.activePeptideTab ?? "rtPlot").trim() as PeptideTab;
-    if (peptideTabs.some((item) => item.key === nextPeptide)) {
-      setActivePeptideTab(nextPeptide);
-    }
-    const nextSingle = String(next.activeSingleProteinTab ?? "boxplot").trim() as SingleProteinTab;
-    if (singleProteinTabs.some((item) => item.key === nextSingle)) {
-      setActiveSingleProteinTab(nextSingle);
-    }
-    const nextPhospho = String(next.activePhosphoTab ?? "phosphositePlot").trim() as PhosphoTab;
-    if (phosphoTabs.some((item) => item.key === nextPhospho)) {
-      setActivePhosphoTab(nextPhospho);
-    }
-    const nextComparison = String(next.activeComparisonTab ?? "pearson").trim() as ComparisonTab;
-    if (comparisonTabs.some((item) => item.key === nextComparison)) {
-      setActiveComparisonTab(nextComparison);
-    }
-    const nextSummary = String(next.activeSummaryTab ?? "tables").trim() as SummaryTab;
-    if (summaryTabs.some((item) => item.key === nextSummary)) {
-      setActiveSummaryTab(nextSummary);
-    }
-    const nextExternal = String(next.activeExternalTab ?? "peptideCollapse").trim() as ExternalTab;
-    if (externalTabs.some((item) => item.key === nextExternal)) {
-      setActiveExternalTab(nextExternal);
-    }
+
+    restoreTab(next.activeDataTab, "upload", dataTabs, setActiveDataTab);
+    restoreTab(next.activeQcTab, "coverage", qcTabs, setActiveQcTab);
+    restoreTab(next.activeCompletenessTab, "missingPlot", completenessTabs, setActiveCompletenessTab);
+    restoreTab(next.activeStatsTab, "volcano", statsTabs, setActiveStatsTab);
+    restoreTab(next.activePeptideTab, "rtPlot", peptideTabs, setActivePeptideTab);
+    restoreTab(next.activeSingleProteinTab, "boxplot", singleProteinTabs, setActiveSingleProteinTab);
+    restoreTab(next.activePhosphoTab, "phosphositePlot", phosphoTabs, setActivePhosphoTab);
+    restoreTab(next.activeComparisonTab, "pearson", comparisonTabs, setActiveComparisonTab);
+    restoreTab(next.activeSummaryTab, "tables", summaryTabs, setActiveSummaryTab);
+    restoreTab(next.activeExternalTab, "peptideCollapse", externalTabs, setActiveExternalTab);
     const nextRightPanel = String(next.rightPanel ?? "none").trim() as RightPanel;
     if (nextRightPanel === "none" || nextRightPanel === "list" || nextRightPanel === "chat") {
       setRightPanel(nextRightPanel);
@@ -1245,10 +1126,10 @@ export default function App() {
   );
 
   const plotLabels = usePlotLabels(activeWorkflowScope, activeContextMode, Boolean(activeAdvancedPlotKey));
-  const activeAdvancedPlotOptionsPanel = activeAdvancedPlotKey ? (
+  const activeAdvancedPlotOptionsPanel = appearanceKey ? (
     <AssistantAppearanceMount visible={advancedModeEnabled}>
     <AdvancedPlotOptions
-      key={activeAdvancedPlotKey}
+      key={appearanceKey}
       value={activeAdvancedSettings}
       controlDefaults={activeAdvancedControlDefaults}
       conditionOptions={plotLabels?.conditions}
@@ -1257,7 +1138,7 @@ export default function App() {
       visibleControls={activeAdvancedVisibleControls}
       onChange={(next) => {
         setActiveAdvancedPlotSettings(compactAdvancedPlotSettings(next));
-        setAdvancedByKey((prev) => ({ ...prev, [activeAdvancedPlotKey]: next }));
+        setAdvancedByKey((prev) => ({ ...prev, [appearanceKey]: next }));
       }}
     />
     </AssistantAppearanceMount>

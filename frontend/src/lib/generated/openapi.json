@@ -31,6 +31,66 @@
         "additionalProperties": false,
         "description": "One plot's appearance overrides. Absent means the plot's own choice.",
         "properties": {
+          "abundanceHighlightColor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightcolor"
+          },
+          "abundanceHighlightLegend": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightlegend"
+          },
+          "abundanceHighlightLegendLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightlegendlabel"
+          },
+          "abundanceHighlightWidth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightwidth"
+          },
+          "abundanceLabelSize": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancelabelsize"
+          },
           "axisLabelFontFamily": {
             "anyOf": [
               {
@@ -424,6 +484,54 @@
             ],
             "default": null,
             "title": "Correlationcolormap"
+          },
+          "distributionNoteText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnotetext"
+          },
+          "distributionNoteVisible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnotevisible"
+          },
+          "distributionNoteXOffset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnotexoffset"
+          },
+          "distributionNoteYOffset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnoteyoffset"
           },
           "fontFamily": {
             "anyOf": [
@@ -1039,7 +1147,7 @@
             "default": null,
             "title": "Volcanohighlightlegendlabel"
           },
-          "volcanoHighlightSize": {
+          "volcanoHighlightWidth": {
             "anyOf": [
               {
                 "type": "number"
@@ -1049,7 +1157,43 @@
               }
             ],
             "default": null,
-            "title": "Volcanohighlightsize"
+            "title": "Volcanohighlightwidth"
+          },
+          "volcanoLabelConnector": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volcanolabelconnector"
+          },
+          "volcanoLabelConnectorColor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volcanolabelconnectorcolor"
+          },
+          "volcanoLabelConnectorWidth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volcanolabelconnectorwidth"
           },
           "volcanoLabelSize": {
             "anyOf": [
@@ -3141,7 +3285,8 @@
                 2,
                 3,
                 4,
-                5
+                5,
+                6
               ],
               "type": "integer"
             },
@@ -6325,6 +6470,60 @@
         "title": "SummaryMetadataTable",
         "type": "object"
       },
+      "SummaryPlotEntry": {
+        "description": "One plot added to the report, as it was when it was added.\n\n`request` holds the page's options for that plot, `render` how it was drawn\n(type Normal or Interactive, widthCm, heightCm, dpi) and `advanced` its\nadvanced appearance. The report has a protein and a phosphosite level, so\nthose are the levels an entry can belong to.",
+        "properties": {
+          "advanced": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advanced"
+          },
+          "kind": {
+            "enum": [
+              "protein",
+              "phospho"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "render": {
+            "additionalProperties": true,
+            "title": "Render",
+            "type": "object"
+          },
+          "request": {
+            "additionalProperties": true,
+            "title": "Request",
+            "type": "object"
+          },
+          "type": {
+            "enum": [
+              "volcano",
+              "pearson",
+              "venn",
+              "anova",
+              "ora",
+              "single_box",
+              "single_line"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "kind"
+        ],
+        "title": "SummaryPlotEntry",
+        "type": "object"
+      },
       "SummaryReportContext": {
         "properties": {
           "advancedPlotMode": {
@@ -6353,6 +6552,13 @@
             "title": "Completenesssettings",
             "type": "object"
           },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryPlotEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
           "qcAdvancedSettingsByTab": {
             "additionalProperties": {
               "additionalProperties": true,
@@ -6375,6 +6581,17 @@
             },
             "title": "Volcanoentries",
             "type": "array"
+          },
+          "workflowPlotSettings": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "title": "Workflowplotsettings",
+            "type": "object"
           }
         },
         "title": "SummaryReportContext",
@@ -10125,7 +10342,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#1f77b4",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -10302,7 +10519,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#1f77b4",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -10632,7 +10849,7 @@
             "name": "color1",
             "required": false,
             "schema": {
-              "default": "#1f77b4",
+              "default": "",
               "title": "Color1",
               "type": "string"
             }
@@ -10642,7 +10859,7 @@
             "name": "color2",
             "required": false,
             "schema": {
-              "default": "#ff7f0e",
+              "default": "",
               "title": "Color2",
               "type": "string"
             }
@@ -10652,7 +10869,7 @@
             "name": "color3",
             "required": false,
             "schema": {
-              "default": "#2ca02c",
+              "default": "",
               "title": "Color3",
               "type": "string"
             }
@@ -10936,7 +11153,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#2563eb",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -11583,6 +11800,7 @@
     },
     "/api/plots/notebooks/{token}.zip": {
       "get": {
+        "description": "One export as a ZIP.\n\n`matrices` ships the data matrices of deterministic steps, `imputed` the full\nimputed matrix. Both are off unless the user turned them on in Settings: the\nexport then holds only what cannot be recomputed from the original file.",
         "operationId": "download_plot_notebook_api_plots_notebooks__token__zip_get",
         "parameters": [
           {
@@ -11592,6 +11810,26 @@
             "schema": {
               "title": "Token",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "matrices",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Matrices",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "imputed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Imputed",
+              "type": "boolean"
             }
           }
         ],
@@ -12195,7 +12433,7 @@
             "name": "colorClassI",
             "required": false,
             "schema": {
-              "default": "#2563eb",
+              "default": "",
               "title": "Colorclassi",
               "type": "string"
             }
@@ -12205,7 +12443,7 @@
             "name": "colorNotClassI",
             "required": false,
             "schema": {
-              "default": "#f59e0b",
+              "default": "",
               "title": "Colornotclassi",
               "type": "string"
             }
@@ -12387,7 +12625,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#87CEEB",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -12748,7 +12986,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#87CEEB",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -13339,6 +13577,72 @@
               "title": "Advanced",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topHigh",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tophigh",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topLow",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Toplow",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightOutline",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Highlightoutline",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightLabels",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Highlightlabels",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "identifier",
+            "required": false,
+            "schema": {
+              "default": "workflow",
+              "enum": [
+                "workflow",
+                "genes"
+              ],
+              "title": "Identifier",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -13452,6 +13756,72 @@
             "schema": {
               "default": "",
               "title": "Advanced",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topHigh",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tophigh",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topLow",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Toplow",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightOutline",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Highlightoutline",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightLabels",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Highlightlabels",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "identifier",
+            "required": false,
+            "schema": {
+              "default": "workflow",
+              "enum": [
+                "workflow",
+                "genes"
+              ],
+              "title": "Identifier",
               "type": "string"
             }
           }
@@ -14457,7 +14827,9 @@
               "enum": [
                 "protein",
                 "phospho",
-                "phosprot"
+                "phosprot",
+                "peptide",
+                "precursor"
               ],
               "title": "Kind",
               "type": "string"
@@ -17533,6 +17905,26 @@
           },
           {
             "in": "query",
+            "name": "labelTopUp",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopup",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labelTopDown",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopdown",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "advanced",
             "required": false,
             "schema": {
@@ -18043,6 +18435,26 @@
               "default": true,
               "title": "Highlightoutline",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labelTopUp",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopup",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labelTopDown",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopdown",
+              "type": "integer"
             }
           },
           {

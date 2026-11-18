@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -73,48 +74,44 @@ def viewer_portal_enabled() -> bool:
     return env_flag("COPYLOT_VIEWER_PORTAL_ENABLED")
 
 
-def _default_access_file_candidates(project_root: Path) -> list[Path]:
+def _viewer_access_file_candidates(project_root: Path, stem: str) -> list[Path]:
     return [
-        project_root / "local" / "viewer_access.local.json",
-        project_root / "viewer_access.local.json",
-        project_root / "viewer_access.json",
+        project_root / "local" / f"{stem}.local.json",
+        project_root / f"{stem}.local.json",
+        project_root / f"{stem}.json",
     ]
+
+
+def _resolve_viewer_access_file(
+    project_root: Path, env_name: str, candidates: Callable[[Path], list[Path]],
+) -> Path | None:
+    raw = str(os.getenv(env_name, "")).strip()
+    if raw:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        return candidate.resolve()
+
+    for candidate in candidates(project_root):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _default_access_file_candidates(project_root: Path) -> list[Path]:
+    return _viewer_access_file_candidates(project_root, "viewer_access")
 
 
 def _resolve_access_file(project_root: Path) -> Path | None:
-    raw = str(os.getenv("COPYLOT_VIEWER_ACCESS_FILE", "")).strip()
-    if raw:
-        candidate = Path(raw)
-        if not candidate.is_absolute():
-            candidate = project_root / candidate
-        return candidate.resolve()
-
-    for candidate in _default_access_file_candidates(project_root):
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
+    return _resolve_viewer_access_file(project_root, "COPYLOT_VIEWER_ACCESS_FILE", _default_access_file_candidates)
 
 
 def _default_qr_access_file_candidates(project_root: Path) -> list[Path]:
-    return [
-        project_root / "local" / "viewer_qr_access.local.json",
-        project_root / "viewer_qr_access.local.json",
-        project_root / "viewer_qr_access.json",
-    ]
+    return _viewer_access_file_candidates(project_root, "viewer_qr_access")
 
 
 def _resolve_qr_access_file(project_root: Path) -> Path | None:
-    raw = str(os.getenv("COPYLOT_VIEWER_QR_ACCESS_FILE", "")).strip()
-    if raw:
-        candidate = Path(raw)
-        if not candidate.is_absolute():
-            candidate = project_root / candidate
-        return candidate.resolve()
-
-    for candidate in _default_qr_access_file_candidates(project_root):
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
+    return _resolve_viewer_access_file(project_root, "COPYLOT_VIEWER_QR_ACCESS_FILE", _default_qr_access_file_candidates)
 
 
 def _normalize_project_name(value: str) -> str:

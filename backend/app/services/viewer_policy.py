@@ -6,6 +6,20 @@ notebook exports and model management are intentionally absent.
 """
 from starlette.routing import compile_path
 
+# Viewers do not get notebook exports (D11). This is the one switch: set it to
+# True and the download route below is allowed and every place that prepares an
+# export (plots, ORA from a list, the report) prepares it for viewers too. The
+# page follows with NOTEBOOK_EXPORTS_ENABLED in frontend/src/lib/notebookExportOptions.ts.
+VIEWER_NOTEBOOK_EXPORTS = False
+_NOTEBOOK_OPERATIONS = frozenset({('GET', '/api/plots/notebooks/{token}.zip')})
+
+
+def notebook_exports_blocked() -> bool:
+    """Whether this deployment withholds notebook exports (a viewer, unless switched on)."""
+    from app.services.viewer_bootstrap import viewer_mode_enabled
+
+    return viewer_mode_enabled() and not VIEWER_NOTEBOOK_EXPORTS
+
 
 VIEWER_ALLOWED_OPERATIONS = frozenset({
     ('POST', '/api/analysis/volcano/data'),
@@ -125,7 +139,7 @@ VIEWER_ALLOWED_OPERATIONS = frozenset({
     ('POST', '/api/viewer/auth/logout'),
     ('POST', '/api/viewer/auth/qr-login'),
     ('GET', '/api/viewer/auth/status'),
-})
+}) | (_NOTEBOOK_OPERATIONS if VIEWER_NOTEBOOK_EXPORTS else frozenset())
 
 _AUTH_PATHS = frozenset(
     path for _, path in VIEWER_ALLOWED_OPERATIONS

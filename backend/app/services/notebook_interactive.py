@@ -1,13 +1,10 @@
 """Portable interactive abundance figures from the same UI implementation."""
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
+from app.services.notebook_preprocessing import cached_notebook_render, capture_notebook, notebook_capture_requested
 from app.services.notebook_qc import qc_source
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_styling, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
 
 @lru_cache(maxsize=1)
@@ -17,25 +14,25 @@ def abundance_source():
     rendering = module_source("plot_images.py")
     ranks = function_definition(rendering, "_abundance_rank_frame")
     ranks = ranks.replace("kind: AnnotationKind", "data, metadata, kind: str")
-    ranks = ranks.replace("_abundance_mean_intensities(kind)", "_abundance_mean_intensities(data, metadata, kind)")
+    ranks = ranks.replace("_abundance_mean_intensities(kind, identifier=identifier)", "_abundance_mean_intensities(data, metadata, kind, identifier=identifier)")
     figure = function_definition(rendering, "qc_abundance_interactive_html")
     for before, after in (
         ("def qc_abundance_interactive_html(", "def plot_figure("),
         ("    kind: AnnotationKind,", "    data, metadata, workflow_kind, condition_colors, centered=False,"),
         ("_get_plotly()", "get_plotly()"),
-        ("_abundance_rank_frame(kind)", "_abundance_rank_frame(data, metadata, workflow_kind)"),
+        ("_abundance_rank_frame(kind, identifier=identifier)", "_abundance_rank_frame(data, metadata, workflow_kind, identifier=identifier)"),
         ("advanced_condition_colors(kind, None, visible_conditions, advanced)", "condition_colors"),
         ("phosprot_values_are_centred(kind)", "centered"),
         ("return _plotly_html(fig)", "return force_svg_rendering(fig)"),
     ):
         figure = replace_once(figure, before, after)
     figure = figure.replace("_cm_to_px(", "cm_to_px(").replace(") -> str:", "):")
-    styles = "\n".join(line for line in module_source("plot_styling.py").splitlines() if not line.startswith("from app."))
+    styles = portable_styling()
     styles = extract_notebook_source(styles, ("advanced_label", "apply_plotly_group_markers", "advanced_plotly_layout")).code
     common = module_source("plotting_common.py")
     html = function_definition(common, "plotly_html")
     html = html.replace("full_html=False,", "full_html=False, div_id='copylot-plot',\n        post_script=\"window.dispatchEvent(new Event('copylot-plot-ready'));\",")
-    sources = merge_source(shared, ranks, figure, styles, function_definition(common, "get_plotly"), html,
+    sources = merge_source(shared, ranks, figure, styles, module_source("abundance_highlights.py"), function_definition(common, "get_plotly"), html,
         extract_notebook_source(module_source("plot_export.py"), ("cm_to_px",)).code,
         extract_notebook_source(module_source("plot_webgl.py"), ("force_svg_rendering",)).code,
         extract_notebook_source(module_source("html_security.py"), ("GENERATED_HTML_META",)).code)
@@ -44,12 +41,10 @@ def abundance_source():
 
 @lru_cache(maxsize=1)
 def _abundance_module():
-    module = ModuleType("_copylot_portable_interactive_abundance")
-    sys.modules[module.__name__] = module
-    exec(abundance_source().code, module.__dict__)
-    return module
+    return portable_module("_copylot_portable_interactive_abundance", abundance_source)
 
 
+@cached_notebook_render
 def render_abundance(kind: str, **options) -> tuple[str, str]:
     from app.services.data_tools import linear_qc_frame, linear_qc_uses_unnormalized, metadata_for_kind, _get_sample_columns
     from app.services.dataset_store import get_current_dataset
@@ -70,14 +65,12 @@ def render_abundance(kind: str, **options) -> tuple[str, str]:
     data = linear_qc_frame(kind).copy(deep=True)
     unnormalized = linear_qc_uses_unnormalized(kind)
     metadata = metadata_for_kind(kind, data, _get_sample_columns(kind, data)).copy(deep=True)
-    bound = inspect.signature(qc_abundance_interactive_html).bind(kind, **options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(qc_abundance_interactive_html, kind, **options)
     settings.pop("kind")
     settings["workflow_kind"] = kind
     settings["centered"] = bool(lineage and lineage.aggregation == "robust_site_median")
     module = _abundance_module()
-    ranks, _, _ = module._abundance_rank_frame(data, metadata, kind)
+    ranks, _, _ = module._abundance_rank_frame(data, metadata, kind, identifier=settings["identifier"])
     if settings["condition"] != "All Conditions":
         ranks = ranks[ranks["Condition"] == settings["condition"]]
     conditions = ranks["Condition"].astype(str).dropna().unique().tolist()

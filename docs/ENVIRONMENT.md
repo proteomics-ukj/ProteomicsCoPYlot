@@ -28,6 +28,7 @@ Sizes in `..._MB` are MiB; `..._BYTES` are bytes.
 | `COPYLOT_VIEWER_QR_ACCESS_FILE` | `local/viewer_qr_access.local.json`, then `viewer_qr_access.local.json` or `viewer_qr_access.json` in the root | Portal QR link tokens per project. |
 | `COPYLOT_ALLOWED_HOSTS` | loopback names | Extra `Host` header values the server answers to, comma separated. |
 | `COPYLOT_TRUSTED_PROXY_IPS` | `127.0.0.1` | Reverse proxies whose forwarded client address is trusted (addresses or CIDR ranges, comma separated). |
+| `COPYLOT_FRAME_ANCESTORS` | none | Other websites that may show the application in a frame, as origins (`https://portal.example.org`), comma or space separated. Without it only the application itself may frame its pages (`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`), which stops another site from framing a hosted tool or viewer. |
 | `COPYLOT_CORS_ORIGINS` | none | Browser origins allowed to call the API from another origin, comma separated. Not needed when the frontend is served by the backend. |
 | `COPYLOT_FRONTEND_DIST` | found by the launcher | The built frontend the backend serves. |
 | `COPYLOT_RESET_ON_BROWSER_LOAD` | on (off in viewer mode) | A full page load starts a fresh session (analysis app). |
@@ -57,14 +58,17 @@ Sizes in `..._MB` are MiB; `..._BYTES` are bytes.
 | `COPYLOT_UPLOAD_MAX_CELLS` | 10,000,000,000 | Rows × columns of a parsed table. |
 | `COPYLOT_UPLOAD_MAX_FRAME_BYTES` | 25 % of RAM, at most 128 GiB | Memory of a parsed table. |
 | `COPYLOT_UPLOAD_MAX_COLUMNS` | 20,000 | Columns of a parsed table. |
-| `COPYLOT_RESTORE_UPLOAD_MAX_BYTES` | 64 MiB | A session (restore) file. |
-| `COPYLOT_RESTORE_EXPANDED_MAX_BYTES` | 256 MiB | A restore file after decompression. |
-| `COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES` | the upload limit | One replacement data file during a restore. |
-| `COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES` | twice the per-file limit | All replacement files of one restore. |
-| `COPYLOT_RESTORE_REPLACEMENT_MAX_FILES` | 256 | Replacement files per restore. |
-| `COPYLOT_RESTORE_MANIFEST_MAX_CHARS` | 1,000,000 | Size of a restore file's manifest. |
-| `COPYLOT_RESTORE_TABLE_MAX_ROWS` / `_COLUMNS` / `_CELLS` | 5,000,000 / 50,000 / 50,000,000 | Tables embedded in a restore file. |
+| `COPYLOT_RESTORE_UPLOAD_MAX_BYTES` | no limit | A session (restore) file. |
+| `COPYLOT_RESTORE_EXPANDED_MAX_BYTES` | no limit | A restore file after decompression. |
+| `COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES` | no limit | One replacement data file during a restore. |
+| `COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES` | no limit | All replacement files of one restore. |
+| `COPYLOT_RESTORE_REPLACEMENT_MAX_FILES` | no limit | Replacement files per restore. |
+| `COPYLOT_RESTORE_MANIFEST_MAX_CHARS` | no limit | Size of a restore file's manifest. |
+| `COPYLOT_RESTORE_TABLE_MAX_ROWS` / `_COLUMNS` / `_CELLS` | no limit | Tables embedded in a restore file. |
 | `COPYLOT_PLOT_CONVERSION_MAX_BYTES` | 128 MiB | A figure converted to another download format. |
+
+Save and restore are unlimited until a `COPYLOT_RESTORE_*` limit is set, so a local analysis can
+always be saved and reopened. Set them on a shared server to bound what one restore may use.
 
 ## Work queues
 

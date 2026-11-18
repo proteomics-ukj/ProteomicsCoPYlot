@@ -1,12 +1,15 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 // One-way ANOVA panel: omnibus test, Tukey follow-up and clustering of significant rows.
 
+import ReportEntryControl from "../../components/ReportEntryControl";
+import { currentAdvancedAppearance } from "../../lib/reportState";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildPlotUrl, isAbortError, runAnovaAnalysis } from "../../lib/api";
 import { useDatasetRevision } from "../../lib/datasetAvailability";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
 import { useDebouncedValue } from "../../lib/useDebouncedValue";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
-import type { ContextMode, AnnotationKind, AnovaRequest, AnovaResultResponse, AnovaClusterMethod, AnovaPostHoc, AnovaSource, StatsIdentifier, DataSource, StatisticalOptionsResponse } from "../../lib/types";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
+import type { ContextMode, AnnotationKind, AnovaRequest, AnovaResultResponse, ReportEntry, AnovaClusterMethod, AnovaPostHoc, AnovaSource, StatsIdentifier, DataSource, StatisticalOptionsResponse } from "../../lib/types";
 import { dataSourceOptions } from "../../lib/types";
 import { useDataSourceChoice } from "../../lib/useDataSourceChoice";
 import SelectField from "../../components/SelectField";
@@ -19,7 +22,7 @@ import { InfoSection, Notice, SummarySection } from "./statsShared";
 import AnovaOutput from "./AnovaOutput";
 import { ANOVA_CLUSTER_METHOD_OPTIONS, conditionOptions, removeSourceUsageWarnings, restoreClusterCount, restoreClusterMethod, restorePValueThreshold } from "./statsHelpers";
 
-export function AnovaPanel({
+function AnovaPanelView({
   kindOptions,
   onContextModeChange,
   advancedPlotOptions,
@@ -29,18 +32,9 @@ export function AnovaPanel({
   advancedPlotOptions?: ReactNode;
 }) {
   useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("stats.anova.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("stats.anova.v1", kind), [kind]);
   const revision = useDatasetRevision();
-  const [preferredKind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot" ? value : "protein";
-  });
-  const kind = (kindOptions.some((option) => option.value === preferredKind)
-    ? preferredKind
-    : kindOptions[0]?.value ?? preferredKind) as AnnotationKind;
   const [sourceMode, setSourceMode] = useState<AnovaSource>(() => {
     const value = String(persisted.sourceMode ?? "anova").trim();
     return value === "anova_cluster" ? "anova_cluster" : "anova";
@@ -271,8 +265,35 @@ export function AnovaPanel({
         })
       : null;
 
+  function buildReportEntries(): ReportEntry[] {
+    if (!canRun || (kind !== "protein" && kind !== "phospho")) return [];
+    const clustered = sourceMode === "anova_cluster";
+    return [{
+      type: "anova",
+      kind,
+      request: {
+        source: sourceMode,
+        dataSource,
+        identifier,
+        pValueThreshold,
+        useUncorrected,
+        showDendrograms,
+        showLegend,
+        showRowLabels: clustered && showRowLabels,
+        nClusters: Math.max(1, Math.round(nClusters)),
+        clusterMethod,
+        selectedCluster: clustered ? displayedSelectedCluster : "none",
+        postHoc,
+        postHocCondition1: postHoc === "tukey" && postHocPairValid ? postHocCondition1 : null,
+        postHocCondition2: postHoc === "tukey" && postHocPairValid ? postHocCondition2 : null,
+      },
+      render: { type: "Normal" },
+      advanced: currentAdvancedAppearance(),
+    }];
+  }
+
   useEffect(() => {
-    writePersistedUiState("stats.anova.v1", {
+    writeWorkflowState("stats.anova.v1", {
       kind,
       sourceMode,
       dataSource,
@@ -352,6 +373,15 @@ export function AnovaPanel({
             ]}
           />
         </div>
+        <ReportEntryControl
+          type="anova"
+          kind={kind}
+          kindLabel={kindOptions.find((option) => option.value === kind)?.label ?? kind}
+          title="ANOVA"
+          noun="ANOVA plot"
+          buildEntries={buildReportEntries}
+          invalidMessage="At least two conditions with replicate samples are required before adding this ANOVA plot."
+        />
         <Notice error={error} warnings={removeSourceUsageWarnings(options?.warnings)} />
       </SectionCard>
 
@@ -422,3 +452,5 @@ export function AnovaPanel({
     </div>
   );
 }
+
+export const AnovaPanel = withWorkflowSettings("stats.anova.v1", AnovaPanelView, props => props.kindOptions);

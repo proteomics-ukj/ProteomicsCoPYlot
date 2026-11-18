@@ -5,6 +5,7 @@ import logging
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 
+from app.api.error_handling import api_errors
 from app.schemas.peptide import (
     PeptideCoverageResponse,
     PeptideMetadataGenerateRequest,
@@ -23,10 +24,7 @@ from app.services.peptide_tools import (
     get_peptide_frame,
     peptide_overview,
 )
-from app.services.peptide_quantity import (
-    default_peptide_quantity_column,
-    peptide_quantity_columns,
-)
+from app.services.peptide_quantity import default_peptide_quantity_column
 from app.services.json_records import json_records
 
 LOGGER = logging.getLogger(__name__)
@@ -47,45 +45,29 @@ def _metadata_response(stored) -> PeptideMetadataResponse:
 
 @router.get("/overview", response_model=PeptideOverviewResponse)
 def get_peptide_overview() -> PeptideOverviewResponse:
-    try:
+    with api_errors("Failed to load peptide overview", logger=LOGGER):
         return PeptideOverviewResponse(**peptide_overview())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to load peptide overview")
-        raise HTTPException(status_code=500, detail="Failed to load peptide overview.") from e
 
 
 @router.get("/quantity-options", response_model=PeptideQuantityOptionsResponse)
 def get_peptide_quantity_options() -> PeptideQuantityOptionsResponse:
-    try:
+    with api_errors("Failed to load peptide abundance options", logger=LOGGER):
         frame = get_peptide_frame()
-        columns = peptide_quantity_columns(frame)
         default_column = default_peptide_quantity_column(frame)
         return PeptideQuantityOptionsResponse(
-            columns=columns,
+            columns=[default_column] if default_column else [],
             defaultColumn=default_column,
-            requiresSelection=len(columns) > 1 and default_column is None,
+            requiresSelection=False,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to load peptide abundance options")
-        raise HTTPException(status_code=500, detail="Failed to load peptide abundance options.") from e
 
 
 @router.post("/metadata/generate", response_model=PeptideMetadataResponse)
 def generate_peptide_metadata(
     payload: PeptideMetadataGenerateRequest,
 ) -> PeptideMetadataResponse:
-    try:
+    with api_errors("Failed to load peptide samples", logger=LOGGER):
         frame = get_peptide_frame()
         file_col = _file_name_column(frame)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to load peptide samples")
-        raise HTTPException(status_code=500, detail="Failed to load peptide samples.") from e
 
     sample_values = frame[file_col].dropna().astype(str).str.strip()
     samples = sample_values[sample_values != ""].drop_duplicates().tolist()
@@ -134,13 +116,8 @@ def get_sequence_coverage(
     protein: str,
     chunkSize: int = 100,
 ) -> PeptideCoverageResponse:
-    try:
+    with api_errors("Failed to calculate sequence coverage", logger=LOGGER):
         from app.services.notebook_sequence import capture_sequence_coverage
         return PeptideCoverageResponse(
             **capture_sequence_coverage(species=species, protein=protein, chunk_size=chunkSize)
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to calculate sequence coverage")
-        raise HTTPException(status_code=500, detail="Failed to calculate sequence coverage.") from e

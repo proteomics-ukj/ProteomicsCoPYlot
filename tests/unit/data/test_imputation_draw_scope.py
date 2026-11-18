@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.schemas.data_tools import ImputationRunRequest
 from app.services.functions import impute_values_with_diagnostics

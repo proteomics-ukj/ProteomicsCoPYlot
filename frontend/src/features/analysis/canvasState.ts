@@ -77,7 +77,7 @@ export function canvasPointStyle(style: VolcanoStyle, significance: string) {
   };
 }
 
-export type CompletedOra = {
+type CompletedOra = {
   result: ListEnrichmentResultResponse;
   request: ListEnrichmentRequest;
   inputSource: "manual" | "list";

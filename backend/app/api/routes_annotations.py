@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 
-import io
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 
+from app.api.error_handling import api_errors
 from app.schemas.annotation import (
     AnnotationFilterConfig,
     AnnotationGenerateRequest,
@@ -26,6 +26,7 @@ from app.schemas.annotation import (
     phosprot_filter_config,
 )
 from app.services.annotation_processor import (
+    annotation_filter_kwargs,
     compute_annotation,
     compute_annotation_from_metadata,
     detect_log2_transformed,
@@ -34,6 +35,7 @@ from app.services.annotation_processor import (
     split_uploaded_metadata_profiles,
 )
 from app.services.annotation_store import (
+    StoredAnnotation,
     clear_annotation,
     get_annotation,
     preserve_annotation_pair_ids,
@@ -51,7 +53,7 @@ from app.services.metadata_upload_store import (
 )
 from app.services.metadata_profile_io import export_metadata_profiles, read_metadata_profiles
 from app.services.phosprot_tools import aggregate_from_phospho, upload_phosprot
-from app.services.upload_limits import ensure_upload_size
+from app.api.upload_validation import require_upload
 from app.api.download_headers import attachment_disposition
 from app.services.json_records import json_records
 
@@ -113,12 +115,11 @@ def _stream_dataframe_download(
     *,
     filename: str,
     error_detail: str,
-) -> StreamingResponse:
+) -> Response:
     try:
         csv_bytes = frame.to_csv(index=False).encode("utf-8")
-        buffer = io.BytesIO(csv_bytes)
-        return StreamingResponse(
-            buffer,
+        return Response(
+            content=csv_bytes,
             media_type="text/csv",
             headers={"Content-Disposition": attachment_disposition(filename)},
         )
@@ -138,15 +139,10 @@ def upload_annotation_metadata(
     file: UploadFile = File(...),
     kind: MetadataAnnotationKind = Form(...),
 ) -> MetadataUploadResponse:
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
-    try:
-        ensure_upload_size(file, label="Metadata file")
-    except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e)) from e
+    filename = require_upload(file, label="Metadata file")
 
     try:
-        extension = get_extension(file.filename)
+        extension = get_extension(filename)
         if extension == "xlsx":
             current = get_current_dataset(kind)
             if current is None or not hasattr(current, "frame"):
@@ -154,7 +150,7 @@ def upload_annotation_metadata(
             bundle = read_metadata_profiles(file.file, kind, current.frame)
             if bundle is not None:
                 records, active_profile = bundle
-                stored = save_uploaded_metadata_profiles(kind, file.filename, records, active_profile_name=active_profile)
+                stored = save_uploaded_metadata_profiles(kind, filename, records, active_profile_name=active_profile)
                 for name, _ in records:
                     clear_annotation(kind, metadata_profile_name=name)
                     if kind == "phospho":
@@ -164,7 +160,7 @@ def upload_annotation_metadata(
                     for name in list_auto_generated_profiles():
                         clear_annotation("phosprot", metadata_profile_name=name)
                 return _metadata_upload_response(stored, profile_names=[name for name, _ in records])
-        frame = read_dataframe(file.filename, file.file)
+        frame = read_dataframe(filename, file.file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -188,7 +184,7 @@ def upload_annotation_metadata(
         profile_names = [name for name, _ in profile_frames]
         stored = save_uploaded_metadata_profiles(
             kind,
-            file.filename,
+            filename,
             profile_frames,
             active_profile_name=profile_names[0],
         )
@@ -247,19 +243,13 @@ def _compute_and_store(
         else None
     )
 
-    try:
+    with api_errors("Failed to generate annotation", logger=LOGGER):
         if uploaded_metadata is not None:
             computed = compute_annotation_from_metadata(
                 data=current_dataset.frame,
                 metadata=uploaded_metadata.frame,
                 is_log2_transformed=is_log2_transformed,
-                min_present=filter_config.minPresent,
-                filter_mode=filter_config.mode,
-                filter_method=filter_config.method,
-                min_percentage=filter_config.minPercentage,
-                normalization=filter_config.normalization,
-                normalization_fit=filter_config.normalizationFit,
-                contaminants=filter_config.contaminants.model_dump(),
+                **annotation_filter_kwargs(filter_config),
             )
             metadata_source = "shared_phospho" if kind == "phosprot" else "uploaded"
         else:
@@ -267,13 +257,7 @@ def _compute_and_store(
                 data=current_dataset.frame,
                 conditions=conditions,
                 is_log2_transformed=is_log2_transformed,
-                min_present=filter_config.minPresent,
-                filter_mode=filter_config.mode,
-                filter_method=filter_config.method,
-                min_percentage=filter_config.minPercentage,
-                normalization=filter_config.normalization,
-                normalization_fit=filter_config.normalizationFit,
-                contaminants=filter_config.contaminants.model_dump(),
+                **annotation_filter_kwargs(filter_config),
             )
             computed.metadata = preserve_annotation_pair_ids(kind, computed.metadata)
             if pair_ids_from is not None and "pair_id" in pair_ids_from.columns:
@@ -282,11 +266,6 @@ def _compute_and_store(
                 computed.metadata["pair_id"] = computed.metadata["sample"].astype(str).map(ids).fillna(
                     computed.metadata["pair_id"] if "pair_id" in computed.metadata.columns else "")
             metadata_source = "auto" if computed.auto_detected else "manual"
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to generate annotation")
-        raise HTTPException(status_code=500, detail="Failed to generate annotation.") from e
 
     stored = save_annotation(
         kind=kind,
@@ -371,11 +350,16 @@ def update_pairing(payload: PairingUpdateRequest) -> AnnotationResultResponse:
     return _response_from_stored(stored)
 
 
-@router.get("/current/{kind}", response_model=AnnotationResultResponse)
-def get_current_annotation(kind: AnnotationKind) -> AnnotationResultResponse:
+def _require_annotation(kind: AnnotationKind) -> StoredAnnotation:
     stored = get_annotation(kind)
     if stored is None:
         raise HTTPException(status_code=404, detail=f"No annotation stored for {kind} dataset")
+    return stored
+
+
+@router.get("/current/{kind}", response_model=AnnotationResultResponse)
+def get_current_annotation(kind: AnnotationKind) -> AnnotationResultResponse:
+    stored = _require_annotation(kind)
 
     return _response_from_stored(stored)
 
@@ -419,10 +403,8 @@ def detect_annotation_log2_scale(
 
 
 @router.get("/current/{kind}/filtered/download")
-def download_current_filtered_annotation(kind: AnnotationKind) -> StreamingResponse:
-    stored = get_annotation(kind)
-    if stored is None:
-        raise HTTPException(status_code=404, detail=f"No annotation stored for {kind} dataset")
+def download_current_filtered_annotation(kind: AnnotationKind) -> Response:
+    stored = _require_annotation(kind)
 
     return _stream_dataframe_download(
         stored.filtered_data,
@@ -432,10 +414,8 @@ def download_current_filtered_annotation(kind: AnnotationKind) -> StreamingRespo
 
 
 @router.get("/current/{kind}/source/download")
-def download_current_source_annotation(kind: AnnotationKind) -> StreamingResponse:
-    stored = get_annotation(kind)
-    if stored is None:
-        raise HTTPException(status_code=404, detail=f"No annotation stored for {kind} dataset")
+def download_current_source_annotation(kind: AnnotationKind) -> Response:
+    stored = _require_annotation(kind)
 
     return _stream_dataframe_download(
         stored.source_data,
@@ -445,19 +425,17 @@ def download_current_source_annotation(kind: AnnotationKind) -> StreamingRespons
 
 
 @router.get("/current/{kind}/metadata/download")
-def download_current_metadata_annotation(kind: AnnotationKind, scope: Literal["selected", "all"] = "selected") -> StreamingResponse:
+def download_current_metadata_annotation(kind: AnnotationKind, scope: Literal["selected", "all"] = "selected") -> Response:
     if scope == "all":
         try:
             content = export_metadata_profiles(kind)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         source_kind = "phospho" if kind == "phosprot" else kind
-        return StreamingResponse(io.BytesIO(content),
+        return Response(content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": attachment_disposition(f"{source_kind}_metadata_all_profiles.xlsx")})
-    stored = get_annotation(kind)
-    if stored is None:
-        raise HTTPException(status_code=404, detail=f"No annotation stored for {kind} dataset")
+    stored = _require_annotation(kind)
 
     return _stream_dataframe_download(
         stored.metadata,
@@ -470,15 +448,10 @@ def download_current_metadata_annotation(kind: AnnotationKind, scope: Literal["s
 def aggregate_phosprot_annotation(
     payload: PhosprotAggregateRequest,
 ) -> AnnotationResultResponse:
-    try:
+    with api_errors("Failed to aggregate phosphoprotein dataset", logger=LOGGER):
         stored = aggregate_from_phospho(
             mode=payload.mode, source=payload.source, localization_cutoff=payload.localizationCutoff
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to aggregate phosphoprotein dataset")
-        raise HTTPException(status_code=500, detail="Failed to aggregate phosphoprotein dataset.") from e
     return _response_from_stored(stored)
 
 
@@ -492,28 +465,18 @@ def upload_phosprot_annotation(
     example this tool's own download, or another tool's collapse) becomes the
     current phosphoprotein data, on the phospho annotation's sample sheet and
     filter."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
+    filename = require_upload(file, label="Phosphoprotein file")
     try:
-        ensure_upload_size(file, label="Phosphoprotein file")
-    except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e)) from e
-    try:
-        _ = get_extension(file.filename)
-        frame = read_dataframe(file.filename, file.file)
+        _ = get_extension(filename)
+        frame = read_dataframe(filename, file.file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         LOGGER.exception("Failed to parse phosphoprotein upload")
         raise HTTPException(status_code=400, detail="Failed to parse phosphoprotein file.") from e
-    try:
+    with api_errors("Failed to store uploaded phosphoprotein dataset", logger=LOGGER):
         scale = is_log2_transformed.strip().lower()
         if scale not in {"", "true", "false"}:
             raise ValueError("isLog2Transformed must be 'true', 'false' or empty.")
-        stored = upload_phosprot(frame, Path(file.filename).name, None if not scale else scale == "true")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to store uploaded phosphoprotein dataset")
-        raise HTTPException(status_code=500, detail="Failed to store uploaded phosphoprotein dataset.") from e
+        stored = upload_phosprot(frame, Path(filename).name, None if not scale else scale == "true")
     return _response_from_stored(stored)

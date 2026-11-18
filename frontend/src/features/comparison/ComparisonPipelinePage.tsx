@@ -1,3 +1,10 @@
+import { paletteColorOverride } from "../../lib/conditionColorSets";
+import CsvDownloadLink from "../../components/CsvDownloadLink";
+import PlotTableContent from "../../components/PlotTableContent";
+import PlotOptionsContent from "../../components/PlotOptionsContent";
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
+import ReportEntryControl from "../../components/ReportEntryControl";
+import { currentAdvancedAppearance } from "../../lib/reportState";
 import { SizeRow } from "../../components/PlotFields";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
 import PlotImage from "../../components/PlotImage";
@@ -17,7 +24,7 @@ import {
   withPlotDownloadFilename,
   withPlotDownloadFormat,
 } from "../../lib/plotDownload";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
 import type {
   AnnotationKind,
@@ -28,7 +35,7 @@ import PreviewTable from "../../components/PreviewTable";
 import SelectField from "../../components/SelectField";
 import TextField from "../../components/TextField";
 import NumberField from "../../components/NumberField";
-import type { ContextMode } from "../../lib/types";
+import type { ContextMode, ReportEntry } from "../../lib/types";
 import LocalizationCutoffField from "../../components/LocalizationCutoffField";
 
 type Props = {
@@ -49,21 +56,13 @@ type TableRequest = {
   params: Record<string, string | number | boolean>;
 } | null;
 
-export default function ComparisonPipelinePage({ activeTab, onContextModeChange, advancedPlotOptions }: Props) {
+function ComparisonPipelinePageView({ activeTab, onContextModeChange, advancedPlotOptions }: Props) {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("comparison.pipeline.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("comparison.pipeline.v1", kind), [kind]);
   const persistedPearson = (persisted.pearson as Record<string, unknown>) ?? {};
   const persistedVenn = (persisted.venn as Record<string, unknown>) ?? {};
   const { availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
-  const [kind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot"
-      ? value
-      : "protein";
-  });
   const [options, setOptions] = useState<ComparisonOptionsResponse | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
@@ -85,7 +84,7 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
     condition2: String(persistedPearson.condition2 ?? ""),
     alias1: String(persistedPearson.alias1 ?? ""),
     alias2: String(persistedPearson.alias2 ?? ""),
-    color: String(persistedPearson.color ?? "#1f77b4"),
+    color: paletteColorOverride(persistedPearson.color, "#1f77b4"),
     header: true,
     widthCm: restorePlotDimensionCm(persistedPearson.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedPearson.heightCm, 12),
@@ -103,9 +102,9 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
     // Condition mode: how many samples of a condition must have a value for a
     // feature to count as present there. 1 is the long-standing behaviour.
     minPresent: Math.max(1, Math.round(Number(persistedVenn.minPresent ?? 1)) || 1),
-    color1: String(persistedVenn.color1 ?? "#1f77b4"),
-    color2: String(persistedVenn.color2 ?? "#ff7f0e"),
-    color3: String(persistedVenn.color3 ?? "#2ca02c"),
+    color1: paletteColorOverride(persistedVenn.color1, "#1f77b4"),
+    color2: paletteColorOverride(persistedVenn.color2, "#ff7f0e"),
+    color3: paletteColorOverride(persistedVenn.color3, "#2ca02c"),
     header: true,
     widthCm: restorePlotDimensionCm(persistedVenn.widthCm, 15),
     heightCm: restorePlotDimensionCm(persistedVenn.heightCm, 12),
@@ -121,7 +120,7 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
   const keepTypedAlias = (alias: string, sample: string) => (alias && alias === sampleAlias(sample) ? "" : alias);
 
   useEffect(() => {
-    writePersistedUiState("comparison.pipeline.v1", {
+    writeWorkflowState("comparison.pipeline.v1", {
       kind,
       downloadFormat,
       pearson,
@@ -139,7 +138,7 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
     if (!availableKinds.includes(kind)) {
       setKind(availableKinds[0]);
     }
-  }, [availableKinds, kind]);
+  }, [availableKinds, kind, setKind]);
 
   useEffect(() => {
     if (!hasKind) {
@@ -193,6 +192,9 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
         || (prev.mode === "Single" ? labels[sample1] ?? "" : "");
       const alias2 = (prev.mode === "Single" && sample2 !== prev.sample2 ? "" : prev.alias2)
         || (prev.mode === "Single" ? labels[sample2] ?? "" : "");
+      if (prev.sample1 === sample1 && prev.sample2 === sample2
+        && prev.condition1 === condition1 && prev.condition2 === condition2
+        && prev.alias1 === alias1 && prev.alias2 === alias2) return prev;
       return { ...prev, sample1, sample2, condition1, condition2, alias1, alias2 };
     });
   }, [options, pearson.mode]);
@@ -213,12 +215,12 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
           : "";
       const labels = venn.mode === "Single" ? options.sampleLabels ?? {} : {};
       const knownSelections = new Set([...options.samples, ...options.conditions]);
-      return {
-        ...prev, first, second, third,
-        alias1: (knownSelections.has(prev.first) ? prev.alias1 : "") || (labels[first] ?? ""),
-        alias2: (knownSelections.has(prev.second) ? prev.alias2 : "") || (labels[second] ?? ""),
-        alias3: (third && knownSelections.has(prev.third) ? prev.alias3 : "") || (third ? labels[third] ?? "" : ""),
-      };
+      const alias1 = (knownSelections.has(prev.first) ? prev.alias1 : "") || (labels[first] ?? "");
+      const alias2 = (knownSelections.has(prev.second) ? prev.alias2 : "") || (labels[second] ?? "");
+      const alias3 = (third && knownSelections.has(prev.third) ? prev.alias3 : "") || (third ? labels[third] ?? "" : "");
+      if (prev.first === first && prev.second === second && prev.third === third
+        && prev.alias1 === alias1 && prev.alias2 === alias2 && prev.alias3 === alias3) return prev;
+      return { ...prev, first, second, third, alias1, alias2, alias3 };
     });
   }, [options, venn.mode]);
 
@@ -514,17 +516,17 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
       {kindOptions.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-900">Options</h3>
-          {optionsLoading ? (
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-              Loading options...
-            </div>
-          ) : optionsError ? (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {optionsError}
-            </div>
-          ) : (
-            <div className="mt-4">{renderOptions()}</div>
-          )}
+          {<PlotOptionsContent loading={optionsLoading} error={optionsError} renderOptions={renderOptions} />}
+          <ReportEntryControl
+            key={activeTab}
+            type={activeTab === "pearson" ? "pearson" : "venn"}
+            kind={kind}
+            kindLabel={kindOptions.find((option) => option.value === kind)?.label ?? kind}
+            title={activeTab === "pearson" ? "Pearson" : "Venn"}
+            noun={activeTab === "pearson" ? "Pearson correlation plot" : "Venn diagram"}
+            buildEntries={buildReportEntries}
+            invalidMessage="Please choose a valid selection before adding this plot."
+          />
         </section>
       ) : null}
 
@@ -562,7 +564,7 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
                   onRendered={(url, token) => setNotebook({ url, token })} />
               ) : (
                 <InteractivePlot url={plotView.url} title={plotView.title}
-                  height={`max(${cmToIframeHeight(12)}px, 78vh)`}
+                  height={`max(${iframeHeightForPlot(12, { fallbackCm: 12, minPx: 860, paddingPx: 280 })}px, 78vh)`}
                   onRendered={(url, token) => setNotebook({ url, token })} />
               )}
             </div>
@@ -583,35 +585,73 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
             <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
             {tableCsvUrl ? (
               <div className="flex items-center gap-2">
-              <a
-                href={tableCsvUrl}
-                download={`comparison_${activeTab}_${kind}.csv`}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-              >
-                Download CSV
-              </a>
+              <CsvDownloadLink href={tableCsvUrl} filename={`comparison_${activeTab}_${kind}.csv`} />
               {plotView ? <NotebookDownload plotUrl={plotView.url}
                 rendered={!tableLoading && !tableError && tableSnapshot === plotToken ? notebook : null} /> : null}
               </div>
             ) : null}
           </div>
           <div className="mt-4">
-            {tableLoading ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                Loading table...
-              </div>
-            ) : tableError ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {tableError}
-              </div>
-            ) : (
+            {<PlotTableContent loading={tableLoading} error={tableError} renderTable={() => (
               <PreviewTable rows={tableRows} emptyText="No table rows available for the current selection." plotSummary />
-            )}
+            )} />}
           </div>
         </section>
       ) : null}
     </div>
   );
+
+  function buildReportEntries(): ReportEntry[] {
+    if (!hasKind || !options || (kind !== "protein" && kind !== "phospho")) return [];
+    if (activeTab === "pearson") {
+      if (!pearsonReady) return [];
+      const single = pearson.mode === "Single";
+      const interactive = String(pearson.type || "").trim().toLowerCase() === "interactive";
+      return [{
+        type: "pearson",
+        kind,
+        request: {
+          mode: pearson.mode,
+          sample1: single ? pearson.sample1 : "",
+          sample2: single ? pearson.sample2 : "",
+          condition1: single ? "" : pearson.condition1,
+          condition2: single ? "" : pearson.condition2,
+          alias1: pearson.alias1,
+          alias2: pearson.alias2,
+          color: pearson.color,
+          header: pearson.header,
+        },
+        render: {
+          type: interactive ? "Interactive" : "Normal",
+          widthCm: pearson.widthCm,
+          heightCm: pearson.heightCm,
+          dpi: pearson.dpi,
+        },
+        advanced: currentAdvancedAppearance(),
+      }];
+    }
+    if (!vennReady) return [];
+    return [{
+      type: "venn",
+      kind,
+      request: {
+        mode: venn.mode,
+        first: venn.first,
+        second: venn.second,
+        third: venn.third,
+        alias1: venn.alias1,
+        alias2: venn.alias2,
+        alias3: venn.alias3,
+        color1: venn.color1,
+        color2: venn.color2,
+        color3: venn.color3,
+        header: venn.header,
+        minPresent: venn.mode === "Condition" ? venn.minPresent : 1,
+      },
+      render: { type: "Normal", widthCm: venn.widthCm, heightCm: venn.heightCm, dpi: venn.dpi },
+      advanced: currentAdvancedAppearance(),
+    }];
+  }
 
   function renderOptions() {
     const samples = options?.samples ?? [];
@@ -780,6 +820,4 @@ export default function ComparisonPipelinePage({ activeTab, onContextModeChange,
 
 
 
-function cmToIframeHeight(heightCm: number): number {
-  return iframeHeightForPlot(heightCm, { fallbackCm: 12, minPx: 860, paddingPx: 280 });
-}
+export default withWorkflowSettings("comparison.pipeline.v1", ComparisonPipelinePageView);

@@ -21,13 +21,19 @@ import plotly.io
 
 plotly.io.renderers.default = "plotly_mimetype"
 
-_HEADLESS_RPROFILE = Path(tempfile.gettempdir()) / "copylot_headless_rprofile.R"
-_HEADLESS_RPROFILE.write_text(
-    "options(device = function(...) grDevices::pdf(NULL))\n"
-    "options(browser = function(...) invisible(NULL))\n",
-    encoding="utf-8",
-)
-os.environ["R_PROFILE_USER"] = str(_HEADLESS_RPROFILE)
+os.environ["R_PROFILE_USER"] = str(Path(__file__).resolve().parent / "fixtures" / "headless.Rprofile")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_app_temp(tmp_path_factory):
+    # The application and its child processes must not create or sweep files
+    # in a developer's actual temp directory during tests.
+    with tempfile.TemporaryDirectory(dir=tmp_path_factory.getbasetemp()) as directory:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(tempfile, "tempdir", directory)
+            for name in ("TEMP", "TMP", "TMPDIR"):
+                patch.setenv(name, directory)
+            yield
 
 
 # --- R ---------------------------------------------------------------------
@@ -176,8 +182,7 @@ def qc_protein_data():
     import numpy as np
     import pandas as pd
 
-    from app.schemas.annotation import AnnotationFilterConfig
-    from app.services.annotation_store import save_annotation
+    from annotation_support import save_log2_protein_annotation
     from app.services.dataset_store import save_table_dataset
 
     rng = np.random.default_rng(3)
@@ -188,10 +193,7 @@ def qc_protein_data():
     frame.loc[5, samples[1]] = 35.0
     metadata = pd.DataFrame({"sample": samples, "condition": ["A"] * 3 + ["B"] * 3})
     save_table_dataset(filename="qc_routes.tsv", kind="protein", frame=frame)
-    save_annotation(kind="protein", source_data=frame, metadata=metadata, log2_data=frame,
-                    filtered_data=frame, is_log2_transformed=True, metadata_source="manual",
-                    filter_config=AnnotationFilterConfig(), auto_detected=False, warnings=[],
-                    log2_auto_detected=False)
+    save_log2_protein_annotation(frame, metadata)
     return frame, metadata
 
 

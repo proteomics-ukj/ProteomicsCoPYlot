@@ -49,8 +49,8 @@ const EVERY_CARD: AdvancedPlotVisibleControls = {
   referenceLineToggle: true, referenceLineLegend: true, fontControls: true, conditionLabels: true, sampleLabels: true,
   conditionColors: true, boxplotStyle: true, boxplotOutliers: true, boxplotPoints: true,
   correlationGradient: true, backgroundControls: true, axisLineControls: true, markerStyle: true,
-  conditionMarkers: true, markerColor: true, volcanoMarkers: true, barColor: true, rowLabels: true,
-  phosphoClassColors: true, vennColors: true, valueLabels: true,
+  conditionMarkers: true, markerColor: true, volcanoMarkers: true, abundanceHighlights: true, barColor: true, rowLabels: true,
+  distributionNote: true, phosphoClassColors: true, vennColors: true, valueLabels: true,
 };
 
 type Sweep = {

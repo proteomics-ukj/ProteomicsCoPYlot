@@ -31,7 +31,7 @@ from app.services.single_protein_tools import (
     unmatched_lineplot_names,
     unmatched_names_notice,
 )
-from app.api.plot_responses import csv_values, plot_errors, png_response, snapshot_table, table_rows
+from app.api.plot_responses import with_notebook_token, csv_values, plot_errors, png_response, snapshot_table, table_rows
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -109,9 +109,7 @@ def single_protein_boxplot_route(
             response.headers['X-CoPYlot-Notice'] = quote(f'Notebook export unavailable: {exc} The plot is unchanged.')
             return response
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/single-protein/{kind}/lineplot.png")
@@ -157,8 +155,7 @@ def single_protein_lineplot_route(
             token = ''
         else:
             response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
+        with_notebook_token(response, token)
         # Names that match no row are left out of the figure; say which, under it.
         missing = unmatched_names_notice(unmatched_lineplot_names(
             kind, options['proteins'], identifier=identifier, data_source=dataSource))
@@ -229,9 +226,7 @@ def single_protein_heatmap_route(
             response.headers['X-CoPYlot-Notice'] = quote(f'Notebook export unavailable: {exc} The plot is unchanged.')
             return response
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/single-protein/{kind}/boxplot-table")

@@ -8,13 +8,10 @@ from __future__ import annotations
 
 import ast
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render, notebook_capture_requested
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 QC_RENDERERS = {
     "coverage": "qc_coverage_plot", "boxplot": "qc_boxplot_plot", "cv": "qc_cv_plot",
     "histogram": "qc_intensity_histogram_plot", "correlation": "qc_correlation_plot",
@@ -44,7 +41,7 @@ def qc_source(plot: str):
         ("_metadata_for_kind(kind, frame, sample_columns)", "metadata.copy()"),
         ])
     else:
-        replacements.append(("_abundance_mean_intensities(kind)", "_abundance_mean_intensities(data, metadata, workflow_kind)"))
+        replacements.append(("_abundance_mean_intensities(kind, identifier=identifier)", "_abundance_mean_intensities(data, metadata, workflow_kind, identifier=identifier)"))
     if plot not in {"correlation", "abundance"}:
         replacements.append(('raise ValueError(f"No sample columns found for {kind} dataset.")', 'raise ValueError("No annotated sample columns found.")'))
     if plot != "correlation":
@@ -55,7 +52,7 @@ def qc_source(plot: str):
     function = function.replace("apply(_extract_id_or_number)", "apply(extract_sample_id)")
     function = function.replace("metadata.copy().copy()", "metadata.copy()")
     helpers = "\n\n".join(function_definition(rendering, name) for name in (
-        "_make_fig", "_grouped_meta_order", "_feature_context", "_quantified_feature_count", "_median_label_y",
+        "_make_fig", "_coverage_figure", "_grouped_meta_order", "_feature_context", "_quantified_feature_count", "_median_label_y",
         "correlation_matrix_mesh"))
     helpers = helpers.replace("_cm_to_inch(", "cm_to_inch(")
     if plot == "abundance":
@@ -65,19 +62,17 @@ def qc_source(plot: str):
         abundance = abundance.replace("_get_sample_columns(kind, frame)", "metadata['sample'].tolist()")
         abundance = abundance.replace("_metadata_for_kind(kind, frame, sample_columns)", "metadata.copy()")
         helpers += "\n\n" + abundance + "\n\n" + function_definition(rendering, "_abundance_key_column").replace("AnnotationKind", "str")
+    if plot == "abundance":
+        helpers += "\n\n" + module_source("abundance_highlights.py")
     notebook = extract_notebook_source(module_source("notebook_functions.py"), ("extract_sample_id",)).code
-    styling = module_source("plot_styling.py")
-    # These three stateful imports are not needed by the selected pure helpers.
-    styling = "\n".join(line for line in styling.splitlines() if not line.startswith("from app."))
-    styling += "\n\n" + function_definition(module_source("plotting_common.py"), "get_plt")
-    styling += "\n\ndef _get_plt():\n    return get_plt()\n"
+    styling = portable_styling(include_matplotlib=True)
     style_roots = ("advanced_anchor", "advanced_color_map", "advanced_label", "advanced_text", "advanced_number", "advanced_label_size",
                    "marker_style", "rename_composite_sample_label", "resolve_reference_line", "apply_advanced_axes")
     styles = extract_notebook_source(styling, (*style_roots, "get_plt")).code
     serialization = extract_notebook_source(module_source("plot_export.py"), ("to_png_bytes", "cm_to_inch")).code
     table_code = _table_source(plot) if plot in PAIRED_PLOTS else ""
     scientific_source = module_source("functions.py")
-    scientific = "\n\n".join(function_definition(scientific_source, name) for name in ("raw_zero_to_nan", "condition_cvs", "intensity_unit_label", "abundance_axis_label"))
+    scientific = "\n\n".join(function_definition(scientific_source, name) for name in ("raw_zero_to_nan", "condition_cvs", "intensity_unit_label", "abundance_axis_label", "sample_display_labels"))
     combined = merge_source("import math\nimport numpy as np\nimport pandas as pd\nfrom typing import Any", notebook,
                              styles, serialization, helpers, function, table_code, scientific)
     roots = ("plot_figure", "to_png_bytes", "get_plt") + (("prepare_table",) if plot in PAIRED_PLOTS else ())
@@ -106,12 +101,10 @@ def _table_source(plot: str) -> str:
 @lru_cache(maxsize=6)
 def _qc_module(plot: str):
     # Only installed, trusted source is compiled; user text remains JSON/data.
-    module = ModuleType(f"_copylot_portable_{plot}")
-    sys.modules[module.__name__] = module  # Required by dataclass type resolution.
-    exec(qc_source(plot).code, module.__dict__)
-    return module
+    return portable_module(f"_copylot_portable_{plot}", lambda: qc_source(plot))
 
 
+@cached_notebook_render
 def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, str]:
     from app.services.annotation_store import get_annotation
     from app.services.dataset_store import get_current_dataset
@@ -135,9 +128,7 @@ def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, s
     data = (linear_qc_frame(kind) if plot in LINEAR_PLOTS else log2_qc_frame(kind)).copy(deep=True)
     unnormalized = plot in LINEAR_PLOTS and linear_qc_uses_unnormalized(kind)
     metadata = metadata_for_kind(kind, data, _get_sample_columns(kind, data)).copy(deep=True)
-    bound = inspect.signature(getattr(plot_images, QC_RENDERERS[plot])).bind(kind, **options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(getattr(plot_images, QC_RENDERERS[plot]), kind, **options)
     settings.pop("kind")
     settings["centered"] = bool(lineage and lineage.aggregation == "robust_site_median")
     module = _qc_module(plot)
@@ -157,11 +148,8 @@ def render_qc(kind: str, *, plot: str = "coverage", **options) -> tuple[bytes, s
         kind, module.get_plt(), conditions, settings["advanced"])
     figure = module.plot_figure(data, metadata, **settings)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"], tight=plot != "coverage")
-    finally:
-        module.plot_output_format.reset(format_token)
     if not capture:
         return content, ""
     plot_name = ({"coverage": "Coverage Summary" if settings.get("summary") else "Coverage Plot",

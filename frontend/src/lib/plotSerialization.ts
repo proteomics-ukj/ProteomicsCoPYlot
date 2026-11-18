@@ -56,18 +56,22 @@ const MARKER_NUMBER_KEYS = [
   "volcanoDownAlpha",
   "volcanoNsSize",
   "volcanoNsAlpha",
-  "volcanoHighlightSize",
   "volcanoLabelSize",
+  "volcanoLabelConnectorWidth",
+  "abundanceHighlightWidth",
+  "volcanoHighlightWidth",
+  "abundanceLabelSize",
 ] as const;
 
 const ELEMENT_EXTRA_KEYS = [
+  "distributionNoteText",
   "legendTitle",
   "legendTextColor",
   "xTickLabelColor",
   "yTickLabelColor",
 ] as const;
 
-const ELEMENT_BOOLEAN_KEYS = ["titleVisible", "legendVisible", "legendFrame"] as const;
+const ELEMENT_BOOLEAN_KEYS = ["distributionNoteVisible", "volcanoLabelConnector", "titleVisible", "legendVisible", "legendFrame"] as const;
 
 const MARKER_TEXT_KEYS = ["markerShape"] as const;
 
@@ -94,6 +98,8 @@ const MARKER_COLOR_KEYS = [
   "volcanoDownColor",
   "volcanoNsColor",
   "volcanoHighlightColor",
+  "volcanoLabelConnectorColor",
+  "abundanceHighlightColor",
 ] as const;
 
 function compactMarkerSettings(
@@ -133,7 +139,11 @@ function compactMarkerSettings(
 function compactElementSettings(
   settings: AdvancedPlotSettings
 ): Partial<AdvancedPlotSettings> {
-  const next: Record<string, string | boolean> = {};
+  const next: Record<string, string | boolean | number> = {};
+  for (const key of ["distributionNoteXOffset", "distributionNoteYOffset"] as const) {
+    const value = settings[key];
+    if (typeof value === "number" && Number.isFinite(value)) next[key] = value;
+  }
   for (const key of ELEMENT_EXTRA_KEYS) {
     const value = settings[key]?.trim();
     if (value) next[key] = value;
@@ -207,6 +217,9 @@ export function compactAdvancedPlotSettings(
   if (settings.referenceLineLegend === false) next.referenceLineLegend = false;
   // The highlight ring's legend entry is drawn unless switched off; its label
   // only matters when it differs from the default.
+  if (settings.abundanceHighlightLegend === false) next.abundanceHighlightLegend = false;
+  const abundanceLegendLabel = trimmed(settings.abundanceHighlightLegendLabel);
+  if (abundanceLegendLabel) next.abundanceHighlightLegendLabel = abundanceLegendLabel;
   if (settings.volcanoHighlightLegend === false) next.volcanoHighlightLegend = false;
   const highlightLegendLabel = trimmed(settings.volcanoHighlightLegendLabel);
   if (highlightLegendLabel) next.volcanoHighlightLegendLabel = highlightLegendLabel;

@@ -19,11 +19,9 @@ row can be traced back to the matrix. The figure itself is unchanged.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services.annotation_store import get_annotation
 from app.services.single_protein_tools import (
@@ -31,12 +29,10 @@ from app.services.single_protein_tools import (
     single_protein_heatmap_table,
     single_protein_options,
 )
-from app.services.viewer_bootstrap import load_viewer_state
 
 
 @pytest.fixture(scope="module")
-def project():
-    load_viewer_state(ROOT / "tests" / "fixtures" / "viewer_config.json")
+def project(example_project):
     options = single_protein_options("phospho", tab="heatmap", identifier="workflow")
     return options
 

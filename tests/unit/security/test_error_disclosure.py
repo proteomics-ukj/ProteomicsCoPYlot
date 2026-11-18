@@ -86,13 +86,13 @@ def test_unauthenticated_auth_endpoints_do_not_describe_their_configuration(
 
 
 def test_report_body_carries_no_exception_text(example_project, monkeypatch, caplog) -> None:
-    """A figure that fails to render leaves a neutral note where the figure was.
+    """A figure that fails to render is left out of the report.
 
     Every figure and summary table is made to fail with a recognisable message.
-    The report still renders, and each failed slot says only that it could not
-    be rendered. The report has no warnings section: warnings go back to the
-    page that asked for the report, naming what failed, and the reason is in the
-    server log -- an exception string can carry a path or someone's data.
+    The report still renders, without the failed parts and without a warnings
+    section: warnings go back to the page that asked for the report, naming what
+    failed, and the reason is in the server log -- an exception string can carry
+    a path or someone's data.
     """
     from app.schemas.summary import SummaryReportContext, SummaryReportRequest
     from app.services import report_function as module
@@ -112,13 +112,11 @@ def test_report_body_carries_no_exception_text(example_project, monkeypatch, cap
 
     assert "Report Warnings" not in result.html, "warnings belong in the page, not the report"
     assert secret not in result.html and html.escape(secret) not in result.html
-    assert "Could not render this plot" in result.html
-    assert "Could not render this interactive plot" in result.html
-    assert "Could not render this summary table" in result.html
-    # One warning for every figure that shows the note, naming it and not the reason.
-    failed = result.html.count("Could not render this")
-    assert failed >= 3
-    assert sum(warning.endswith("could not be rendered.") for warning in result.warnings) == failed, result.warnings
+    assert "Could not render" not in result.html and "<img" not in result.html
+    assert "Coverage Plot</h2>" not in result.html, "a section without its figure is left out"
+    # One warning for every part that was left out, naming it and not the reason.
+    assert len(result.warnings) >= 3
+    assert all(warning.endswith("could not be rendered.") for warning in result.warnings), result.warnings
     assert not any(secret in warning for warning in result.warnings)
     assert secret in caplog.text, "the reason is logged for whoever runs the server"
 

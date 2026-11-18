@@ -10,7 +10,6 @@ all-members loop kept here only to show what changed.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 
 import numpy as np
@@ -20,7 +19,7 @@ import pytest
 from app.services import stats_tools
 from proteomicscopylot import notebook_functions as nb
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 LEGACY_INPUTS = ["AKT1", " MTOR ", "A;B", "A; B ;C", ";;", "", "   ", None, np.nan, float("nan"),
                  "A;A;a", "P12345-2;Q9Y6K9", "GENE_1;GENE_2;", 12345, 1.5, "A;B", "b;c"]

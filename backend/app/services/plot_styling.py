@@ -882,6 +882,10 @@ def _style_legend(legend, settings: dict[str, Any] | None) -> None:
     """
     if legend is None:
         return
+    legend._copylot_manual_position = any(
+        advanced_number(settings, key, 0.0) != 0
+        for key in ("legendXOffset", "legendYOffset")
+    )
     size = advanced_number(settings, "legendFontSize", 0.0)
     colour = advanced_color_text(settings, "legendTextColor")
     family = mpl_font_family(settings, "legend")

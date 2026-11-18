@@ -1,5 +1,4 @@
 import importlib
-from pathlib import Path
 import re
 import shutil
 import sys
@@ -7,7 +6,7 @@ import sys
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 @pytest.fixture

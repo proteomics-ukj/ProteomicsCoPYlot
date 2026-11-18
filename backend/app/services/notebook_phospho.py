@@ -1,13 +1,10 @@
 """Phospho-specific count and coverage replay from localization-selected rows."""
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
 from app.services.notebook_qc import qc_source
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
 
 @lru_cache(maxsize=1)
@@ -21,17 +18,14 @@ def count_source():
     figure = replace_once(figure, '    summary = phosphosite_plot_table()', '    summary = prepare_table(data)')
     figure = figure.replace('plt, _ = _get_plt()', 'plt = get_plt()')
     figure = figure.replace('_cm_to_inch(', 'cm_to_inch(').replace('_to_png_bytes(', 'to_png_bytes(')
-    return extract_notebook_source(merge_source('import numpy as np\nimport pandas as pd', table, figure,
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', table, figure,
         extract_notebook_source(qc_source('boxplot').code, ('get_plt', 'cm_to_inch', 'to_png_bytes', 'apply_advanced_axes')).code,
         extract_notebook_source(module_source('plot_styling.py'), ('advanced_color',)).code), ('prepare_table', 'render_plot'))
 
 
 @lru_cache(maxsize=1)
 def count_module():
-    module = ModuleType('_copylot_portable_phospho_counts')
-    sys.modules[module.__name__] = module
-    exec(count_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_phospho_counts', count_source)
 
 
 def render_counts(**options):
@@ -54,7 +48,7 @@ def coverage_source():
     code = code.replace('_coverage_counts(include_id=', '_coverage_counts(data, metadata, is_log2, include_id=')
     code = code.replace('plt, _ = _get_plt()', 'plt = get_plt()').replace('_extract_id_or_number(', 'extract_sample_id(')
     code = code.replace('_cm_to_inch(', 'cm_to_inch(').replace('_to_png_bytes(', 'to_png_bytes(')
-    return extract_notebook_source(merge_source('import numpy as np\nimport pandas as pd', code,
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', code,
         extract_notebook_source(count_source().code, ('get_plt', 'cm_to_inch', 'to_png_bytes', 'apply_advanced_axes', 'advanced_color')).code,
         extract_notebook_source(module_source('functions.py'), ('extract_sample_id',)).code,
         extract_notebook_source(module_source('plot_styling.py'), ('advanced_label',)).code), ('prepare_table', 'render_plot'))
@@ -62,10 +56,7 @@ def coverage_source():
 
 @lru_cache(maxsize=1)
 def coverage_module():
-    module = ModuleType('_copylot_portable_phospho_coverage')
-    sys.modules[module.__name__] = module
-    exec(coverage_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_phospho_coverage', coverage_source)
 
 
 def render_coverage(**options):
@@ -86,17 +77,14 @@ def category_source(plot):
     figure = figure.replace('plt, _ = _get_plt()', 'plt = get_plt()')
     figure = figure.replace('plt, mtick = _get_plt()', 'plt = get_plt()\n    import matplotlib.ticker as mtick')
     figure = figure.replace('_cm_to_inch(', 'cm_to_inch(').replace('_to_png_bytes(', 'to_png_bytes(')
-    return extract_notebook_source(merge_source('import numpy as np\nimport pandas as pd', table, figure,
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', table, figure,
         extract_notebook_source(count_source().code, ('get_plt', 'cm_to_inch', 'to_png_bytes',
-            'apply_advanced_axes', 'advanced_color')).code), ('prepare_table', 'render_plot'))
+            'apply_advanced_axes', 'advanced_color', 'advanced_number')).code), ('prepare_table', 'render_plot'))
 
 
 @lru_cache(maxsize=2)
 def category_module(plot):
-    module = ModuleType(f'_copylot_portable_phospho_{plot}')
-    sys.modules[module.__name__] = module
-    exec(category_source(plot).code, module.__dict__)
-    return module
+    return portable_module(f'_copylot_portable_phospho_{plot}', lambda: category_source(plot))
 
 
 def render_distribution(**options):
@@ -107,6 +95,7 @@ def render_sty(**options):
     return _render('sty', **options)
 
 
+@cached_notebook_render
 def _render(plot, **options):
     from app.services import phospho_tools
     from app.services.dataset_store import get_current_dataset
@@ -118,9 +107,7 @@ def _render(plot, **options):
 
     revision = runtime_cache_version()
     renderer = phospho_tools.phosphosite_plot_png if plot == 'counts' else getattr(phospho_tools, f'phospho_{plot}_png')
-    bound = inspect.signature(renderer).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(renderer, **options)
     frame, metadata, samples = phospho_tools._phospho_context()
     metadata = metadata[['sample', 'condition']].copy(deep=True)
     cutoff = get_localization_cutoff()
@@ -141,11 +128,8 @@ def _render(plot, **options):
         preparation = {'cutoff': settings['cutoff']}
     table = module.prepare_table(data, metadata, **preparation) if plot == 'coverage' else module.prepare_table(data, **preparation)
     fmt = plot_output_format.get()
-    context = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         image = module.render_plot(data, metadata, **settings) if plot == 'coverage' else module.render_plot(data, **settings)
-    finally:
-        module.plot_output_format.reset(context)
     explanation = {
         'distribution': 'Captured original-source rows after the session localization cutoff. Existing site_num '
             'values take precedence; otherwise distinct site keys are counted per protein group. The notebook '

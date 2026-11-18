@@ -1167,7 +1167,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Download Plot Notebook */
+        /**
+         * Download Plot Notebook
+         * @description One export as a ZIP.
+         *
+         *     `matrices` ships the data matrices of deterministic steps, `imputed` the full
+         *     imputed matrix. Both are off unless the user turned them on in Settings: the
+         *     export then holds only what cannot be recomputed from the original file.
+         */
         get: operations["download_plot_notebook_api_plots_notebooks__token__zip_get"];
         put?: never;
         post?: never;
@@ -2512,6 +2519,31 @@ export interface components {
          */
         AdvancedPlotSettings: {
             /**
+             * Abundancehighlightcolor
+             * @default null
+             */
+            abundanceHighlightColor?: string | null;
+            /**
+             * Abundancehighlightlegend
+             * @default null
+             */
+            abundanceHighlightLegend?: boolean | null;
+            /**
+             * Abundancehighlightlegendlabel
+             * @default null
+             */
+            abundanceHighlightLegendLabel?: string | null;
+            /**
+             * Abundancehighlightwidth
+             * @default null
+             */
+            abundanceHighlightWidth?: number | null;
+            /**
+             * Abundancelabelsize
+             * @default null
+             */
+            abundanceLabelSize?: number | null;
+            /**
              * Axislabelfontfamily
              * @default null
              */
@@ -2670,6 +2702,26 @@ export interface components {
              * @default null
              */
             correlationColorMap?: string | null;
+            /**
+             * Distributionnotetext
+             * @default null
+             */
+            distributionNoteText?: string | null;
+            /**
+             * Distributionnotevisible
+             * @default null
+             */
+            distributionNoteVisible?: boolean | null;
+            /**
+             * Distributionnotexoffset
+             * @default null
+             */
+            distributionNoteXOffset?: number | null;
+            /**
+             * Distributionnoteyoffset
+             * @default null
+             */
+            distributionNoteYOffset?: number | null;
             /**
              * Fontfamily
              * @default null
@@ -2895,10 +2947,25 @@ export interface components {
              */
             volcanoHighlightLegendLabel?: string | null;
             /**
-             * Volcanohighlightsize
+             * Volcanohighlightwidth
              * @default null
              */
-            volcanoHighlightSize?: number | null;
+            volcanoHighlightWidth?: number | null;
+            /**
+             * Volcanolabelconnector
+             * @default null
+             */
+            volcanoLabelConnector?: boolean | null;
+            /**
+             * Volcanolabelconnectorcolor
+             * @default null
+             */
+            volcanoLabelConnectorColor?: string | null;
+            /**
+             * Volcanolabelconnectorwidth
+             * @default null
+             */
+            volcanoLabelConnectorWidth?: number | null;
             /**
              * Volcanolabelsize
              * @default null
@@ -3801,7 +3868,7 @@ export interface components {
         /** ContaminantFilterConfig */
         ContaminantFilterConfig: {
             /** Categories */
-            categories?: (1 | 2 | 3 | 4 | 5)[];
+            categories?: (1 | 2 | 3 | 4 | 5 | 6)[];
             /**
              * Enabled
              * @default false
@@ -5151,6 +5218,39 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /**
+         * SummaryPlotEntry
+         * @description One plot added to the report, as it was when it was added.
+         *
+         *     `request` holds the page's options for that plot, `render` how it was drawn
+         *     (type Normal or Interactive, widthCm, heightCm, dpi) and `advanced` its
+         *     advanced appearance. The report has a protein and a phosphosite level, so
+         *     those are the levels an entry can belong to.
+         */
+        SummaryPlotEntry: {
+            /** Advanced */
+            advanced?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "protein" | "phospho";
+            /** Render */
+            render?: {
+                [key: string]: unknown;
+            };
+            /** Request */
+            request?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "volcano" | "pearson" | "venn" | "anova" | "ora" | "single_box" | "single_line";
+        };
         /** SummaryReportContext */
         SummaryReportContext: {
             /**
@@ -5174,6 +5274,8 @@ export interface components {
             completenessSettings?: {
                 [key: string]: unknown;
             };
+            /** Entries */
+            entries?: components["schemas"]["SummaryPlotEntry"][];
             /** Qcadvancedsettingsbytab */
             qcAdvancedSettingsByTab?: {
                 [key: string]: {
@@ -5188,6 +5290,14 @@ export interface components {
             };
             /** Volcanoentries */
             volcanoEntries?: components["schemas"]["SummaryVolcanoEntry"][];
+            /** Workflowplotsettings */
+            workflowPlotSettings?: {
+                [key: string]: {
+                    [key: string]: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
         };
         /** SummaryReportRequest */
         SummaryReportRequest: {
@@ -7955,7 +8065,10 @@ export interface operations {
     };
     download_plot_notebook_api_plots_notebooks__token__zip_get: {
         parameters: {
-            query?: never;
+            query?: {
+                matrices?: boolean;
+                imputed?: boolean;
+            };
             header?: never;
             path: {
                 token: string;
@@ -8623,6 +8736,12 @@ export interface operations {
                 widthCm?: number;
                 heightCm?: number;
                 advanced?: string;
+                search?: string;
+                topHigh?: number;
+                topLow?: number;
+                highlightOutline?: boolean;
+                highlightLabels?: boolean;
+                identifier?: "workflow" | "genes";
             };
             header?: never;
             path: {
@@ -8662,6 +8781,12 @@ export interface operations {
                 heightCm?: number;
                 dpi?: number;
                 advanced?: string;
+                search?: string;
+                topHigh?: number;
+                topLow?: number;
+                highlightOutline?: boolean;
+                highlightLabels?: boolean;
+                identifier?: "workflow" | "genes";
             };
             header?: never;
             path: {
@@ -9048,7 +9173,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "protein" | "phospho" | "phosprot";
+                kind: "protein" | "phospho" | "phosprot" | "peptide" | "precursor";
             };
             cookie?: never;
         };
@@ -9841,6 +9966,8 @@ export interface operations {
         parameters: {
             query: {
                 highlightOutline?: boolean;
+                labelTopUp?: number;
+                labelTopDown?: number;
                 advanced?: string;
                 condition1Control: string;
                 condition2Control: string;
@@ -9972,6 +10099,8 @@ export interface operations {
         parameters: {
             query: {
                 highlightOutline?: boolean;
+                labelTopUp?: number;
+                labelTopDown?: number;
                 advanced?: string;
                 condition1: string;
                 condition2: string;

@@ -61,7 +61,7 @@ def _decimals(token: str) -> int:
 
 
 # Method thresholds can be encoded in rule names. Other identifier digits are not evidence.
-_RULE_NUMBER = re.compile(r"(?<=greater_than_or_equal_to_)(\d+(?:\.\d+)?)(?![\w.])")
+_RULE_NUMBER = re.compile(r"(?:(?<=greater_than_or_equal_to_)|(?<=at_or_above_))(\d+(?:\.\d+)?)(?![\w.])")
 
 
 def known_numbers(*texts: str) -> list[float]:
@@ -246,11 +246,14 @@ def _derived(subjects: dict[str, dict[str, float]], reference: str) -> list[floa
     # Each part of a stated total, as a share of it and as what remains ("55 % of the
     # detections are below 0.75", "leaving 5,021").
     for line in reference.splitlines():
-        fields = {key: float(value.replace(",", "")) for key, value in re.findall(r"\b(\w+)=(" + _NUM + r")(?![\w.])", line)}
+        fields = {key: float(value.replace(",", "")) for key, value in re.findall(r"\b(\w[\w.]*)=(" + _NUM + r")(?![\w.])", line)}
         total = fields.get("total") or fields.get("sites_total") or fields.get("total_features")
         if total:
             for key, value in fields.items():
-                if key in {"class_i", "not_class_i", "unclassified", "detected", "missing", "detected_features", "missing_values"} and 0 <= value <= total:
+                # sites_at_or_above_0.75=5174 beside sites_total (2026-11-12: "5,174 sites, about
+                # 45 %" was removed, and with it the whole localization answer).
+                if (key in {"class_i", "not_class_i", "unclassified", "detected", "missing", "detected_features", "missing_values"}
+                        or key.startswith("sites_at_or_above_")) and 0 <= value <= total:
                     found.extend([100 * value / total, total - value])
     return found
 

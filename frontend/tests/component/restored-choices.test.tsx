@@ -11,7 +11,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../src/lib/api";
 import type { StatisticalOptionsResponse } from "../../src/lib/types";
-import { silenceNetwork } from "./apiMock";
+import { silenceNetwork, statisticalOptions } from "./apiMock";
 import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import { AnovaPanel } from "../../src/features/stats/AnovaPanel";
 import { OraPanel } from "../../src/features/stats/OraPanel";
@@ -19,18 +19,11 @@ import { SimulationPanel } from "../../src/features/stats/SimulationPanel";
 
 vi.mock("../../src/lib/api", async (original) => (await import("./apiMock")).mockApiModule(original));
 
-const OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein",
-  sourceUsed: "data",
-  imputedAvailable: false,
+const OPTIONS: StatisticalOptionsResponse = statisticalOptions({
   availableConditions: ["A", "B", "C"],
   samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"], C: ["c1", "c2"] },
-  pairIdsBySample: {},
   availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }],
-  warnings: [],
-  availableDataSources: ["data"],
-  defaultDataSource: "data",
-};
+});
 const PROTEIN = [{ value: "protein", label: "Protein" }];
 
 function save(storage: string, state: Record<string, unknown>) {

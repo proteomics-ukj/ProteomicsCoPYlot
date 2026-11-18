@@ -22,6 +22,7 @@ export default function ContaminantFilter({ value = DEFAULT_CONTAMINANTS, onChan
           {label}
         </label>)}
       </fieldset>
+      <p>Upstream-flagged contaminants removes MaxQuant “Potential contaminant” flags and contaminant-prefixed groups (MaxQuant CON__, FragPipe/Philosopher contam_, cRAP- from a cRAP FASTA, or the same prefixes retained by other pipelines), even without a cRAP match.</p>
       <details>
         <summary className="cursor-pointer font-medium">Advanced matching</summary>
         <label className="mt-2 flex items-center gap-2">

@@ -16,11 +16,9 @@ palette. So a colour passed in by the renderer always wins.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 import matplotlib
 

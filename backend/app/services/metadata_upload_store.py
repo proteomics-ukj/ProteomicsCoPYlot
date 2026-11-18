@@ -125,6 +125,17 @@ def _normalize_profile_name(
     return _active_profile_by_package().get(package, DEFAULT_METADATA_PROFILE_NAME)
 
 
+def _is_manual_profile(
+    name: str,
+    state: dict[MetadataAnnotationKind, StoredUploadedMetadata | None],
+    auto_profiles: set[str],
+) -> bool:
+    return name not in auto_profiles and (
+        name != DEFAULT_METADATA_PROFILE_NAME
+        or any(stored is not None for stored in state.values())
+    )
+
+
 def _manual_profile_names(package_name: str) -> list[str]:
     package = _ensure_package(package_name)
     profiles = _uploaded_metadata_by_package()[package]
@@ -132,11 +143,7 @@ def _manual_profile_names(package_name: str) -> list[str]:
     return [
         name
         for name, state in profiles.items()
-        if name not in auto_profiles
-        and (
-            name != DEFAULT_METADATA_PROFILE_NAME
-            or any(stored is not None for stored in state.values())
-        )
+        if _is_manual_profile(name, state, auto_profiles)
     ]
 
 
@@ -149,12 +156,8 @@ def _ensure_manual_profile_capacity(package_name: str, profile_name: str) -> Non
 
     profiles = _uploaded_metadata_by_package()[package]
     auto_profiles = _auto_combined_profiles_by_package().setdefault(package, set())
-    if name in profiles and name not in auto_profiles:
-        state = profiles[name]
-        if name != DEFAULT_METADATA_PROFILE_NAME or any(
-            stored is not None for stored in state.values()
-        ):
-            return
+    if name in profiles and _is_manual_profile(name, profiles[name], auto_profiles):
+        return
     if len(_manual_profile_names(package)) >= MAX_MANUAL_METADATA_PROFILES:
         raise ValueError(
             "A dataset package can contain at most "
@@ -234,6 +237,10 @@ def _refresh_combined_profile_keys(package_name: str) -> None:
         auto_sources.pop(name, None)
 
 
+def _normalize_metadata_labels(values: pd.Series) -> pd.Series:
+    return values.where(pd.notna(values), "").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+
+
 def _normalize_metadata_frame(frame: pd.DataFrame) -> pd.DataFrame | None:
     if frame.empty:
         return None
@@ -261,20 +268,8 @@ def _normalize_metadata_frame(frame: pd.DataFrame) -> pd.DataFrame | None:
     if pair_col and pair_col != condition_col:
         rename_map[pair_col] = "pair_id"
     out = out.rename(columns=rename_map)
-    out["sample"] = (
-        out["sample"]
-        .where(pd.notna(out["sample"]), "")
-        .astype(str)
-        .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-    )
-    out["condition"] = (
-        out["condition"]
-        .where(pd.notna(out["condition"]), "")
-        .astype(str)
-        .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-    )
+    out["sample"] = _normalize_metadata_labels(out["sample"])
+    out["condition"] = _normalize_metadata_labels(out["condition"])
     if "pair_id" in out.columns:
         out["pair_id"] = (
             out["pair_id"].where(pd.notna(out["pair_id"]), "").astype(str).str.strip()
@@ -598,11 +593,7 @@ def delete_profile(
         remaining_manual = [
             profile
             for profile, state in profiles.items()
-            if profile not in auto_profiles
-            and (
-                profile != DEFAULT_METADATA_PROFILE_NAME
-                or any(stored is not None for stored in state.values())
-            )
+            if _is_manual_profile(profile, state, auto_profiles)
         ]
         fallback = (
             remaining_manual[0]
@@ -757,13 +748,7 @@ def _frame_with_pair_ids(
     pair_col = column_map.get("pair_id", "pair_id")
     if pair_col not in updated.columns:
         updated[pair_col] = ""
-    normalized_samples = (
-        updated[sample_col]
-        .where(pd.notna(updated[sample_col]), "")
-        .astype(str)
-        .str.strip()
-        .str.replace(r"\.0$", "", regex=True)
-    )
+    normalized_samples = _normalize_metadata_labels(updated[sample_col])
     mapped_pair_ids = normalized_samples.map(pair_ids_by_sample)
     matched = mapped_pair_ids.notna()
     updated.loc[matched, pair_col] = mapped_pair_ids.loc[matched].astype(str)

@@ -59,13 +59,13 @@ class IdentifierTranslationStep(BaseModel):
     outputs: dict[str, dict[str, str | None]]
 
 
-def _default_contaminant_categories() -> list[Literal[1, 2, 3, 4, 5]]:
-    return [1, 2, 3, 4, 5]
+def _default_contaminant_categories() -> list[Literal[1, 2, 3, 4, 5, 6]]:
+    return [1, 2, 3, 4, 5, 6]
 
 
 class ContaminantFilterConfig(BaseModel):
     enabled: bool = False
-    categories: list[Literal[1, 2, 3, 4, 5]] = Field(default_factory=_default_contaminant_categories)
+    categories: list[Literal[1, 2, 3, 4, 5, 6]] = Field(default_factory=_default_contaminant_categories)
     matchAccessions: bool = True
 
     @model_validator(mode="after")

@@ -113,6 +113,17 @@ def entity_labels_for_kind(kind) -> tuple[str, str]:
     return ENTITY_LABELS_BY_KIND.get(key, ENTITY_LABELS_BY_KIND["protein"])
 
 
+def sample_display_labels(
+    frame: pd.DataFrame, *, index_column: str, include_id: bool = False, id_separator: str = "\n",
+) -> pd.Series:
+    """Format existing sample counters, retaining row-wise null and empty-input behavior."""
+    if include_id:
+        return frame.apply(
+            lambda row: f"{row['condition']}_{row[index_column]}{id_separator}({row['id']})", axis=1,
+        )
+    return frame.apply(lambda row: f"{row['condition']}_{row[index_column]}", axis=1)
+
+
 def condition_sample_labels(frame: pd.DataFrame) -> pd.Series:
     """``condition_N`` per row: N is the sample's 1-based place inside its condition.
 

@@ -1,6 +1,6 @@
 import { useLayoutEffect } from "react";
 
-export type CanvasFocus = { kind: "protein" | "phospho" | "phosprot"; features: string[]; conditions: string[]; allSites: boolean };
+type CanvasFocus = { kind: "protein" | "phospho" | "phosprot"; features: string[]; conditions: string[]; allSites: boolean };
 let applyFocus: ((focus: CanvasFocus) => string) | undefined;
 
 export function useCanvasFocus(handler: (focus: CanvasFocus) => string) {

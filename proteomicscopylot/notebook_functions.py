@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 import pyarrow.parquet as pq
 import scipy.stats as stats
 import seaborn as    sns
+from matplotlib.colors import to_rgba
 from matplotlib.patches import Ellipse
 from matplotlib.patches import Rectangle
 from matplotlib_venn import venn2, venn3
@@ -80,6 +81,8 @@ try:
         match_sites_to_proteins,
         protein_corrected_site_changes,
         contaminant_mask,
+        copylot_colors,
+        resolve_plot_colors,
     )
 except ImportError:  # loaded from its file alone, outside the package
     import importlib.util as _importlib_util
@@ -103,6 +106,8 @@ except ImportError:  # loaded from its file alone, outside the package
     protein_corrected_site_changes = _core.protein_corrected_site_changes
     bh_adjust = _core.bh_adjust
     contaminant_mask = _core.contaminant_mask
+    copylot_colors = _core.copylot_colors
+    resolve_plot_colors = _core.resolve_plot_colors
 # </shared-core>
 
 
@@ -206,6 +211,7 @@ def rename_cols(df):
         "Genes": "GeneNames",
         "Gene names": "GeneNames",
         "PEP.StrippedSequence": "Stripped.Sequence",
+        "EG.PrecursorId": "Precursor.Id",
         "Sequence": "Stripped.Sequence",
         "EG.ModifiedSequence": "Modified.Sequence",
         "R.FileName": "File.Name",
@@ -214,10 +220,19 @@ def rename_cols(df):
     }
 
     total_quantity_cols = [col for col in df.columns if re.match(r"EG\.TotalQuantity", col)]
-    if total_quantity_cols:
+    if "Precursor.Quantity" not in df.columns and "FG.Quantity" in df.columns:
+        rename_map["FG.Quantity"] = "Precursor.Quantity"
+    elif "Precursor.Quantity" not in df.columns and total_quantity_cols:
         rename_map[total_quantity_cols[0]] = "Precursor.Quantity"
 
     df = df.rename(columns=rename_map)
+    if ("Precursor.Id" not in df and "EG.PrecursorId" not in df
+            and {"FG.LabeledSequence", "FG.Charge"}.issubset(df.columns)):
+        sequence = df["FG.LabeledSequence"].astype("string").str.strip()
+        charge = pd.to_numeric(df["FG.Charge"], errors="coerce")
+        charge = charge.where(charge.gt(0) & charge.mod(1).eq(0)).astype("Int64")
+        df["Precursor.Id"] = sequence.where(sequence.ne("")) + "/" + charge.astype("string")
+
 
     if {"GeneNames", "ProteinNames", "Raw file", "Intensity"}.issubset(df.columns):
         df['Intensity'] = pd.to_numeric(df['Intensity'], errors='coerce').fillna(0)
@@ -683,6 +698,7 @@ def filter_contaminants(data, enabled=False, categories=None, match_accessions=T
     """Remove complete contaminant groups, preserving indices for normalization.
 
     Off by default. Categories 1..5 refer to the bundled Cambridge metadata.
+    Category 6 independently removes upstream flags and fully contaminant-prefixed groups.
     Exact names and optional accessions only; mixed groups stay, genes are never
     matched. Pass a metadata DataFrame as `database` to use a recorded snapshot.
     Apply after `filter_data`, then fit normalization on the returned index.
@@ -698,7 +714,7 @@ def filter_contaminants(data, enabled=False, categories=None, match_accessions=T
             raise FileNotFoundError("Bundled Cambridge contaminant metadata is missing; reinstall CoPYlot or supply database=.")
         database = pd.read_csv(path, dtype=str, keep_default_na=False)
     reference = {"records": database.to_dict(orient="records")}
-    config = {"enabled": True, "categories": [1, 2, 3, 4, 5] if categories is None else categories,
+    config = {"enabled": True, "categories": [1, 2, 3, 4, 5, 6] if categories is None else categories,
               "matchAccessions": match_accessions}
     return data.loc[~contaminant_mask(data, config, reference)].copy()
 
@@ -1016,7 +1032,7 @@ def transform_phosprot(
     return data_phosprot[[column for column in ordered if column in data_phosprot.columns]]
 
 
-def qqnorm_plot(data, meta, seed=1):
+def qqnorm_plot(data, meta, seed=1, plot_colors=None):
     sample_columns = meta['sample'].tolist()
     data_values = data[sample_columns].apply(pd.to_numeric, errors="coerce")
 
@@ -1029,12 +1045,14 @@ def qqnorm_plot(data, meta, seed=1):
 
     fig, ax = plt.subplots()
     stats.probplot(values_vector, plot=ax)
+    ax.lines[0].set_color(resolve_plot_colors(1, plot_colors)[0])
     ax.set_title("QQ Plot")
     ax.set_xlabel("Theoretical Quantiles")
     ax.set_ylabel("Sample Quantiles")
     return fig
 
-def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, ret=0, sample_wise=True, seed=1, method="quantile", down_shift=1.8, width=0.3):
+
+def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, ret=0, sample_wise=True, seed=1, method="quantile", down_shift=1.8, width=0.3, plot_colors=None):
     """Impute missing values with a downshifted normal draw.
 
     Pass **log2 transformed** data. The model draws from a normal centred near
@@ -1086,7 +1104,7 @@ def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, r
 
     if ret == 1:
         fig, ax = plt.subplots()
-        ax.hist([combined_data_without_na, combined_data_with_na],
+        ax.hist([combined_data_without_na, combined_data_with_na], color=resolve_plot_colors(2, plot_colors),
                 bins=50, density=True, alpha=0.6, histtype='stepfilled',
                 label=["Without Missing Values", "With Missing Values"])
         ax.legend()
@@ -1165,7 +1183,7 @@ def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, r
 
     if ret == 3:
         fig, ax = plt.subplots()
-        ax.hist([non_imputed_combined, imputed_combined],
+        ax.hist([non_imputed_combined, imputed_combined], color=resolve_plot_colors(2, plot_colors),
                 bins=50, density=True, alpha=0.6, histtype='stepfilled',
                 label=["Non-Imputed Values", "Imputed Values"])
         ax.legend()
@@ -1177,6 +1195,7 @@ def impute_values(data: pd.DataFrame, meta: pd.DataFrame, q=0.01, adj_std=0.3, r
     data_imputed = data.copy()
     data_imputed[annotated_columns] = data_filtered
     return data_imputed
+
 
 
 #QC FUNCTIONS
@@ -1213,7 +1232,7 @@ def coverage_plot(data, meta, id=True, header=True, legend=True, plot_colors=Non
 
     fig, ax = plt.subplots(figsize=(width / 2.54, height / 2.54), dpi=dpi)
 
-    colors = plot_colors if plot_colors is not None else plt.cm.tab10.colors
+    colors = plot_colors if plot_colors is not None else copylot_colors(meta["condition"].nunique())
     color_map = {cond: colors[i % len(colors)] for i, cond in enumerate(conditions)}
 
     for cond in conditions:
@@ -1313,7 +1332,7 @@ def coverage_plot_summary(data, meta, header=True, plot_colors=None, width=20, h
 
     conditions = condition_summary["condition"].tolist()
     if plot_colors is None:
-        plot_colors = plt.cm.tab10.colors
+        plot_colors = copylot_colors(meta["condition"].nunique())
     if len(plot_colors) < len(conditions):
         plot_colors = (plot_colors * (len(conditions) // len(plot_colors) + 1))[:len(conditions)]
     color_map = dict(zip(conditions, plot_colors))
@@ -1412,6 +1431,8 @@ def _peptide_sample_map(columns, samples):
 
 def coverage_plot_pep(data2_path, meta, id=True, header=True, legend=True,
                       plot_colors=None, width=10, height=6, dpi=100, quantity_column='Precursor.Quantity', level='peptide'):
+    if quantity_column != "Precursor.Quantity":
+        raise ValueError("This plot uses Precursor.Quantity for peptide and precursor detection.")
 
     if level not in {"peptide", "precursor"}:
         raise ValueError("Coverage level must be peptide or precursor.")
@@ -1519,9 +1540,7 @@ def histo_int(data, meta, plot_colors=None, header=True, legend=True,
     n_conditions = len(mean_intensities)
 
     if plot_colors is None:
-        colors = plt.cm.tab10.colors
-        if n_conditions > len(colors):
-            colors = plt.get_cmap('tab20').colors
+        colors = copylot_colors(n_conditions)
     else:
         if len(plot_colors) < n_conditions:
             plot_colors = (plot_colors * (n_conditions // len(plot_colors) + 1))[:n_conditions]
@@ -1564,10 +1583,7 @@ def boxplot_int(data, meta, outliers=False, header=True, plot_colors=None,
         if len(plot_colors) < n_conditions:
             plot_colors = (plot_colors * (n_conditions // len(plot_colors) + 1))[:n_conditions]
     else:
-        base_colors = plt.cm.tab10.colors
-        if n_conditions > len(base_colors):
-            base_colors = plt.get_cmap('tab20').colors
-        plot_colors = base_colors[:n_conditions]
+        plot_colors = copylot_colors(n_conditions)
 
     annotated_columns = meta['sample'].tolist()
     data_filtered = data[annotated_columns]
@@ -1661,8 +1677,7 @@ def boxplot_int_single(
 
     unique_conditions = meta["condition"].unique()
     if plot_colors is None:
-        cmap = plt.get_cmap("tab10", len(unique_conditions))
-        condition_colors = dict(zip(unique_conditions, [cmap(i) for i in range(len(unique_conditions))]))
+        condition_colors = dict(zip(unique_conditions, copylot_colors(len(unique_conditions))))
     else:
         condition_colors = dict(zip(unique_conditions, plot_colors))
 
@@ -1746,10 +1761,7 @@ def cov_plot(data, meta, outliers=False, header=True, legend=True, plot_colors=N
         if len(plot_colors) < n_conditions:
             plot_colors = (plot_colors * (n_conditions // len(plot_colors) + 1))[:n_conditions]
     else:
-        base_colors = plt.cm.tab10.colors
-        if n_conditions > len(base_colors):
-            base_colors = plt.get_cmap('tab20').colors
-        plot_colors = base_colors[:n_conditions]
+        plot_colors = copylot_colors(n_conditions)
 
     fig, ax = plt.subplots(figsize=(width_cm / 2.54, height_cm / 2.54), dpi=dpi)
 
@@ -1944,7 +1956,7 @@ def pca_plot(data, meta, header=True, legend=True, dot_size=3,
         ax = fig.add_subplot(111, projection='3d')
     else:
         fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    colors = plot_colors if plot_colors is not None else plt.cm.tab10.colors
+    colors = plot_colors if plot_colors is not None else copylot_colors(meta["condition"].nunique())
     conditions = plot_scores['condition'].unique()
     color_map = {cond: colors[i % len(colors)] for i, cond in enumerate(conditions)}
     skipped_ellipses = []
@@ -1995,7 +2007,7 @@ def pca_plot_interactive(data, meta, plot_colors=None, header=True, legend=True,
     import plotly.express as px
     import plotly.graph_objects as go
     if plot_colors is None:
-        plot_colors = px.colors.qualitative.Plotly
+        plot_colors = copylot_colors(meta["condition"].nunique())
     transposed_expr, n_components = _prepare_pca_matrix(data, meta, plot_3d=plot_3d)
     pca = PCA(n_components=n_components)
     pca_result = pca.fit_transform(transposed_expr)
@@ -2082,9 +2094,37 @@ def abundance_axis_label(workflow, centered=False):
     return f"log10 {workflow} Intensity"
 
 
+def _abundance_selection(frame, search=None, top_high=0, top_low=0):
+    """Select plotted rows, independently within each condition; never change ranks."""
+    if (search is None or len(search) == 0) and top_high <= 0 and top_low <= 0:
+        return frame["Rank"].notna() & False
+
+    def normalize(value):
+        return re.sub(r"_(human|mouse)$", "", str(value).strip().lower())
+
+    entries = [search] if isinstance(search, str) else ([] if search is None else search)
+    terms = {normalize(term) for entry in entries for term in str(entry).split()}
+    selected = frame["Feature"].map(lambda value: normalize(value) in terms or any(
+        normalize(token) in terms for token in re.split(r"[;,]", str(value))))
+    finite = np.isfinite(frame["log10Intensity"])
+    for _, group in frame.loc[finite].groupby("Condition", observed=True, sort=False):
+        ordered = group.sort_values("Rank", kind="stable")
+        selected.loc[ordered.head(max(0, int(top_high))).index] = True
+        selected.loc[ordered.tail(max(0, int(top_low))).index] = True
+    return selected & finite
+
+
+
 def abundance_plot(data, meta, workflow="Protein", plot_colors=None, width_cm=20, height_cm=10, dpi=300,
-                   legend=True, header=True, data_scale="log2", centered=False):
-    """Rank arithmetic mean linear intensities (or site-median ratios when centered)."""
+                   legend=True, header=True, data_scale="log2", centered=False,
+                   top_high=0, top_low=0, search=None, highlight_outline=True, highlight_labels=False,
+                   highlight_color="#333333", highlight_size=None, label_size=7, label_column=None, point_size=np.sqrt(5), highlight_width=1):
+    """Rank arithmetic mean linear intensities (or site-median ratios when centered).
+
+    Select top_high/top_low per condition and/or search identifiers. Outlines and
+    labels are independent; labels use condition colors and names when overlaid.
+    Outlines follow point size and use a contrasting color unless overridden.
+    """
     data = _prepare_intensity_data(data, meta['sample'].tolist(), data_scale)
     if str(data_scale).strip().lower() == "log2":
         data[meta['sample']] = np.exp2(data[meta['sample']])
@@ -2095,18 +2135,14 @@ def abundance_plot(data, meta, workflow="Protein", plot_colors=None, width_cm=20
             reps = int(np.ceil(len(unique_conditions) / len(plot_colors)))
             plot_colors = (plot_colors * reps)[:len(unique_conditions)]
     else:
-        plot_colors = plt.get_cmap('tab10').colors[:len(unique_conditions)]
+        plot_colors = copylot_colors(len(unique_conditions))
 
     annotated_columns = meta['sample'].tolist()
 
-    if workflow == "Protein":
-        key_col = "ProteinNames"
-    elif workflow == "Phosphosite":
-        key_col = "PTM_Collapse_key"
-    elif workflow == "Phosphoprotein":
-        key_col = "Phosphoprotein"
-    else:
-        raise ValueError("workflow must be 'Protein', 'Phosphosite', or 'Phosphoprotein'")
+    key_col = _resolve_volcano_label_column(data, workflow, label_column)
+    if label_column is not None:
+        data = data.copy()
+        data[key_col] = data[key_col].replace(r"^\s*$", np.nan, regex=True).fillna(data[_resolve_volcano_label_column(data, workflow)])
 
     data_filtered = data[[key_col] + annotated_columns].copy()
 
@@ -2138,7 +2174,7 @@ def abundance_plot(data, meta, workflow="Protein", plot_colors=None, width_cm=20
 
     for cond, color in zip(unique_conditions, plot_colors):
         subset = long_intensities[long_intensities['Condition'] == cond]
-        ax.scatter(subset['Rank'], subset['log10Intensity'], label=cond, color=color, s=5)
+        ax.scatter(subset['Rank'], subset['log10Intensity'], label=cond, color=color, s=point_size ** 2, linewidths=0)
 
     ax.set_xlabel(f"{workflow} Rank")
     ax.set_ylabel(abundance_axis_label(workflow, centered))
@@ -2148,6 +2184,11 @@ def abundance_plot(data, meta, workflow="Protein", plot_colors=None, width_cm=20
     else:
         ax.set_title("")
 
+    long_intensities["Feature"] = long_intensities[key_col].astype(str)
+    selected = long_intensities.loc[_abundance_selection(long_intensities, search, top_high, top_low)]
+    if legend and highlight_outline and not selected.empty:
+        ax.scatter([], [], s=point_size ** 2, facecolors="none", edgecolors=highlight_color or "#333333",
+                   linewidths=highlight_width, label="Highlighted")
     if legend:
         ax.legend(title="Condition", bbox_to_anchor=(1.05, 1), loc='upper left')
         fig.tight_layout(rect=[0, 0, 0.85, 1])
@@ -2156,53 +2197,73 @@ def abundance_plot(data, meta, workflow="Protein", plot_colors=None, width_cm=20
             ax.legend_.remove()
         fig.tight_layout()
 
+    if highlight_labels and not selected.empty:
+        fig.canvas.draw()
+    renderer = fig.canvas.get_renderer() if highlight_labels and not selected.empty else None
+    placed = [ax.get_legend().get_window_extent(renderer)] if renderer is not None and ax.get_legend() is not None else []
+    for cond, color in zip(unique_conditions, plot_colors):
+        points = selected.loc[selected["Condition"] == cond]
+        if highlight_outline and not points.empty:
+            ax.scatter(points["Rank"], points["log10Intensity"], s=point_size ** 2,
+                       facecolors="none", edgecolors=highlight_color or "#333333", linewidths=highlight_width, zorder=4)
+        if highlight_labels:
+            for row in points.itertuples():
+                text = str(row.Feature) + (f" ({cond})" if len(unique_conditions) > 1 else "")
+                for dx, dy in ((6, 6), (6, -14), (-6, 6), (-6, -14), (6, 26), (6, -34), (-6, 26), (-6, -34), (6, 46), (-6, 46), (6, -54), (-6, -54), (-6, 66)):
+                    annotation = ax.annotate(text, (row.Rank, row.log10Intensity), xytext=(dx, dy),
+                        textcoords="offset points", color=color, fontsize=label_size,
+                        ha="left" if dx > 0 else "right", bbox={"facecolor": ax.get_facecolor(), "edgecolor": "none", "alpha": .85, "pad": 0},
+                        arrowprops={"arrowstyle": "-", "color": color, "linewidth": .5})
+                    annotation.update_positions(renderer)
+                    annotation.update_bbox_position_size(renderer)
+                    box = annotation.get_bbox_patch().get_window_extent(renderer).expanded(1.04, 1.35)
+                    if (ax.bbox.contains(box.x0, box.y0) and ax.bbox.contains(box.x1, box.y1)
+                            and not any(box.overlaps(other) for other in placed)):
+                        placed.append(box)
+                        break
+                    annotation.remove()
     return fig
 
 
 def interactive_abundance_plot(data, meta, condition, workflow="Protein", search=None, max_ptms=5,
-                               data_scale="log2", centered=False):
-    """Rank arithmetic mean linear intensities (or site-median ratios when centered)."""
-    annotated_columns = meta.loc[meta["condition"] == condition, "sample"].tolist()
+                               data_scale="log2", centered=False, top_high=0, top_low=0,
+                               highlight_outline=True, highlight_labels=False,
+                               highlight_color="#333333", highlight_size=None, label_size=7, plot_colors=None,
+                               label_column=None, point_size=6, highlight_width=1):
+    """Rank arithmetic mean linear intensities (or site-median ratios when centered).
+
+    Use condition="All Conditions" for an overlay; top_high/top_low select within
+    each condition. Outlines default to on; labels default to off, as in the GUI.
+    Interactive labels are shown on hover; highlight_labels is ignored.
+    Outlines follow point size and use a contrasting color unless overridden.
+    """
+    conditions = meta["condition"].unique().tolist() if condition == "All Conditions" else [condition]
+    annotated_columns = meta.loc[meta["condition"].isin(conditions), "sample"].tolist()
     data = _prepare_intensity_data(data, annotated_columns, data_scale)
     if str(data_scale).strip().lower() == "log2":
         data[annotated_columns] = np.exp2(data[annotated_columns])
 
-    if workflow == "Protein":
-        feature_col = "ProteinNames"
-    elif workflow == "Phosphosite":
-        feature_col = "PTM_Collapse_key"
-    elif workflow == "Phosphoprotein":
-        feature_col = "Phosphoprotein"
-    else:
-        raise ValueError("workflow must be 'Protein', 'Phosphosite', or 'Phosphoprotein'")
+    feature_col = _resolve_volcano_label_column(data, workflow, label_column)
+    if label_column is not None:
+        data = data.copy()
+        data[feature_col] = data[feature_col].replace(r"^\s*$", np.nan, regex=True).fillna(data[_resolve_volcano_label_column(data, workflow)])
 
     columns_to_use = [feature_col] + annotated_columns
     data_filtered = data[columns_to_use].copy()
-    condition_means = data_filtered[annotated_columns].mean(axis=1, skipna=True)
-    # See `plot_abundance`: log10 of the value, no pseudocount.
-    condition_means = np.log10(condition_means.where(condition_means > 0))
-
-    mean_intensities = pd.DataFrame({
-        "Feature": data_filtered[feature_col],
-        "log10Intensity": condition_means
-    }).dropna()
-
-    mean_intensities["Feature"] = mean_intensities["Feature"].astype(str).str.split(";").str[0]
-
+    frames = []
+    for cond in conditions:
+        columns = meta.loc[meta["condition"] == cond, "sample"].tolist()
+        means = data_filtered[columns].mean(axis=1, skipna=True)
+        part = pd.DataFrame({"Feature": data_filtered[feature_col], "Condition": cond,
+                             "log10Intensity": np.log10(means.where(means > 0))})
+        if workflow == "Phosphoprotein":
+            part["site_num"] = data["site_num"] if "site_num" in data else data.groupby("Phosphoprotein")["Phosphoprotein"].transform("size")
+            part["PTM_Collapse_keys"] = data["PTM_Collapse_keys"] if "PTM_Collapse_keys" in data else (
+                data.groupby("Phosphoprotein")["PTM_Collapse_key"].transform(lambda x: ";".join(sorted(set(x.dropna().astype(str)))))
+                if "PTM_Collapse_key" in data else "")
+        frames.append(part.dropna(subset=["log10Intensity"]))
+    mean_intensities = pd.concat(frames, ignore_index=True)
     if workflow == "Phosphoprotein":
-        if "site_num" in data.columns:
-            site_map = data.set_index("Phosphoprotein")["site_num"].to_dict()
-        else:
-            site_map = data.groupby("Phosphoprotein").size().to_dict()
-        mean_intensities["site_num"] = mean_intensities["Feature"].map(site_map)
-
-        if "PTM_Collapse_keys" in data.columns:
-            ptm_map = data.set_index("Phosphoprotein")["PTM_Collapse_keys"].to_dict()
-        else:
-            ptm_map = data.groupby("Phosphoprotein")["PTM_Collapse_key"] \
-                          .agg(lambda x: ";".join(sorted(set(x.dropna().astype(str))))).to_dict()
-        mean_intensities["PTM_Collapse_keys"] = mean_intensities["Feature"].map(ptm_map)
-
         def truncate_ptms(ptm_str, max_items=max_ptms):
             ptms = str(ptm_str).split(";")
             return ";".join(ptms[:max_items]) + (";..." if len(ptms) > max_items else "")
@@ -2214,36 +2275,36 @@ def interactive_abundance_plot(data, meta, condition, workflow="Protein", search
     else:
         mean_intensities["HoverLabel"] = mean_intensities["Feature"]
 
-    mean_intensities = mean_intensities.sort_values("log10Intensity", ascending=False).reset_index(drop=True)
-    mean_intensities["Rank"] = mean_intensities.index + 1
+    mean_intensities = mean_intensities.sort_values("log10Intensity", ascending=False, kind="stable").reset_index(drop=True)
+    mean_intensities["Rank"] = mean_intensities.groupby("Condition").cumcount() + 1
 
-    if search is None:
-        search = []
-    mean_intensities["Color"] = np.where(mean_intensities["Feature"].isin(search), "red", "blue")
-    mean_intensities["TextLabel"] = np.where(mean_intensities["Feature"].isin(search),
-                                             mean_intensities["Feature"], "")
-
-    hover_cols = {"HoverLabel": True, "Rank": True, "log10Intensity": True, "Color": False, "TextLabel": False}
-
-    fig = px.scatter(
-        mean_intensities,
-        x="Rank",
-        y="log10Intensity",
-        color="Color",
-        text="TextLabel",
-        hover_data=hover_cols,
-        color_discrete_map={"red": "red", "blue": "blue"},
-        title=f"Abundance plot - {condition} ({workflow})"
-    )
-
-    fig.update_traces(marker=dict(size=6), textposition="top center")
-    fig.update_layout(
-        xaxis_title=f"{workflow} Rank",
-        yaxis_title=abundance_axis_label(workflow, centered),
-        showlegend=False
-    )
-
+    selected = _abundance_selection(mean_intensities, search, top_high, top_low)
+    colors = resolve_plot_colors(len(conditions), plot_colors)
+    color_map = {cond: colors[i % len(colors)] for i, cond in enumerate(conditions)}
+    fig = px.scatter(mean_intensities, x="Rank", y="log10Intensity", color="Condition",
+                     color_discrete_map=color_map, hover_data=["Feature", "HoverLabel"],
+                     title=f"Abundance plot - {condition} ({workflow})")
+    fig.update_traces(marker_size=point_size)
+    for cond in conditions:
+        points = mean_intensities.loc[selected & (mean_intensities["Condition"] == cond)]
+        outline, labels = highlight_outline, False
+        if points.empty or not (outline or labels):
+            continue
+        fig.add_scatter(x=points["Rank"], y=points["log10Intensity"],
+                        mode="markers+text" if outline and labels else "markers" if outline else "text",
+                        marker=dict(size=point_size,
+                                    color=highlight_color or "#333333", symbol="circle-open", line=dict(width=highlight_width)),
+                        text=[str(f) + (f" ({cond})" if len(conditions) > 1 else "") for f in points["Feature"]] if labels else None,
+                        textfont=dict(color=color_map[cond], size=label_size * 96 / 72), textposition="top center",
+                        customdata=points[["Feature", "HoverLabel"]], hovertemplate="%{customdata[1]}<br>Rank: %{x}<br>log10 intensity: %{y}<extra>" + str(cond) + "</extra>",
+                        name=f"{cond} (Highlighted)", legendgroup=str(cond), showlegend=False)
+    if highlight_outline and selected.any():
+        fig.add_scatter(x=[None], y=[None], mode="markers", hoverinfo="skip",
+            marker=dict(size=6, color=highlight_color or "#333333", symbol="circle-open", line=dict(width=highlight_width)),
+            name="Highlighted", legendgroup="_copylot_highlight_legend", showlegend=True)
+    fig.update_layout(xaxis_title=f"{workflow} Rank", yaxis_title=abundance_axis_label(workflow, centered))
     return fig
+
 
 
 def sample_correlation_matrix(data, meta, id=True, data_scale="log2"):
@@ -2868,21 +2929,22 @@ def _volcano_hover_text(volcano_df, label_col, max_chars=100):
 
 
 def _volcano_plot_base(volcano_df, condition1, condition2, in_pval, in_log2fc, uncorrected,
-                       highlight_terms=None, max_chars=100):
+                       highlight_terms=None, max_chars=100, top_up=0, top_down=0,
+                       highlight_outline=True, point_size=5, highlight_width=1, highlight_color="lime"):
     """The interactive volcano `volcano_plot` and `volcano_plot_h` both draw.
 
     One trace per significance class, and a second, ringed one for the features
-    named in `highlight_terms` (matched on the part of a name before `_`, case
-    ignored). A class with no points gets no trace. The R functions'
+    named in `highlight_terms` (case-insensitive, allowing HUMAN and MOUSE
+    species suffixes). A class with no points gets no trace. The R functions'
     `.volcano_plot_base` draws the same figure.
     """
     if highlight_terms is not None and not isinstance(highlight_terms, list):
         highlight_terms = [highlight_terms]
 
     def normalize_name(name):
-        return str(name).split('_')[0].lower()
+        return re.sub(r"_(human|mouse)$", "", str(name).strip().lower())
 
-    highlight_terms_norm = [normalize_name(t) for t in highlight_terms] if highlight_terms else []
+    highlight_terms_norm = [normalize_name(t) for entry in highlight_terms for t in str(entry).split()] if highlight_terms else []
     label_col = _volcano_label_col(volcano_df)
 
     color_mapping = {'Downregulated': 'blue', 'Not significant': 'gray', 'Upregulated': 'red'}
@@ -2896,30 +2958,42 @@ def _volcano_plot_base(volcano_df, condition1, condition2, in_pval, in_log2fc, u
              y0=y_hline, y1=y_hline, line=dict(color="black", dash="dash"))
     ]
 
+    top_indices = []
+    for significance, count in (("Upregulated", top_up), ("Downregulated", top_down)):
+        candidates = volcano_df.loc[volcano_df["significance"] == significance].assign(_abs_fc=lambda f: f["log2FC"].abs())
+        top_indices.extend(candidates.sort_values(["neg_log10_selected_pval", "_abs_fc"], ascending=False, kind="stable").head(max(0, int(count))).index)
     fig = go.Figure()
+    has_highlights = False
     for sig, color in color_mapping.items():
         subset = volcano_df[volcano_df['significance'] == sig]
         if highlight_terms_norm:
             highlighted = subset[label_col].apply(
-                lambda x: any(n in highlight_terms_norm for n in [normalize_name(y) for y in str(x).split(';')])
+                lambda x: any(n in highlight_terms_norm for n in [normalize_name(y) for y in re.split(r"[;,]", str(x))])
             ).astype(bool)
         else:
             highlighted = pd.Series(False, index=subset.index)
 
+        highlighted = highlight_outline & (highlighted | subset.index.isin(top_indices))
         for ringed in (False, True):
-            points = subset[highlighted == ringed]
+            points = subset[highlighted] if ringed else subset
             if len(points) == 0:
                 continue
+            has_highlights = has_highlights or ringed
             fig.add_trace(go.Scatter(
                 x=points['log2FC'],
                 y=points['neg_log10_selected_pval'],
                 mode='markers',
-                marker=dict(color=color, size=8, line=dict(color='lime', width=3)) if ringed else dict(color=color, size=5),
+                marker=dict(color=color, size=point_size, line=dict(color=highlight_color, width=highlight_width)) if ringed else dict(color=color, size=point_size),
                 text=_volcano_hover_text(points, label_col, max_chars),
                 name=f"{sig} (highlighted)" if ringed else sig,
+                legendgroup=sig, showlegend=not ringed,
                 hoverinfo='text'
             ))
 
+    if has_highlights:
+        fig.add_scatter(x=[None], y=[None], mode="markers", hoverinfo="skip",
+            marker=dict(size=6, color=highlight_color, symbol="circle-open", line=dict(width=highlight_width)),
+            name="Highlighted", legendgroup="_copylot_highlight_legend", showlegend=True)
     fig.update_layout(
         title=f"{condition1} vs {condition2}",
         xaxis_title=f"log2 fold change ({condition1} - {condition2})",
@@ -2937,9 +3011,11 @@ def volcano_plot(volcano_df, condition1, condition2, in_pval=0.05, in_log2fc=1, 
 
 def volcano_plot_h(volcano_df, condition1, condition2,
                    in_pval=0.05, in_log2fc=1, uncorrected=False,
-                   highlight_terms=None, max_chars=100):
+                   highlight_terms=None, max_chars=100, top_up=0, top_down=0,
+                   highlight_outline=True, point_size=5, highlight_width=1, highlight_color="lime"):
     return _volcano_plot_base(volcano_df, condition1, condition2, in_pval, in_log2fc, uncorrected,
-                              highlight_terms=highlight_terms, max_chars=max_chars)
+                              highlight_terms=highlight_terms, max_chars=max_chars, top_up=top_up, top_down=top_down,
+                              highlight_outline=highlight_outline, point_size=point_size, highlight_width=highlight_width, highlight_color=highlight_color)
 
 
 def _warn_anova_ignores_pairing(meta, sample_columns):
@@ -3782,7 +3858,7 @@ def anova_plot(
     x_labels = [sample_to_label.get(sample, sample) for sample in sample_cols]
 
     unique_conditions = list(dict.fromkeys(conditions))
-    palette = plt.cm.tab20(np.linspace(0, 1, max(len(unique_conditions), 1)))
+    palette = [to_rgba(c) for c in copylot_colors(len(unique_conditions))]
     condition_colors = {condition: palette[i % len(palette)] for i, condition in enumerate(unique_conditions)}
     condition_strip = np.array([[condition_colors[condition] for condition in conditions]])
 
@@ -3919,7 +3995,7 @@ def anova_plot_cluster(
     x_labels = [sample_to_label.get(sample, sample) for sample in sample_cols]
 
     unique_conditions = list(dict.fromkeys(conditions))
-    condition_palette = plt.cm.tab20(np.linspace(0, 1, max(len(unique_conditions), 1)))
+    condition_palette = [to_rgba(c) for c in copylot_colors(len(unique_conditions))]
     condition_colors = {condition: condition_palette[i % len(condition_palette)] for i, condition in enumerate(unique_conditions)}
     condition_strip = np.array([[condition_colors[condition] for condition in conditions]])
 
@@ -4974,7 +5050,7 @@ def phosprot_regulation(data: pd.DataFrame, meta: pd.DataFrame,
 
 #PEPTIDE
 
-def rt_vs_pred_rt_plot(data_path, method="Scatter Plot", add_line=False, bins=100, header=True, width=8, height=6, dpi=100, seed=1):
+def rt_vs_pred_rt_plot(data_path, method="Scatter Plot", add_line=False, bins=100, header=True, width=8, height=6, dpi=100, seed=1, plot_colors=None):
     data = read_data(data_path)
 
     x = data['Predicted.RT']
@@ -4984,7 +5060,7 @@ def rt_vs_pred_rt_plot(data_path, method="Scatter Plot", add_line=False, bins=10
     if method == "Scatter Plot":
         if len(data) > 100000:
             data = data.sample(n=100000, random_state=int(seed))
-        ax.scatter(data['Predicted.RT'], data['RT'], alpha=0.2, s=1)
+        ax.scatter(data['Predicted.RT'], data['RT'], alpha=0.2, s=1, color=resolve_plot_colors(1, plot_colors)[0])
     elif method == "Density Plot":
         from matplotlib.colors import LogNorm
         hb = ax.hist2d(data['Predicted.RT'], data['RT'], bins=200, norm=LogNorm())
@@ -5004,7 +5080,8 @@ def rt_vs_pred_rt_plot(data_path, method="Scatter Plot", add_line=False, bins=10
     return fig
 
 
-def modification_plot(data2_path, meta, id=True, header=True, legend=True, width=10, height=6, dpi=100):
+
+def modification_plot(data2_path, meta, id=True, header=True, legend=True, width=10, height=6, dpi=100, plot_colors=None):
     if isinstance(data2_path, pd.DataFrame):
         data2 = data2_path.copy()
     else:
@@ -5073,9 +5150,9 @@ def modification_plot(data2_path, meta, id=True, header=True, legend=True, width
     plot_data = plot_data.sort_values("Sample")
 
     mod_colors = {
-        "Carbamidomethylation": "blue",
-        "Oxidation": "red",
-        "Acetylation": "green"
+        "Carbamidomethylation": resolve_plot_colors(3, plot_colors)[0],
+        "Oxidation": resolve_plot_colors(3, plot_colors)[1],
+        "Acetylation": resolve_plot_colors(3, plot_colors)[2]
     }
 
     found_mods = [m for m in ["Carbamidomethylation", "Oxidation", "Acetylation"] if m in plot_data["Modification"].unique()]
@@ -5104,8 +5181,9 @@ def modification_plot(data2_path, meta, id=True, header=True, legend=True, width
     return fig
 
 
+
 def missed_cleavage_plot(data2_path, meta, id=True, text=True, text_size=8, header=True,
-                         protease="trypsin", width=10, height=6, dpi=100):
+                         protease="trypsin", width=10, height=6, dpi=100, plot_colors=None):
     """Missed cleavages per sample.
 
     ``protease`` selects the cleavage rule and must match the digest actually
@@ -5161,7 +5239,8 @@ def missed_cleavage_plot(data2_path, meta, id=True, text=True, text_size=8, head
 
     for c in counts_sorted:
         subset = summary[summary["Count"] == c].set_index("Sample").reindex(samples_order)["Percentage"].fillna(0)
-        ax.bar(range(len(samples_order)), subset, bottom=bottom, label=str(c))
+        ax.bar(range(len(samples_order)), subset, bottom=bottom, label=str(c),
+               color=resolve_plot_colors(int(c) + 1, plot_colors)[int(c)])
         bottom += subset
 
     ax.set_ylabel("Peptides by missed cleavages (%)")
@@ -5186,6 +5265,7 @@ def missed_cleavage_plot(data2_path, meta, id=True, text=True, text_size=8, head
     ax.legend(title="Number", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     return fig
+
 
 
 def _peptide_starts(sequence, peptide):
@@ -5367,8 +5447,7 @@ def compare_prot_line(data, meta, conditions, inputs, id=True, header=True, lege
     data_melted["x"] = data_melted["Sample"].map(sample_to_x)
     data_melted = data_melted[data_melted["x"].notna()].copy()
 
-    if plot_colors is None:
-        plot_colors = plt.cm.tab10.colors
+    plot_colors = resolve_plot_colors(data_melted[key_col].nunique(), plot_colors)
 
     fig, ax = plt.subplots(figsize=(width, height), dpi=dpi)
 
@@ -5426,7 +5505,7 @@ def boxplot_int_single_prot(data, meta, protein, outliers=False, dots=False, hea
     meta = _sample_meta(meta.copy(), id=False)
 
     if plot_colors is None:
-        plot_colors = plt.cm.tab10.colors
+        plot_colors = copylot_colors(meta["condition"].nunique())
 
     intensities = []
     labels = []
@@ -5618,8 +5697,7 @@ def _phossite_coverage_counts(data, meta, is_log2=True):
 def phossite_coverage_plot(
     data, meta, id=False, header=True, legend=True,
     width=20, height=10, dpi=300,
-    color_classI="blue", color_notclassI="orange", is_log2=True, localization_cutoff=0.0
-):
+    color_classI=None, color_notclassI=None, is_log2=True, localization_cutoff=0.0, plot_colors=None):
     data = filter_localization(data, localization_cutoff)
     counts = _phossite_coverage_counts(data, meta, is_log2)
     labels = meta["condition"].astype(str) + "_" + meta.groupby("condition").cumcount().astype(str)
@@ -5627,7 +5705,9 @@ def phossite_coverage_plot(
         labels += "\n(" + meta["sample"].astype(str).map(extract_id_or_number).astype(str) + ")"
     fig, ax = plt.subplots(figsize=(width, height), dpi=dpi)
     bottom = np.zeros(len(counts))
-    for category, color in zip(counts.columns, [color_classI, color_notclassI, "#94a3b8"]):
+    for category, color in zip(counts.columns, [color_classI if color_classI is not None else resolve_plot_colors(3, plot_colors)[0],
+                   color_notclassI if color_notclassI is not None else resolve_plot_colors(3, plot_colors)[1],
+                   resolve_plot_colors(3, plot_colors)[2]]):
         if category == "Unclassified" and not counts[category].any():
             continue
         ax.bar(np.arange(len(counts)), counts[category], bottom=bottom, color=color, label=category)
@@ -5643,7 +5723,8 @@ def phossite_coverage_plot(
     return fig
 
 
-def sty_plot(data, localization_cutoff=0.0):
+
+def sty_plot(data, localization_cutoff=0.0, plot_colors=None):
     data = filter_localization(data, localization_cutoff)
     table = phospho_sty_table(data).set_index("Residue")
     counts = table["Count"]
@@ -5652,7 +5733,7 @@ def sty_plot(data, localization_cutoff=0.0):
 
     fig, ax = plt.subplots(figsize=(7, 4.5), dpi=140)
 
-    colors = {"S": "#4C78A8", "T": "#F58518", "Y": "#54A24B"}
+    colors = dict(zip("STY", resolve_plot_colors(3, plot_colors)))
     bar_colors = [colors.get(k, "#64748b") for k in counts.index]
 
     ax.bar(counts.index, counts.values, color=bar_colors, edgecolor="black", linewidth=0.6)
@@ -5689,11 +5770,11 @@ def sty_plot(data, localization_cutoff=0.0):
     return fig
 
 
+
 def phossite_coverage_plot_summary(
     data, meta, header=True, legend=True,
     width=20, height=10, dpi=300,
-    color_classI="blue", color_notclassI="orange", seed=1, is_log2=True, localization_cutoff=0.0
-):
+    color_classI=None, color_notclassI=None, seed=1, is_log2=True, localization_cutoff=0.0, plot_colors=None):
     data = filter_localization(data, localization_cutoff)
     counts = _phossite_coverage_counts(data, meta, is_log2)
     counts["condition"] = meta["condition"].astype(str).to_numpy()
@@ -5710,7 +5791,9 @@ def phossite_coverage_plot_summary(
         sds = [group.std() if len(group) > 1 else 0 for group in groups]
         positions = np.arange(len(conditions)) + (j - (len(categories) - 1) / 2) * bar_width
         ax.bar(positions, means, width=bar_width, yerr=sds, capsize=3,
-               color=[color_classI, color_notclassI, "#94a3b8"][j], label=category)
+               color=[color_classI if color_classI is not None else resolve_plot_colors(3, plot_colors)[0],
+                   color_notclassI if color_notclassI is not None else resolve_plot_colors(3, plot_colors)[1],
+                   resolve_plot_colors(3, plot_colors)[2]][j], label=category)
         for position, group in zip(positions, groups):
             ax.scatter(rng.normal(position, .05, len(group)), group, color="black", alpha=.7)
     ax.set_xticks(np.arange(len(conditions)))
@@ -5723,7 +5806,8 @@ def phossite_coverage_plot_summary(
     return fig
 
 
-def simple_phos_site_plot(data, filter_value=0, width_cm=15, height_cm=10, dpi=100, color="skyblue"):
+
+def simple_phos_site_plot(data, filter_value=0, width_cm=15, height_cm=10, dpi=100, color=None, plot_colors=None):
     data = data[data["PTM_localization"] >= filter_value].copy()
     phosprot = data["Protein_group"].nunique()
     data["Seq"] = data["UPD_seq"].astype(str).str.replace(r"[^\w]", "", regex=True).str.upper()
@@ -5737,7 +5821,7 @@ def simple_phos_site_plot(data, filter_value=0, width_cm=15, height_cm=10, dpi=1
     width_in = width_cm / 2.54
     height_in = height_cm / 2.54
     fig, ax = plt.subplots(figsize=(width_in, height_in), dpi=dpi)
-    ax.barh(df["term"], df["count"], color=color)
+    ax.barh(df["term"], df["count"], color=resolve_plot_colors(1, plot_colors)[0] if color is None else color)
 
     for i, v in enumerate(df["count"]):
         ax.text(v + max(df["count"]) * 0.01, i, str(v), color="black", fontweight="bold", va="center")
@@ -5753,6 +5837,7 @@ def simple_phos_site_plot(data, filter_value=0, width_cm=15, height_cm=10, dpi=1
     ax.grid(False)
     plt.tight_layout()
     return fig
+
 
 
 def _normalize_ksea_results(data: pd.DataFrame) -> pd.DataFrame:
@@ -5891,7 +5976,7 @@ def kinase_tree_data_fc(data_st, data_tnc):
     return df
 
 
-def phossite_dist(data, cutoff=0, width=20, height=15, dpi=300, header=True):
+def phossite_dist(data, cutoff=0, width=20, height=15, dpi=300, header=True, plot_colors=None):
     if 'Phosphoprotein' not in data.columns or 'site_num' not in data.columns:
         raise ValueError("Data must contain 'Phosphoprotein' and 'site_num' columns.")
 
@@ -5909,7 +5994,7 @@ def phossite_dist(data, cutoff=0, width=20, height=15, dpi=300, header=True):
 
     fig, ax = plt.subplots(figsize=(width / 2.54, height / 2.54), dpi=dpi)
 
-    ax.bar(x, y)
+    ax.bar(x, y, color=resolve_plot_colors(1, plot_colors)[0])
 
     xmax = x.max()
     xticks = np.arange(0, xmax + 1, 10)
@@ -5927,15 +6012,16 @@ def phossite_dist(data, cutoff=0, width=20, height=15, dpi=300, header=True):
     return fig
 
 
+
 #COMPARISON
-def correlation_xy_intensity_single(data, sample1, sample2, alias1=None, alias2=None, color="blue", dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=True):
+def correlation_xy_intensity_single(data, sample1, sample2, alias1=None, alias2=None, color=None, dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=True, plot_colors=None):
     valid_data = data[[sample1, sample2]].dropna()
     if valid_data.empty: raise ValueError("No overlapping proteins with intensity in both samples.")
     x, y = valid_data[sample1].values, valid_data[sample2].values
     r, p_val = pearsonr(x, y)
     label1, label2 = alias1.strip() if alias1 else sample1, alias2.strip() if alias2 else sample2
     fig, ax = plt.subplots(figsize=(width_cm/2.54, height_cm/2.54), dpi=dpi)
-    ax.scatter(x, y, color=color, edgecolor='k', alpha=0.7, s=dot_size)
+    ax.scatter(x, y, color=resolve_plot_colors(1, plot_colors)[0] if color is None else color, edgecolor='k', alpha=0.7, s=dot_size)
     slope, intercept = np.polyfit(x, y, 1)
     ax.plot(x, slope*x + intercept, color='red', linewidth=2, label=f'Fit: y={slope:.2f}x+{intercept:.2f}')
     ax.set_xlabel(f'{label1} (log2 intensity)')
@@ -5945,7 +6031,8 @@ def correlation_xy_intensity_single(data, sample1, sample2, alias1=None, alias2=
     return fig
 
 
-def correlation_xy_intensity(data, meta, condition1, condition2, alias1=None, alias2=None, color="blue", dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=True, min_present=1):
+
+def correlation_xy_intensity(data, meta, condition1, condition2, alias1=None, alias2=None, color=None, dot_size=60, width_cm=20, height_cm=12, dpi=300, show_header=True, min_present=1, plot_colors=None):
     s1 = meta.loc[meta['condition']==condition1,'sample'].astype(str).tolist()
     s2 = meta.loc[meta['condition']==condition2,'sample'].astype(str).tolist()
     if not s1 or not s2: raise ValueError("One or both conditions have no associated samples.")
@@ -5960,7 +6047,7 @@ def correlation_xy_intensity(data, meta, condition1, condition2, alias1=None, al
     r, p_val = pearsonr(x, y)
     label1, label2 = alias1.strip() if alias1 else condition1, alias2.strip() if alias2 else condition2
     fig, ax = plt.subplots(figsize=(width_cm/2.54, height_cm/2.54), dpi=dpi)
-    ax.scatter(x, y, color=color, edgecolor='k', alpha=0.7, s=dot_size)
+    ax.scatter(x, y, color=resolve_plot_colors(1, plot_colors)[0] if color is None else color, edgecolor='k', alpha=0.7, s=dot_size)
     slope, intercept = np.polyfit(x, y, 1)
     ax.plot(x, slope*x + intercept, color='red', linewidth=2, label=f'Fit: y={slope:.2f}x+{intercept:.2f}')
     ax.set_xlabel(f'{label1} (mean log2 intensity)')
@@ -5968,6 +6055,7 @@ def correlation_xy_intensity(data, meta, condition1, condition2, alias1=None, al
     if show_header: ax.set_title(f'{label1} vs {label2}\nPearson r={r:.3f}, p={p_val:.2e}', fontsize=12)
     ax.legend(loc='upper left', frameon=True); ax.grid(True, linestyle='--', alpha=0.5); plt.tight_layout()
     return fig
+
 
 
 def overlap_plot_single(data, sample1, sample2, sample3=None, width=7, height=7, dpi=300, labels=None, colors=None, show_header=True, data_scale="log2"):
@@ -5978,14 +6066,15 @@ def overlap_plot_single(data, sample1, sample2, sample3=None, width=7, height=7,
     fig, ax = plt.subplots(figsize=(width, height), dpi=dpi)
     if sample3:
         p3 = set(data.index[data[sample3].notna()])
-        kwargs = {"set_colors": colors} if colors is not None else {}
+        kwargs = {"set_colors": resolve_plot_colors(3 if sample3 is not None else 2, colors)}
         venn3([p1, p2, p3], set_labels=labels or [sample1, sample2, sample3], ax=ax, **kwargs)
     else:
-        kwargs = {"set_colors": colors} if colors is not None else {}
+        kwargs = {"set_colors": resolve_plot_colors(3 if sample3 is not None else 2, colors)}
         venn2([p1, p2], set_labels=labels or [sample1, sample2], ax=ax, **kwargs)
     if show_header: ax.set_title("Overlap", fontsize=14)
     plt.tight_layout()
     return fig
+
 
 
 def overlap_plot_condition(data, meta, condition1, condition2, condition3=None, width=7, height=7, dpi=300, labels=None, colors=None, show_header=True, data_scale="log2", min_present=1):
@@ -6003,19 +6092,20 @@ def overlap_plot_condition(data, meta, condition1, condition2, condition3=None, 
     if condition3:
         s3 = meta.loc[meta['condition']==condition3,'sample'].tolist()
         p3 = set(data.index[data[s3].notna().sum(axis=1) >= min_present])
-        kwargs = {"set_colors": colors} if colors is not None else {}
+        kwargs = {"set_colors": resolve_plot_colors(3 if condition3 is not None else 2, colors)}
         venn3([p1, p2, p3], set_labels=labels or [condition1, condition2, condition3], ax=ax, **kwargs)
     else:
-        kwargs = {"set_colors": colors} if colors is not None else {}
+        kwargs = {"set_colors": resolve_plot_colors(3 if condition3 is not None else 2, colors)}
         venn2([p1, p2], set_labels=labels or [condition1, condition2], ax=ax, **kwargs)
     if show_header: ax.set_title("Overlap", fontsize=14)
     plt.tight_layout()
     return fig
 
 
+
 #DATA COMPLETENESS
 def missing_value_plot(data, meta, bin=0, header=True, text=True, text_size=3.88,
-                       width=7.87, height=3.94, dpi=300, color='blue', data_scale="log2"):
+                       width=7.87, height=3.94, dpi=300, color=None, data_scale="log2", plot_colors=None):
     annotated_columns = meta['sample'].tolist()
     data_filtered = _prepare_intensity_data(data, annotated_columns, data_scale)[annotated_columns]
     na_count = data_filtered.isna().sum(axis=1)
@@ -6044,7 +6134,7 @@ def missing_value_plot(data, meta, bin=0, header=True, text=True, text_size=3.88
         plot_title = "Missing value plot"
 
     fig, ax = plt.subplots(figsize=(width, height), dpi=dpi)
-    ax.bar(miss_vals['na_count'], miss_vals['Freq'], color=color)
+    ax.bar(miss_vals['na_count'], miss_vals['Freq'], color=resolve_plot_colors(1, plot_colors)[0] if color is None else color)
     ax.set_xlabel("Number of Missing Values")
     ax.set_ylabel("Frequency")
 
@@ -6061,6 +6151,7 @@ def missing_value_plot(data, meta, bin=0, header=True, text=True, text_size=3.88
     plt.tight_layout()
 
     return fig
+
 
 
 def _missing_bar(counts, bin, title, header, text, text_size, color, width=10, height=6, dpi=100):
@@ -6096,7 +6187,9 @@ def _missing_bar(counts, bin, title, header, text, text_size, color, width=10, h
 
 
 def missing_value_plot_prec(data_path, meta, bin=0, header=True, text=True,
-                            text_size=8, width=10, height=6, dpi=100, color='blue', quantity_column='Precursor.Quantity'):
+                            text_size=8, width=10, height=6, dpi=100, color=None, quantity_column='Precursor.Quantity', plot_colors=None):
+    if quantity_column != "Precursor.Quantity":
+        raise ValueError("This plot uses Precursor.Quantity for peptide and precursor detection.")
     data = sanitize_dataframe(read_data(data_path)).copy()
     meta = meta.copy()
 
@@ -6116,12 +6209,15 @@ def missing_value_plot_prec(data_path, meta, bin=0, header=True, text=True,
     data_filtered = raw_zero_to_nan(data_filtered, data_filtered.columns)
 
     na_count = data_filtered.dropna(how="all").isna().sum(axis=1)
-    return _missing_bar(na_count, bin, "Missing Value Plot - Precursor Level", header, text, text_size, color,
+    return _missing_bar(na_count, bin, "Missing Value Plot - Precursor Level", header, text, text_size, resolve_plot_colors(1, plot_colors)[0] if color is None else color,
                         width=width, height=height, dpi=dpi)
 
 
+
 def missing_value_plot_pep(data_path, meta, bin=0, header=True, text=True,
-                           text_size=8, width=10, height=6, dpi=100, color='blue', quantity_column='Precursor.Quantity'):
+                           text_size=8, width=10, height=6, dpi=100, color=None, quantity_column='Precursor.Quantity', plot_colors=None):
+    if quantity_column != "Precursor.Quantity":
+        raise ValueError("This plot uses Precursor.Quantity for peptide and precursor detection.")
     data = sanitize_dataframe(read_data(data_path)).copy()
     meta = meta.copy()
 
@@ -6141,8 +6237,9 @@ def missing_value_plot_pep(data_path, meta, bin=0, header=True, text=True,
     data_filtered = raw_zero_to_nan(data_filtered, data_filtered.columns)
 
     na_count = data_filtered.dropna(how="all").isna().sum(axis=1)
-    return _missing_bar(na_count, bin, "Missing Value Plot - Peptide Level", header, text, text_size, color,
+    return _missing_bar(na_count, bin, "Missing Value Plot - Peptide Level", header, text, text_size, resolve_plot_colors(1, plot_colors)[0] if color is None else color,
                         width=width, height=height, dpi=dpi)
+
 
 
 def _feature_axis_label(data):

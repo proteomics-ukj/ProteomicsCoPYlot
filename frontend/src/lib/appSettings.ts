@@ -1,3 +1,4 @@
+import { lastPlotWorkflow, workflowPageForPlot } from "./persistedUiState";
 import { migrateAdvancedSettingsMap } from "./plotSerialization";
 import type { AdvancedPlotSettings } from "./types";
 import { IS_VIEWER_MODE } from "./appMode";
@@ -101,9 +102,16 @@ export function getAdvancedPlotSettingsByKey(): Record<string, AdvancedPlotSetti
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (migrateAdvancedSettingsMap(parsed as Record<string, AdvancedPlotSettings>) as Record<string, AdvancedPlotSettings>)
-      : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const settings = migrateAdvancedSettingsMap(parsed as Record<string, AdvancedPlotSettings>) as Record<string, AdvancedPlotSettings>;
+    for (const [plot, value] of Object.entries(settings)) {
+      const page = workflowPageForPlot(plot);
+      if (page) {
+        settings[plot + ":" + lastPlotWorkflow(plot, page)] ??= value;
+        delete settings[plot];
+      }
+    }
+    return settings;
   } catch {
     return {};
   }

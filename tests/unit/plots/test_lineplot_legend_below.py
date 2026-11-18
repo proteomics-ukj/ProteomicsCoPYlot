@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.schemas.annotation import AnnotationFilterConfig
+from annotation_support import save_log2_protein_annotation
 from app.services import single_protein_tools
-from app.services.annotation_store import reset_all_annotations, save_annotation
+from app.services.annotation_store import reset_all_annotations
 
 LONG = "P12345_S123_long_phosphosite_key_with_many_characters_here"
 SAMPLES = [f"S{i}" for i in range(6)]
@@ -25,9 +25,7 @@ def annotated():
                           **{s: rng.normal(20, 1, 3) for s in SAMPLES}})
     meta = pd.DataFrame({"sample": SAMPLES, "condition": ["A"] * 3 + ["B"] * 3})
     reset_all_annotations()
-    save_annotation(kind="protein", source_data=frame, metadata=meta, log2_data=frame, filtered_data=frame,
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(frame, meta)
     yield
     reset_all_annotations()
 

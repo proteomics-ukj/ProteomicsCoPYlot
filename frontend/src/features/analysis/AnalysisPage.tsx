@@ -1,3 +1,4 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 
 import { oraListExportRows } from "../stats/oraExport";
 import NotebookDownload from "../../components/NotebookDownload";
@@ -25,7 +26,7 @@ import type {
   StatisticalOptionsResponse,
 } from "../../lib/types";
 import { DATA_SOURCE_LABELS, dataSourceOptions, ENRICHMENT_ORGANISM_OPTIONS } from "../../lib/types";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import { useCanvasFocus } from "../../lib/canvasFocus";
 import SelectField from "../../components/SelectField";
 import NumberField from "../../components/NumberField";
@@ -312,7 +313,7 @@ function volcanoPointBoxplotTarget(
   };
 }
 
-export default function AnalysisPage({
+function AnalysisView({
   rightPanel = "none",
   onRightPanelChange,
   aiEnabled = false,
@@ -324,21 +325,14 @@ export default function AnalysisPage({
   onContextModeChange?: (mode: ContextMode | null) => void;
 }) {
   const activeListFieldId = useId();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>(ANALYSIS_UI_STATE_KEY, {}),
-    []
-  );
-  const { kindOptions } = useCurrentDatasetsSnapshot();
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState(ANALYSIS_UI_STATE_KEY, kind), [kind]);
+  const { kindOptions, loading: datasetsLoading } = useCurrentDatasetsSnapshot();
   const revision = useDatasetRevision();
-  const [preferredKind, setKind] = useState<AnnotationKind>(() => {
-    const value = asString(persisted.kind, "protein");
-    return value === "protein" || value === "phospho" || value === "phosprot"
-      ? value
-      : "protein";
-  });
-  const kind = (kindOptions.some((option) => option.value === preferredKind)
-    ? preferredKind
-    : kindOptions[0]?.value ?? preferredKind) as AnnotationKind;
+  useEffect(() => {
+    if (kindOptions.length && !kindOptions.some(option => option.value === kind))
+      setKind(kindOptions[0].value as AnnotationKind);
+  }, [kindOptions, kind, setKind]);
   const [options, setOptions] = useState<StatisticalOptionsResponse | null>(null);
   const [plotSources, setPlotSources] = useState<{ kind: AnnotationKind; revision: number; choices: DataSourceChoices } | null>(null);
   useEffect(() => {
@@ -461,6 +455,8 @@ export default function AnalysisPage({
   const listPanel = useResizablePanel("layout.listWidth.v1", 320, "protein list panel");
 
   const kindAvailable = kindOptions.some((option) => option.value === kind);
+  // A fallback workflow remounts this page; wait before accepting a new tile.
+  const canAddTile = !datasetsLoading && (!kindOptions.length || kindAvailable);
   // The correction is a phosphosite setting; a tile restored on another level
   // keeps the flag but does not send it.
   const proteinCorrectionOffered = kind === "phospho" && Boolean(options?.proteinCorrection?.available);
@@ -562,7 +558,7 @@ export default function AnalysisPage({
   const listNames = useMemo(() => Object.keys(lists).sort(), [lists]);
 
   useEffect(() => {
-    writePersistedUiState(ANALYSIS_UI_STATE_KEY, {
+    writeWorkflowState(ANALYSIS_UI_STATE_KEY, {
       kind,
       identifier,
       linkedVolcanoId,
@@ -598,6 +594,7 @@ export default function AnalysisPage({
   ]);
 
   function addTile() {
+    if (!canAddTile) return;
     if (addType === "proteinBoxplot") {
       setTiles((current) => [...current, { id: uid(), type: addType, sourceMode: "active", protein: "", dataSource: newTilePlotSource }]);
       return;
@@ -634,9 +631,10 @@ export default function AnalysisPage({
 
   useCanvasFocus(focus => {
     if (!kindOptions.some(option => option.value === focus.kind)) throw new Error("The requested data level is unavailable.");
-    if (tiles.length && kind !== focus.kind) throw new Error("Existing canvas tiles use another data level. Use an empty canvas to switch levels.");
+    const target = readWorkflowState(ANALYSIS_UI_STATE_KEY, focus.kind);
+    const targetTiles = kind === focus.kind ? tiles : asAnalysisTiles(target.tiles, target);
     const group = JSON.stringify({ kind: focus.kind, features: focus.features });
-    const existing = tiles.filter(tile => tile.focusGroup === group);
+    const existing = targetTiles.filter(tile => tile.focusGroup === group);
     const oldVolcano = existing.find(tile => tile.type === "volcano");
     const settings = { ...restoredVolcanoSettings(undefined, false), condition1: focus.conditions[0], condition2: focus.conditions[1] };
     const focused: AnalysisTile[] = [{ ...oldVolcano, id: oldVolcano?.id ?? uid(), type: "volcano", focusGroup: group,
@@ -649,8 +647,12 @@ export default function AnalysisPage({
     const oldLine = existing.find(tile => tile.type === "proteinLineplot");
     focused.push({ ...oldLine, id: oldLine?.id ?? uid(), type: "proteinLineplot", focusGroup: group, collapsed: false,
       sourceMode: "manual", proteinsText: focus.features.join("\n"), highlightFeatures: focus.features, listName: "", dataSource: newTilePlotSource, plotIdentifier: "workflow", conditions: focus.conditions });
-    setKind(focus.kind);
-    setTiles([...tiles.filter(tile => tile.focusGroup !== group), ...focused]);
+    const updated = [...targetTiles.filter(tile => tile.focusGroup !== group), ...focused];
+    if (kind === focus.kind) setTiles(updated);
+    else {
+      writeWorkflowState(ANALYSIS_UI_STATE_KEY, { ...target, kind: focus.kind, tiles: updated });
+      setKind(focus.kind);
+    }
     return `Focused the ${focus.kind === "phospho" ? "phosphosite" : focus.kind === "phosprot" ? "phosphoprotein" : "protein"} canvas on ${focus.features.join(", ")} (${comparisonContrast(focus.conditions[0], focus.conditions[1])}): volcano highlight, individual boxplots and lineplot. Existing unrelated tiles were kept. Plots may still be loading; a feature excluded from the comparison will have no volcano point.`;
   });
 
@@ -834,6 +836,7 @@ export default function AnalysisPage({
           <h3 className="text-lg font-semibold text-slate-900">Analysis Canvas</h3>
           <div className="flex flex-wrap gap-2">
             <AssistantSelect aria-label="New tile type" data-assistant-permission="view"
+              disabled={!canAddTile}
               value={addType}
               onChange={(event) => setAddType(event.target.value as TileType)}
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
@@ -847,6 +850,7 @@ export default function AnalysisPage({
             <AssistantCanvasButton effect="add"
               type="button"
               onClick={addTile}
+              disabled={!canAddTile}
               className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
             >
               + Add Plot
@@ -2461,3 +2465,5 @@ function CanvasPlotOptions({ advanced, onChange, conditions, url, filename, boxp
     </details>
   </div>;
 }
+
+export default withWorkflowSettings(ANALYSIS_UI_STATE_KEY, AnalysisView);

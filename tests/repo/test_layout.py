@@ -7,7 +7,7 @@ from pathlib import Path
 from packaging.version import Version
 
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 
 def test_documented_repository_directories_exist() -> None:

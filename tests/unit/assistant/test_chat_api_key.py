@@ -3,12 +3,10 @@ from __future__ import annotations
 import io
 import logging
 import urllib.error
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.main import app
 from app.schemas.chat import ChatRequest

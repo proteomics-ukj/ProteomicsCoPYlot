@@ -1,12 +1,10 @@
 """Offline sequence coverage from the selected peptides and reference record."""
 from functools import lru_cache
 import json
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
 from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, module_source, replace_once
+from app.services.notebook_source import portable_module, extract_notebook_source, function_definition, module_source, replace_once
 
 
 @lru_cache(maxsize=1)
@@ -36,10 +34,7 @@ def sequence_source():
 
 @lru_cache(maxsize=1)
 def sequence_module():
-    module = ModuleType('_copylot_portable_sequence_coverage')
-    sys.modules[module.__name__] = module
-    exec(sequence_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_sequence_coverage', sequence_source)
 
 
 def capture_sequence_coverage(*, species, protein, chunk_size=100):

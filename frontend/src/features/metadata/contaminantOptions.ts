@@ -6,10 +6,11 @@ export const CONTAMINANT_CATEGORIES = [
   [3, "Molecular weight markers/Standard proteins"],
   [4, "Sigma-Aldrich Universal Protein Standard"],
   [5, "Common viral contaminants"],
+  [6, "Upstream-flagged contaminants"],
 ] as const;
 
 export const DEFAULT_CONTAMINANTS: ContaminantFilterConfig = {
-  enabled: false, categories: [1, 2, 3, 4, 5], matchAccessions: true,
+  enabled: false, categories: [1, 2, 3, 4, 5, 6], matchAccessions: true,
 };
 
 export function filterResultSummary(result: AnnotationResultResponse): string {

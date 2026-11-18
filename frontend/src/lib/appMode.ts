@@ -1,4 +1,4 @@
-export type AppMode = "analysis" | "viewer";
+type AppMode = "analysis" | "viewer";
 
 function parseMode(raw: string | undefined): AppMode {
   if (!raw) return "analysis";

@@ -89,6 +89,6 @@ def test_the_notebook_download_names_the_file_safely(api, monkeypatch) -> None:
 
     name = HOSTILE.replace(".csv", ".zip")
     monkeypatch.setattr(notebook_snapshots.snapshots, "get", lambda session, token: object())
-    monkeypatch.setattr(notebook_archive, "build_notebook_archive", lambda recipe: (name, b"PK"))
+    monkeypatch.setattr(notebook_archive, "build_notebook_archive", lambda recipe, **options: (name, b"PK"))
     response = api.get(f"/api/plots/notebooks/{'a' * 32}.zip")
     _assert_safe(response, name)

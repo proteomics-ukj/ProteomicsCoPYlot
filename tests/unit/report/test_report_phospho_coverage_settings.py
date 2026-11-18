@@ -31,7 +31,7 @@ def _render(monkeypatch, qc_settings):
         return render
 
     for name in [n for n in vars(report) if n.startswith(("qc_", "peptide_")) or n in (
-            "completeness_missing_value_plot", "phospho_coverage_png", "phosphosite_plot_png", "volcano_html")]:
+            "completeness_missing_value_plot", "phospho_coverage_png", "phospho_sty_png", "phosphosite_plot_png", "volcano_html")]:
         if callable(getattr(report, name)):
             monkeypatch.setattr(report, name, renderer(name))
     context = SummaryReportContext(qcSettings={"phospho": qc_settings})
@@ -57,7 +57,7 @@ def test_coverage_plots_use_their_own_page_settings(monkeypatch):
     assert call["random_seed"] == 7
     assert html.count(report.CLASS_I_SENTENCE) == 1
     assert "Coverage Plot (per condition)" in html
-    assert "Coverage Plot (localization)" in html
+    assert "Coverage Plot (localization probability)" in html
     assert "seed" not in html.lower()
 
 
@@ -67,3 +67,12 @@ def test_page_defaults_apply_without_saved_settings(monkeypatch):
     assert len(localized) == 1
     assert localized[0]["mode"] == "Normal"
     assert localized[0]["include_id"] is False and localized[0]["conditions"] is None
+    assert (localized[0]["color_class_i"], localized[0]["color_not_class_i"]) == ("", "")
+
+
+def test_sty_uses_saved_size_and_has_its_own_number(monkeypatch):
+    html, calls = _render(monkeypatch, {"sty": {"widthCm": 18, "heightCm": 12, "dpi": 120}})
+    settings = next(kw for name, kw in calls if name == "phospho_sty_png")
+    assert (settings["width_cm"], settings["height_cm"], settings["dpi"]) == (18, 12, 120)
+    assert "<h2 id='s-1-4'>1.4 STY Plot</h2>" in html
+    assert "<h2 id='s-1-5'>1.5 Missing Value Plot</h2>" in html

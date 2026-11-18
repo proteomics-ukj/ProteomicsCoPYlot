@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-from pathlib import Path
 import subprocess
 import sys
 from zipfile import ZipFile
@@ -10,12 +9,11 @@ from zipfile import ZipFile
 import pandas as pd
 import pytest
 
+from notebook_replay_support import notebook_code
 from app.app_version import APP_VERSION
 from app.services.notebook_archive import NotebookRecipe, build_notebook_archive, dataframe_bytes
 from app.services.notebook_source import extract_notebook_source, module_source
 from app.services.notebook_snapshots import NotebookSnapshots
-
-ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_source_subset_closes_over_helpers_and_constants_without_running_module():
@@ -155,7 +153,7 @@ def test_exported_notebook_runs_outside_repository_without_copylot(tmp_path):
     with ZipFile(io.BytesIO(content)) as archive:
         archive.extractall(tmp_path)
     notebook = json.loads((tmp_path / "Coverage_Plot.ipynb").read_text())
-    code = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    code = notebook_code(notebook)
     runner = "import sys; sys.path.insert(0, '.');\n" + code
     completed = subprocess.run([sys.executable, "-I", "-c", runner], cwd=tmp_path,
                                capture_output=True, text=True, timeout=60)

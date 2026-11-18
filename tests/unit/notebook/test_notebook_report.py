@@ -1,3 +1,4 @@
+from annotation_support import save_log2_protein_annotation
 import base64
 import io
 import json
@@ -10,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from notebook_replay_support import notebook_code
 from app.schemas.annotation import AnnotationFilterConfig
 from app.schemas.summary import SummaryReportRequest, SummaryReportContext, SummaryVolcanoEntry
 from app.services.annotation_store import save_annotation
@@ -34,9 +36,7 @@ def report_data(tmp_path):
     frame.loc[0, samples[0]] = np.nan
     meta = pd.DataFrame({'sample': samples, 'condition': ['A'] * 3 + ['B'] * 3})
     save_table_dataset(filename=r'C:\private\example.csv', kind='protein', frame=frame)
-    save_annotation(kind='protein', source_data=frame, metadata=meta, log2_data=frame,
-        filtered_data=frame, is_log2_transformed=True, metadata_source='manual',
-        filter_config=AnnotationFilterConfig(), auto_detected=False, warnings=[], log2_auto_detected=False)
+    save_log2_protein_annotation(frame, meta)
     original = tmp_path / 'example.csv'
     frame.to_csv(original, index=False)
     return original
@@ -78,7 +78,7 @@ def _assert_replay(result, originals, tmp_path):
         archive.extractall(root)
         notebook_name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((root / notebook_name).read_text())
-    code = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    code = notebook_code(notebook)
     for kind, path in originals.items():
         code = code.replace(f'{json.dumps(kind)}: Path("YOUR_ORIGINAL_DATA_FILE")',
                             f'{json.dumps(kind)}: Path({str(path)!r})')
@@ -152,12 +152,40 @@ def test_mixed_report_with_imputed_statistics_replays_all_levels(report_data, tm
     assert recipe.uses_imputed_input
     assert set(recipe.provenance['originalFiles']) == {'protein', 'phospho', 'peptide'}
     sections = recipe.provenance['sections']
-    assert len(sections) == 25  # Shared mapping and 24 figures; phospho QC includes its table.
+    assert len(sections) == 26  # Shared mapping and 25 figures, including the new STY plot.
+    assert any(section["provenance"].get("plot") == "phosphosite_sty" for section in sections)
+    # The PCA follows its tab, which opens on the most processed matrix, so it
+    # uses the imputed protein matrix as the volcano does.
     imputed = [section for section in sections if section['usesImputedInput']]
-    assert len(imputed) == 1
-    assert imputed[0]['provenance']['plot'] == 'volcano'
-    assert imputed[0]['provenance']['imputation']['seed'] == 77
+    assert [section['name'] for section in imputed] == ['Protein — PCA 2D', 'Protein — Volcano Plot']
+    assert imputed[-1]['provenance']['plot'] == 'volcano'
+    assert imputed[-1]['provenance']['imputation']['seed'] == 77
     _assert_replay(result, {'protein': report_data, 'phospho': site_path, 'peptide': peptide_path}, tmp_path)
+
+
+def test_report_with_added_plots_replays_each_of_them(report_data, tmp_path):
+    from app.schemas.summary import SummaryPlotEntry
+
+    render = {'type': 'Normal', 'widthCm': 12, 'heightCm': 8, 'dpi': 80}
+    def entry(entry_type, request, advanced=None):
+        return SummaryPlotEntry(type=entry_type, kind='protein', request=request, render=render, advanced=advanced)
+    context = SummaryReportContext(entries=[
+        entry('pearson', {'mode': 'Condition', 'condition1': 'A', 'condition2': 'B'}),
+        entry('venn', {'mode': 'Condition', 'first': 'A', 'second': 'B', 'minPresent': 3}),
+        entry('volcano', {'dataSource': 'data', 'condition1': 'A', 'condition2': 'B'}, advanced={'title': 'Mine'}),
+        entry('anova', {'source': 'anova_cluster', 'dataSource': 'data', 'pValueThreshold': 1.0,
+                        'useUncorrected': True, 'nClusters': 2}),
+        entry('single_box', {'protein': 'P3', 'conditions': ['A', 'B'], 'dataSource': 'data'}),
+        entry('single_line', {'proteins': ['P3', 'P4'], 'conditions': ['A', 'B'], 'dataSource': 'data'}),
+    ])
+    result = report_with_notebook(report_function, SummaryReportRequest(title='Added plots', reportContext=context))
+    assert result.warnings == []
+    assert result.notebookError is None and result.notebookToken
+    recipe = snapshots.get(get_session_id(), result.notebookToken)
+    names = [section['name'] for section in recipe.provenance['sections']]
+    for expected in ('Pearson', 'Venn', 'Volcano', 'ANOVA', 'Boxplot', 'Line'):
+        assert any(expected.lower() in name.lower() for name in names), (expected, names)
+    _assert_replay(result, {'protein': report_data}, tmp_path)
 
 
 @pytest.mark.parametrize('failed_renderer', ['qc_cv_plot', 'volcano_png'])

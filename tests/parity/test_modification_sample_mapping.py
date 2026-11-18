@@ -1,6 +1,5 @@
 """Both notebook plots assign modification counts to full sample identities."""
 import json
-from pathlib import Path
 import subprocess
 
 import matplotlib.pyplot as plt
@@ -9,7 +8,7 @@ import pytest
 
 from proteomicscopylot import notebook_functions as nb
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 CASES = [
     ('exact-collision', ['ctrl_01', 'treat_01'], ['ctrl_01', 'treat_01'], [1, 2]),
     ('metadata-order', ['ctrl_01', 'treat_01'], ['treat_01', 'ctrl_01'], [2, 1]),

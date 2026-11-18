@@ -28,7 +28,7 @@ def test_parameters_line_for_a_plain_pca():
         "protein", "data", report_function._pca_plot_options({})
     )
     assert html.startswith("<p><strong>Projection:</strong> PCA, 2D, centred features")
-    assert "clustering: none" in html
+    assert "clustering: none" not in html
     assert "coloured by condition" in html
     assert "no group ellipses" in html
 

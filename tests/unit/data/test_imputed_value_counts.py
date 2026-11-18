@@ -11,7 +11,6 @@ report says that imputed values were tested as observations.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -25,7 +24,7 @@ from app.services.data_tools import run_imputation
 from app.services.viewer_bootstrap import load_viewer_state
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 def _frames():

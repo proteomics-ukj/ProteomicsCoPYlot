@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import pandas as pd
@@ -45,10 +43,9 @@ def test_regulation_replays(phosphosites, tmp_path, monkeypatch, source, interac
         archive.extractall(tmp_path)
         name = next(n for n in archive.namelist() if n.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    run = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    run = replay_cells(cells, tmp_path, timeout=90)
     assert run.returncode == 0, run.stderr
     output = (tmp_path / ('reproduced.html' if interactive else 'reproduced.png')).read_bytes()
     assert output == (content.encode() if interactive else content)

@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import numpy as np
@@ -75,10 +73,9 @@ def test_completeness_replays_exact_plot_and_tables(completeness_data, tmp_path,
         assert manifest["originalFilename"] == "input.tsv"
         notebook_name = next(name for name in archive.namelist() if name.endswith(".ipynb"))
     notebook = json.loads((tmp_path / notebook_name).read_text())
-    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    result = subprocess.run([sys.executable, "-I", "-c", "import sys;sys.path.insert(0,'.');\n" + cells],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "reproduced.png").read_bytes() == actual
     tables = completeness_tools.completeness_tables(kind, include_id=False, outlier_threshold=30.)
@@ -194,7 +191,7 @@ def test_peptide_completeness_notebook_is_exact_and_independent(peptide_input, t
     actual, token = render_peptide_missing_values(level, **options)
     assert actual == original
     recipe = snapshots.get(get_session_id(), token)
-    assert recipe.provenance["quantityColumn"] == quantity
+    assert recipe.provenance["quantityColumn"] == "Precursor.Quantity"
     assert recipe.provenance["kind"] == level
     _, payload = build_notebook_archive(recipe)
     output = tmp_path / "notebook"
@@ -203,10 +200,9 @@ def test_peptide_completeness_notebook_is_exact_and_independent(peptide_input, t
         archive.extractall(output)
         name = next(name for name in archive.namelist() if name.endswith(".ipynb"))
     notebook = json.loads((output / name).read_text())
-    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, output)
-    result = subprocess.run([sys.executable, "-I", "-c", "import sys;sys.path.insert(0,'.');\n" + cells],
-                            cwd=output, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, output, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (output / "reproduced.png").read_bytes() == actual
 

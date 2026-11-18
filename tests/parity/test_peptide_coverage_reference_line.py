@@ -13,7 +13,6 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
-from pathlib import Path
 
 import matplotlib
 
@@ -22,7 +21,7 @@ matplotlib.use("Agg")
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 RUNS = ["A1", "A2", "B1", "B2"]
 UNSELECTED = "Z9"
@@ -56,7 +55,7 @@ def test_backend_line_is_the_union_of_the_bars(monkeypatch):
     from app.services import peptide_tools, plot_images
 
     frame = _report()
-    monkeypatch.setattr(peptide_tools, "get_peptide_frame", lambda: frame)
+    monkeypatch.setattr(peptide_tools, "get_peptide_frame", lambda **kwargs: frame)
     monkeypatch.setattr(peptide_tools, "get_current_dataset", lambda _: None)
     monkeypatch.setattr(peptide_tools, "get_peptide_metadata", lambda: SimpleNamespace(frame=_meta()))
     for level in ("peptide", "precursor"):

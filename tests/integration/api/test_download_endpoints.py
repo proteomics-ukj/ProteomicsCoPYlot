@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import csv
 import io
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 
 DOWNLOADS = [

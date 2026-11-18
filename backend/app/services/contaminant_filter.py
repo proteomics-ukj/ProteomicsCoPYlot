@@ -1,10 +1,10 @@
-"""Exact, conservative matching against the bundled Cambridge contaminant snapshot."""
+"""Upstream contaminant flags and exact matching against the bundled Cambridge snapshot."""
 import csv
 import hashlib
 import io
 
 # <shared-core> Shared exact matching for the app, package and portable exports.
-from app.services.copylot_core import contaminant_mask
+from app.services.copylot_core import contaminant_mask as contaminant_mask
 # </shared-core>
 
 from app.services.reference_db import resolve_reference_db
@@ -22,7 +22,3 @@ def contaminant_reference():
         "notices": {name: resolve_reference_db(name, "contaminant licence notice").read_text(encoding="utf-8")
                     for name in ("CAMBRIDGE_NOTICE.md", "CAMBRIDGE_LICENSE.txt", "CC-BY-4.0.txt")},
     }
-
-
-def filter_peptide_contaminants(data, config, reference):
-    return data.loc[~contaminant_mask(data, config, reference)].copy()

@@ -30,7 +30,7 @@ from app.services.phospho_tools import (
 )
 from app.services.dataset_reader import read_dataframe
 from app.services.upload_limits import ensure_upload_size
-from app.api.plot_responses import csv_values, plot_errors, png_response, snapshot_table, table_rows
+from app.api.plot_responses import with_notebook_token, csv_values, plot_errors, png_response, snapshot_table, table_rows
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -43,7 +43,7 @@ def phospho_options_route() -> dict[str, object]:
 
 @router.get("/phospho/phosphosite-plot.png")
 def phosphosite_plot_route(
-    color: str = "#87CEEB",
+    color: str = "",
     widthCm: float = 20,
     heightCm: float = 10,
     dpi: int = 300,
@@ -54,9 +54,7 @@ def phosphosite_plot_route(
         content, token = render_counts(color=color, width_cm=widthCm, height_cm=heightCm,
             dpi=dpi, advanced=parse_advanced_plot_settings(advanced))
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/phospho/phosphosite-plot-table")
@@ -73,8 +71,8 @@ def phospho_coverage_route(
     header: bool = True,
     legend: bool = True,
     mode: PhosphoCoverageMode = "Normal",
-    colorClassI: str = "#2563eb",
-    colorNotClassI: str = "#f59e0b",
+    colorClassI: str = "",
+    colorNotClassI: str = "",
     randomSeed: int = 1,
     widthCm: float = 20,
     heightCm: float = 10,
@@ -99,9 +97,7 @@ def phospho_coverage_route(
             advanced=parse_advanced_plot_settings(advanced),
         )
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/phospho/coverage-table")
@@ -128,7 +124,7 @@ def phospho_coverage_table_route(
 def phospho_distribution_route(
     cutoff: float = 0.0,
     header: bool = True,
-    color: str = "#87CEEB",
+    color: str = "",
     widthCm: float = 20,
     heightCm: float = 15,
     dpi: int = 300,
@@ -139,9 +135,7 @@ def phospho_distribution_route(
         content, token = render_distribution(cutoff=cutoff, header=header, color=color,
             width_cm=widthCm, height_cm=heightCm, dpi=dpi, advanced=parse_advanced_plot_settings(advanced))
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/phospho/distribution-table")
@@ -218,23 +212,25 @@ def phospho_ksea_uploaded_volcano_route(
         df_tnc = read_dataframe(fileTnc.filename, fileTnc.file)
         from app.services.assistant_snapshots import store_snapshot
         evidence: dict[str, Any] = {}
-        response = HTMLResponse(
-            content=ksea_uploaded_volcano_html(
-                st_results=df_st,
-                evidence_out=evidence,
-                tnc_results=df_tnc,
-                p_value_threshold=pValueThreshold,
-                header=header,
-                condition1=condition1,
-                condition2=condition2,
-                condition1_control=condition1Control,
-                condition2_control=condition2Control,
-                annotate_hits=annotateHits,
-                advanced=parse_advanced_plot_settings(advanced),
-            )
+        from app.services.notebook_kinase_volcano import render_kinase_volcano
+        options: dict[str, Any] = dict(
+            p_value_threshold=pValueThreshold,
+            header=header,
+            condition1=condition1,
+            condition2=condition2,
+            condition1_control=condition1Control,
+            condition2_control=condition2Control,
+            annotate_hits=annotateHits,
+            advanced=parse_advanced_plot_settings(advanced),
         )
+        # The assistant's evidence comes from the page renderer; the figure shown
+        # is the one the export redraws, from the same two tables and options.
+        ksea_uploaded_volcano_html(st_results=df_st, tnc_results=df_tnc, evidence_out=evidence, **options)
+        content, token = render_kinase_volcano(st_results=df_st, tnc_results=df_tnc,
+            st_name=fileSt.filename, tnc_name=fileTnc.filename, **options)
+        response = HTMLResponse(content=content)
         response.headers["X-Copylot-Evidence"] = store_snapshot(evidence)
-        return response
+        return with_notebook_token(response, token)
 
 
 def _regulation_notebook_response(**options):
@@ -246,9 +242,7 @@ def _regulation_notebook_response(**options):
         note_notebook_unavailable(exc)
         content, token = phosprot_regulation_html(**options), ''
     response = HTMLResponse(content=content)
-    if token:
-        response.headers['X-CoPYlot-Notebook'] = token
-    return response
+    return with_notebook_token(response, token)
 
 
 @router.get("/phospho/phosprot-regulation.html", response_class=HTMLResponse)
@@ -333,9 +327,7 @@ def phospho_sty_route(
         content, token = render_sty(header=header, width_cm=widthCm, height_cm=heightCm,
             dpi=dpi, advanced=parse_advanced_plot_settings(advanced))
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/phospho/sty-table")

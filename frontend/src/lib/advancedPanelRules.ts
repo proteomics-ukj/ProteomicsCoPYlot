@@ -153,6 +153,7 @@ export function advancedVisibleControls(
     case "phospho:phosphositePlot":
     case "phospho:distribution":
       return {
+        distributionNote: activeAdvancedPlotKey === "phospho:distribution",
         barColor: true,
         legendControls: false,
         conditionLabels: false,

@@ -2,13 +2,12 @@
 import ast
 import json
 from functools import lru_cache
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from app.schemas.stats import EnrichmentTerm
 
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_styling, portable_output_format, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
 from app.services.notebook_volcano import volcano_source
 
 GO_ATTRIBUTION = (
@@ -53,9 +52,9 @@ def capture_gene_list(payload, result):
     import pandas as pd
     from app.services import stats_tools
     from app.services.session_context import get_session_id
-    from app.services.viewer_bootstrap import viewer_mode_enabled
+    from app.services.viewer_policy import notebook_exports_blocked
 
-    if viewer_mode_enabled():
+    if notebook_exports_blocked():
         return ""
     database = stats_tools.load_go_db(payload.organism)[["ontology", "term", "description", "genes"]]
     settings = dict(input_source=payload.inputSource, named_list=payload.namedList, organism=result.organism,
@@ -105,14 +104,15 @@ def ora_source(upstream=None):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and any(
             isinstance(part, ast.Name) and (part.id.startswith("_ORA_") or part.id == "_POINTS_TO_CM")
             for part in ast.walk(node)))
-    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines()
-                        if not line.startswith("from app."))
+    styling = portable_styling()
     calculation = '''
 def calculate_enrichment(database, query_genes, background_genes, *, min_term_size=20,
-                         max_term_size=300, top_n=10, adj_p_value_cutoff=0.05):
+                         max_term_size=300, top_n=10, adj_p_value_cutoff=0.05, universe=None):
     if min_term_size > max_term_size:
         raise ValueError("Minimum term size cannot be larger than maximum term size.")
-    background, eligible = prepare_universe(database, background_genes, min_term_size, max_term_size)
+    if universe is None:
+        universe = prepare_universe(database, background_genes, min_term_size, max_term_size)
+    background, eligible = universe
     counts = {}
     terms = _enrichment_terms(query_genes, top_n, adj_p_value_cutoff, background, eligible, counts)
     return {"terms": [vars(term) for term in terms], "counts": counts,
@@ -189,12 +189,10 @@ def export_term_rows(result, request, direction):
 
 @lru_cache(maxsize=3)
 def ora_module(upstream=None):
-    module = ModuleType(f"_copylot_portable_ora_{upstream or 'terms'}")
-    sys.modules[module.__name__] = module
-    exec(ora_source(upstream).code, module.__dict__)
-    return module
+    return portable_module(f"_copylot_portable_ora_{upstream or 'terms'}", lambda: ora_source(upstream))
 
 
+@cached_notebook_render
 def render_ora(payload, *, direction, advanced=None, width_cm=26, height_cm=12, dpi=300, table_only=False):
     from app.schemas.stats import AnovaRequest
     from app.services import stats_tools
@@ -235,8 +233,9 @@ def render_ora(payload, *, direction, advanced=None, width_cm=26, height_cm=12, 
     queries, tested = module.select_queries(data, metadata, mask, settings)
     database = stats_tools.load_go_db(payload.organism)[['ontology', 'term', 'description', 'genes']].copy(deep=True)
     background = tested if payload.backgroundMode == 'experiment' else None
+    universe = module.prepare_universe(database, background, payload.minTermSize, payload.maxTermSize)
     for key, genes in queries.items():
-        calculated = module.calculate_enrichment(database, genes, background, **settings['enrichment'])
+        calculated = module.calculate_enrichment(database, genes, background, universe=universe, **settings['enrichment'])
         if (genes != result[f'{key}Genes'] or calculated['terms'] != result[f'{key}Terms']
                 or calculated['counts'] != result['termCounts'][key]
                 or len(calculated['annotatedBackground']) != result['annotatedBackgroundSize']):
@@ -245,11 +244,8 @@ def render_ora(payload, *, direction, advanced=None, width_cm=26, height_cm=12, 
         raise NotebookProvenanceError("The ORA background changed; render again.")
     module._ora_direction_texts(SimpleNamespace(**settings['request']), SimpleNamespace(**result), direction, advanced)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = b'' if table_only else module.render_plot(result, settings['request'], **settings['figure'])
-    finally:
-        module.plot_output_format.reset(format_token)
     resources = {'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
         'database.parquet': dataframe_bytes(database), 'result.json': json.dumps(result, allow_nan=False).encode(),
         'GO_ATTRIBUTION.txt': GO_ATTRIBUTION}

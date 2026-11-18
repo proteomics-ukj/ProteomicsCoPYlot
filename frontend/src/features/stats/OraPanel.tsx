@@ -1,3 +1,4 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 // GO enrichment (ORA) panel.
 
 import { SizeRow } from "../../components/PlotFields";
@@ -12,11 +13,13 @@ import { fetchPlot } from "../../lib/fetchPlot";
 import { useDatasetRevision } from "../../lib/datasetAvailability";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
 import { useDebouncedValue } from "../../lib/useDebouncedValue";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
-import type { ContextMode, AnnotationKind, AnovaRequest, AnovaResultResponse, AnovaClusterMethod, EnrichmentOrganism, EnrichmentRequest, EnrichmentResultResponse, StatsTestType, DataSource, StatisticalOptionsResponse } from "../../lib/types";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
+import type { ContextMode, AnnotationKind, AnovaRequest, AnovaResultResponse, AnovaClusterMethod, EnrichmentOrganism, EnrichmentRequest, EnrichmentResultResponse, ReportEntry, StatsTestType, DataSource, StatisticalOptionsResponse } from "../../lib/types";
 import { dataSourceOptions, ENRICHMENT_ORGANISM_OPTIONS } from "../../lib/types";
 import { useDataSourceChoice } from "../../lib/useDataSourceChoice";
 import { restoreTestType, CONTROL_TEST_TYPE_OPTIONS, controlTestType, useTestTypeOptions, availableTestType } from "../../lib/statisticalTests";
+import ReportEntryControl from "../../components/ReportEntryControl";
+import { currentAdvancedAppearance, hasReportEntryMatching } from "../../lib/reportState";
 import SelectField from "../../components/SelectField";
 import SectionCard from "../../components/SectionCard";
 import CheckboxField from "../../components/CheckboxField";
@@ -83,7 +86,7 @@ function GeneListSection({ title, genes, filename, plotUrl, notebook }: {
   );
 }
 
-export function OraPanel({
+function OraPanelView({
   kindOptions,
   onContextModeChange,
   advancedPlotOptions,
@@ -97,18 +100,9 @@ export function OraPanel({
     () => kindOptions.filter((option) => option.value === "protein" || option.value === "phosprot"),
     [kindOptions]
   );
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("stats.ora.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("stats.ora.v1", kind), [kind]);
   const revision = useDatasetRevision();
-  const [preferredKind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot" ? value : "protein";
-  });
-  const kind = (oraKindOptions.some((option) => option.value === preferredKind)
-    ? preferredKind
-    : oraKindOptions[0]?.value ?? preferredKind) as AnnotationKind;
   const [options, setOptions] = useState<StatisticalOptionsResponse | null>(null);
   const [condition1, setCondition1] = useState(() => String(persisted.condition1 ?? ""));
   const [condition2, setCondition2] = useState(() => String(persisted.condition2 ?? ""));
@@ -439,6 +433,41 @@ export function OraPanel({
         })
       : null;
 
+  // One entry per plot on screen: both directions of a comparison, or the cluster.
+  function buildReportEntries(): ReportEntry[] {
+    if (!canRun || !result || kind !== "protein") return [];
+    const directions =
+      sourceMode === "anova"
+        ? (result.clusterTerms.length ? ["cluster"] : [])
+        : [...(result.upTerms.length ? ["up"] : []), ...(result.downTerms.length ? ["down"] : [])];
+    const request = Object.fromEntries(Object.entries(requestPayload).filter(([key]) => key !== "kind"));
+    return directions.map((direction) => ({
+      type: "ora",
+      kind,
+      request: { ...request, direction },
+      render: { type: "Normal", widthCm, heightCm, dpi },
+      advanced: currentAdvancedAppearance(),
+    }));
+  }
+  // An ORA in the report whose volcano or ANOVA clusters were not added.
+  function underlyingPlotNotice(): string | null {
+    const volcanoKeys = ["dataSource", "condition1", "condition2", "testType", "pValueThreshold", "log2fcThreshold", "useUncorrected"];
+    const clusterKeys = ["dataSource", "pValueThreshold", "useUncorrected", "nClusters", "clusterMethod"];
+    if (sourceMode === "volcano") {
+      if (!hasReportEntryMatching("ora", kind, requestPayload, ["source", ...volcanoKeys])) return null;
+      return hasReportEntryMatching("volcano", kind, requestPayload, volcanoKeys)
+        ? null
+        : "The volcano this ORA is based on is not in the report.";
+    }
+    if (sourceMode === "anova") {
+      if (!hasReportEntryMatching("ora", kind, requestPayload, ["source", "selectedCluster", ...clusterKeys])) return null;
+      return hasReportEntryMatching("anova", kind, { ...requestPayload, source: "anova_cluster" }, ["source", ...clusterKeys])
+        ? null
+        : "The ANOVA clusters this ORA is based on are not in the report.";
+    }
+    return null;
+  }
+
   const upNotebook = useOraNotebook(kind, "up", upPlotUrl, Boolean(canRun && result && sourceMode !== "anova" && !result.upTerms.length));
   const downNotebook = useOraNotebook(kind, "down", downPlotUrl, Boolean(canRun && result && sourceMode !== "anova" && !result.downTerms.length));
   const clusterNotebook = useOraNotebook(kind, "cluster", clusterPlotUrl ?? "", Boolean(canRun && result && sourceMode === "anova" && !result.clusterTerms.length));
@@ -447,7 +476,7 @@ export function OraPanel({
   const clusterResult = clusterNotebook.data ?? result;
 
   useEffect(() => {
-    writePersistedUiState("stats.ora.v1", {
+    writeWorkflowState("stats.ora.v1", {
       kind,
       condition1,
       condition2,
@@ -509,6 +538,22 @@ export function OraPanel({
       </div>
     );
   }
+
+  const volcanoExportContext = (direction: "up" | "down") => ({
+    analysisSource: sourceMode,
+    direction,
+    condition1,
+    condition2,
+    condition1Control: sourceMode === "volcano_control" ? condition1Control : "",
+    condition2Control: sourceMode === "volcano_control" ? condition2Control : "",
+    testType,
+    pValueThreshold,
+    log2fcThreshold,
+    useUncorrected,
+    adjPValueCutoff,
+    minTermSize,
+    maxTermSize,
+  });
 
   return (
     <div className="space-y-6">
@@ -664,6 +709,16 @@ export function OraPanel({
             download alike.
           </p>
         </div>
+        <ReportEntryControl
+          type="ora"
+          kind={kind}
+          kindLabel={oraKindOptions.find((option) => option.value === kind)?.label ?? kind}
+          title="ORA"
+          noun="ORA plot"
+          buildEntries={buildReportEntries}
+          invalidMessage="Please wait for an ORA result with enriched terms before adding it."
+          notice={underlyingPlotNotice}
+        />
         <Notice error={error} warnings={options?.warnings} />
       </SectionCard>
       {advancedPlotOptions}
@@ -824,41 +879,13 @@ export function OraPanel({
             <TableSection
               title="Upregulated Terms"
               plotUrl={upPlotUrl} notebook={upNotebook.notebook}
-              rows={oraExportRows(upResult?.upTerms ?? result.upTerms, upResult ?? result, {
-                analysisSource: sourceMode,
-                direction: "up",
-                condition1,
-                condition2,
-                condition1Control: sourceMode === "volcano_control" ? condition1Control : "",
-                condition2Control: sourceMode === "volcano_control" ? condition2Control : "",
-                testType,
-                pValueThreshold,
-                log2fcThreshold,
-                useUncorrected,
-                adjPValueCutoff,
-                minTermSize,
-                maxTermSize,
-              })}
+              rows={oraExportRows(upResult?.upTerms ?? result.upTerms, upResult ?? result, volcanoExportContext("up"))}
               filename={`ora_up_${kind}.csv`}
             />
             <TableSection
               title="Downregulated Terms"
               plotUrl={downPlotUrl} notebook={downNotebook.notebook}
-              rows={oraExportRows(downResult?.downTerms ?? result.downTerms, downResult ?? result, {
-                analysisSource: sourceMode,
-                direction: "down",
-                condition1,
-                condition2,
-                condition1Control: sourceMode === "volcano_control" ? condition1Control : "",
-                condition2Control: sourceMode === "volcano_control" ? condition2Control : "",
-                testType,
-                pValueThreshold,
-                log2fcThreshold,
-                useUncorrected,
-                adjPValueCutoff,
-                minTermSize,
-                maxTermSize,
-              })}
+              rows={oraExportRows(downResult?.downTerms ?? result.downTerms, downResult ?? result, volcanoExportContext("down"))}
               filename={`ora_down_${kind}.csv`}
             />
           </>
@@ -868,3 +895,5 @@ export function OraPanel({
     </div>
   );
 }
+
+export const OraPanel = withWorkflowSettings("stats.ora.v1", OraPanelView, props => props.kindOptions.filter(option => option.value !== "phospho"));

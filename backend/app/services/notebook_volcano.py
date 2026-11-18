@@ -1,13 +1,10 @@
 """Volcano calculations and figures with explicit, frozen scientific inputs."""
 import ast
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_preprocessing import cached_notebook_render, capture_notebook
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.functions import effective_test_type, is_moderated_test_type
 
 
@@ -27,9 +24,7 @@ def volcano_source(interactive=False):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and any(
             isinstance(part, ast.Name) and part.id.startswith(("VOLCANO_", "_VOLCANO_", "_LABEL_", "CORRECTION_"))
             for part in ast.walk(node)))
-    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines() if not line.startswith("from app."))
-    styling += "\n\n" + function_definition(module_source("plotting_common.py"), "get_plt")
-    styling += "\n\ndef _get_plt():\n    return get_plt()\n"
+    styling = portable_styling(include_matplotlib=True)
     styles = extract_notebook_source(styling, ("advanced_label", "advanced_optional_number", "advanced_size",
         "advanced_alpha", "advanced_text", "_advanced_bool", "resolve_marker_shape", "marker_area", "resolve_reference_line",
         "apply_advanced_axes", "advanced_number", "get_plt", "advanced_plotly_layout")).code
@@ -46,7 +41,7 @@ def volcano_source(interactive=False):
     portable_runtime = ("import shutil\n\ndef detect_r_runtime():\n"
         "    executable = shutil.which('Rscript')\n"
         "    return {'available': bool(executable), 'executable': executable}\n")
-    code = merge_source("import numpy as np\nimport pandas as pd\nfrom typing import Any", scientific, core,
+    code = merge_source("import re\nimport numpy as np\nimport pandas as pd\nfrom typing import Any", scientific, core,
                          styles, serialization, constants, limma, portable_runtime,
                          function_definition(module_source("notebook_preprocessing.py"), "limma_runtime_version").replace(
                              "    from app.services.r_runtime import detect_r_runtime\n", ""), helpers, calculation)
@@ -117,12 +112,13 @@ def frozen_protein_comparison(kind, protein_correction, calculation, source, mod
 
 @lru_cache(maxsize=2)
 def _volcano_module(interactive=False):
-    module = ModuleType(f"_copylot_portable_volcano_{'interactive' if interactive else 'static'}")
-    sys.modules[module.__name__] = module
-    exec(volcano_source(interactive).code, module.__dict__)
-    return module
+    return portable_module(
+        f"_copylot_portable_volcano_{'interactive' if interactive else 'static'}",
+        lambda: volcano_source(interactive),
+    )
 
 
+@cached_notebook_render
 def render_volcano(payload, *, interactive=False, **options):
     from app.services import stats_tools
     from app.services.annotation_store import get_annotation
@@ -165,9 +161,7 @@ def render_volcano(payload, *, interactive=False, **options):
     # The same warnings and untested rows a live run returns, so the table read
     # back from this snapshot is the table the page showed.
     warnings = [*warnings, *calculation_warnings]
-    bound = inspect.signature(stats_tools.volcano_html if interactive else stats_tools.volcano_png).bind(payload, **options)
-    bound.apply_defaults()
-    figure_settings = dict(bound.arguments)
+    figure_settings = bound_settings(stats_tools.volcano_html if interactive else stats_tools.volcano_png, payload, **options)
     figure_settings.pop("payload")
     figure_settings.update({key: value for key, value in calculation.items()
                            if key not in {"kind", "identifier", "test_type", "data_source", "protein_correction"}})
@@ -191,11 +185,8 @@ def render_volcano(payload, *, interactive=False, **options):
     else:
         figure, plt = module._volcano_png_figure(table, **figure_settings)
         fmt = plot_output_format.get()
-        format_token = module.plot_output_format.set(fmt)
-        try:
+        with portable_output_format(module, fmt):
             content = module.to_png_bytes(figure, plt, dpi=figure_settings["dpi"])
-        finally:
-            module.plot_output_format.reset(format_token)
         resources[f"original.{fmt}"] = bytes(content)
         render_code = (
             "from IPython.display import Image\n"

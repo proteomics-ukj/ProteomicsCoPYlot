@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 
 from app.services.plot_export import (
     to_png_bytes as _to_png_bytes,
@@ -267,14 +271,16 @@ def pearson_correlation_png(
     condition2: str = "",
     alias1: str = "",
     alias2: str = "",
-    color: str = "#1f77b4",
+    color: str = "",
     dot_size: float = 60,
     header: bool = True,
     width_cm: float = 20,
     height_cm: float = 12,
     dpi: int = 300,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
+    color = color or resolve_plot_colors(1, plot_colors)[0]
     plt = _get_plt()
     x, y, label1, label2 = _pearson_vectors(
         kind=kind,
@@ -335,6 +341,7 @@ def pearson_correlation_png(
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
 
 
+
 def pearson_correlation_html(
     kind: AnnotationKind,
     mode: str = "Single",
@@ -344,13 +351,15 @@ def pearson_correlation_html(
     condition2: str = "",
     alias1: str = "",
     alias2: str = "",
-    color: str = "#1f77b4",
+    color: str = "",
     dot_size: float = 8,
     header: bool = True,
     width_cm: float = 20,
     height_cm: float = 12,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> str:
+    color = color or resolve_plot_colors(1, plot_colors)[0]
     go = _get_plotly()
     x, y, features, label1, label2 = _pearson_vectors_with_features(
         kind=kind,
@@ -465,6 +474,7 @@ def pearson_correlation_html(
         bgcolor="rgba(255,255,255,0.85)",
     )
     return _plotly_html(fig)
+
 
 
 def _feature_set_from_sample(frame: pd.DataFrame, id_col: str, sample: str) -> set[str]:
@@ -590,15 +600,16 @@ def venn_png(
     alias1: str = "",
     alias2: str = "",
     alias3: str = "",
-    color1: str = "#1f77b4",
-    color2: str = "#ff7f0e",
-    color3: str = "#2ca02c",
+    color1: str = "",
+    color2: str = "",
+    color3: str = "",
     header: bool = True,
     width_cm: float = 15,
     height_cm: float = 12,
     dpi: int = 300,
     advanced: dict | None = None,
     min_present: int = 1,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     venn2, venn3 = _get_venn()
@@ -617,9 +628,9 @@ def venn_png(
     fig, ax = plt.subplots(figsize=(_cm_to_inch(width_cm), _cm_to_inch(height_cm)))
     labels = [label1, label2] + ([label3] if set3 is not None else [])
     set_colors = [
-        advanced_color(advanced, "vennColor1", color1),
-        advanced_color(advanced, "vennColor2", color2),
-    ] + ([advanced_color(advanced, "vennColor3", color3)] if set3 is not None else [])
+        advanced_color(advanced, "vennColor1", color1 or resolve_plot_colors(3, plot_colors)[0]),
+        advanced_color(advanced, "vennColor2", color2 or resolve_plot_colors(3, plot_colors)[1]),
+    ] + ([advanced_color(advanced, "vennColor3", color3 or resolve_plot_colors(3, plot_colors)[2])] if set3 is not None else [])
     if set3 is None:
         diagram = venn2([set1, set2], set_labels=tuple(labels), set_colors=tuple(set_colors), alpha=0.5, ax=ax)
     else:
@@ -643,6 +654,11 @@ def venn_png(
     apply_advanced_axes(ax, advanced)
     fig.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
+
+
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['pearson_correlation_png', 'pearson_correlation_html', 'venn_png'], kind='protein')
 
 
 apply_cached_wrappers(

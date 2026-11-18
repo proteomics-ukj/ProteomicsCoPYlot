@@ -1,3 +1,7 @@
+import CsvDownloadLink from "../../components/CsvDownloadLink";
+import PlotTableContent from "../../components/PlotTableContent";
+import PlotOptionsContent from "../../components/PlotOptionsContent";
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 import PlotImage from "../../components/PlotImage";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
 import OptionsLayout from "../../components/OptionsLayout";
@@ -17,7 +21,7 @@ import {
   withPlotDownloadFilename,
   withPlotDownloadFormat,
 } from "../../lib/plotDownload";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
 import type {
   AnnotationKind,
@@ -33,7 +37,9 @@ import { useDataSourceChoice } from "../../lib/useDataSourceChoice";
 import PreviewTable from "../../components/PreviewTable";
 import NotebookDownload, { type RenderedNotebook } from "../../components/NotebookDownload";
 import SelectField from "../../components/SelectField";
-import type { ContextMode } from "../../lib/types";
+import type { ContextMode, ReportEntry } from "../../lib/types";
+import ReportEntryControl from "../../components/ReportEntryControl";
+import { currentAdvancedAppearance } from "../../lib/reportState";
 import LocalizationCutoffField from "../../components/LocalizationCutoffField";
 
 type Props = {
@@ -54,21 +60,13 @@ type TableRequest = {
   params: Record<string, string | number | boolean>;
 };
 
-export default function SingleProteinPage({ activeTab, onContextModeChange, advancedPlotOptions }: Props) {
+function SingleProteinPageView({ activeTab, onContextModeChange, advancedPlotOptions }: Props) {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("single.protein.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("single.protein.v1", kind), [kind]);
   const persistedBox = (persisted.box as Record<string, unknown>) ?? {};
   const persistedLine = (persisted.line as Record<string, unknown>) ?? {};
   const persistedHeatmap = (persisted.heatmap as Record<string, unknown>) ?? {};
-  const [kind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot"
-      ? value
-      : "protein";
-  });
   const { availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
   const [options, setOptions] = useState<SingleProteinOptionsResponse | null>(null);
   // The selection at the moment the Identifier select changed, handed to the
@@ -134,7 +132,7 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
   });
 
   useEffect(() => {
-    writePersistedUiState("single.protein.v1", {
+    writeWorkflowState("single.protein.v1", {
       kind,
       dataSource,
       downloadFormat,
@@ -156,7 +154,7 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
     if (!availableKinds.includes(kind)) {
       setKind(availableKinds[0]);
     }
-  }, [activeTab, availableKinds, kind]);
+  }, [activeTab, availableKinds, kind, setKind]);
 
   useEffect(() => {
     if (!hasRequiredDataset) {
@@ -207,19 +205,23 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
     const conditionChoices = options.conditions ?? [];
     const carried = options.carried ?? {};
     const carryOver = (name: string) => carried[name] ?? name;
+    const reconcileSingle = <T extends { identifier: SingleProteinIdentifier; protein: string; conditions: string[] }>(prev: T) => {
+      const validIdentifiers = new Set((options.availableIdentifiers ?? []).map((entry) => entry.key));
+      const nextIdentifier = validIdentifiers.has(prev.identifier)
+        ? prev.identifier
+        : (options.identifier ?? "workflow");
+      const protein = carryOver(prev.protein);
+      const nextProtein = protein && proteinChoices.includes(protein) ? protein : proteinChoices[0] ?? "";
+      const filtered = prev.conditions.filter((value) => conditionChoices.includes(value));
+      const nextConditions = filtered.length > 0 ? filtered : [...conditionChoices];
+      if (prev.identifier === nextIdentifier && prev.protein === nextProtein
+        && prev.conditions.length === nextConditions.length
+        && prev.conditions.every((value, index) => value === nextConditions[index])) return prev;
+      return { ...prev, identifier: nextIdentifier, protein: nextProtein, conditions: nextConditions };
+    };
 
     if (activeTab === "boxplot") {
-      setBox((prev) => {
-        const validIdentifiers = new Set((options.availableIdentifiers ?? []).map((entry) => entry.key));
-        const nextIdentifier = validIdentifiers.has(prev.identifier)
-          ? prev.identifier
-          : (options.identifier ?? "workflow");
-        const protein = carryOver(prev.protein);
-        const nextProtein = protein && proteinChoices.includes(protein) ? protein : proteinChoices[0] ?? "";
-        const filtered = prev.conditions.filter((value) => conditionChoices.includes(value));
-        const nextConditions = filtered.length > 0 ? filtered : [...conditionChoices];
-        return { ...prev, identifier: nextIdentifier, protein: nextProtein, conditions: nextConditions };
-      });
+      setBox(reconcileSingle);
       return;
     }
 
@@ -234,22 +236,17 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
           filteredProteins.length > 0 ? filteredProteins : proteinChoices.slice(0, Math.min(3, proteinChoices.length));
         const filteredConditions = prev.conditions.filter((value) => conditionChoices.includes(value));
         const nextConditions = filteredConditions.length > 0 ? filteredConditions : [...conditionChoices];
+        if (prev.identifier === nextIdentifier
+          && prev.proteins.length === nextProteins.length
+          && prev.proteins.every((value, index) => value === nextProteins[index])
+          && prev.conditions.length === nextConditions.length
+          && prev.conditions.every((value, index) => value === nextConditions[index])) return prev;
         return { ...prev, identifier: nextIdentifier, proteins: nextProteins, conditions: nextConditions };
       });
       return;
     }
 
-    setHeatmap((prev) => {
-      const validIdentifiers = new Set((options.availableIdentifiers ?? []).map((entry) => entry.key));
-      const nextIdentifier = validIdentifiers.has(prev.identifier)
-        ? prev.identifier
-        : (options.identifier ?? "workflow");
-      const protein = carryOver(prev.protein);
-      const nextProtein = protein && proteinChoices.includes(protein) ? protein : proteinChoices[0] ?? "";
-      const filtered = prev.conditions.filter((value) => conditionChoices.includes(value));
-      const nextConditions = filtered.length > 0 ? filtered : [...conditionChoices];
-      return { ...prev, identifier: nextIdentifier, protein: nextProtein, conditions: nextConditions };
-    });
+    setHeatmap(reconcileSingle);
   }, [activeTab, options]);
 
   const plotView = useMemo<PlotView>(() => {
@@ -597,17 +594,19 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
       {hasRequiredDataset ? (
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-900">Options</h3>
-        {optionsLoading ? (
-          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-            Loading options...
-          </div>
-        ) : optionsError ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {optionsError}
-          </div>
-        ) : (
-          <div className="mt-4">{renderOptions()}</div>
-        )}
+        {<PlotOptionsContent loading={optionsLoading} error={optionsError} renderOptions={renderOptions} />}
+        {activeTab !== "heatmap" ? (
+          <ReportEntryControl
+            key={activeTab}
+            type={activeTab === "boxplot" ? "single_box" : "single_line"}
+            kind={kind}
+            kindLabel={kindOptions.find((option) => option.value === kind)?.label ?? kind}
+            title={activeTab === "boxplot" ? "Boxplot" : "Lineplot"}
+            noun={activeTab === "boxplot" ? "boxplot" : "lineplot"}
+            buildEntries={buildReportEntries}
+            invalidMessage="Please choose a valid selection before adding this plot."
+          />
+        ) : null}
         {activeTab === "heatmap" && (heatmap.clusterRows || heatmap.clusterCols) && dataSource !== "imputed" ? (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             Clustering uses only complete values. If this selected matrix contains missing values, choose successfully imputed data or disable clustering; values and data sources are never changed automatically.
@@ -659,35 +658,62 @@ export default function SingleProteinPage({ activeTab, onContextModeChange, adva
           <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
           {tableCsvUrl ? (
             <div className="flex flex-wrap items-center gap-2">
-              <a
-                href={tableCsvUrl}
-                download={`single_protein_${activeTab}_${effectiveKind}.csv`}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-              >
-                Download CSV
-              </a>
+              <CsvDownloadLink href={tableCsvUrl} filename={`single_protein_${activeTab}_${effectiveKind}.csv`} />
               {plotView ? <NotebookDownload plotUrl={plotView.url}
                 rendered={!tableLoading && !tableError && tableSnapshot === plotToken ? notebook : null} /> : null}
             </div>
           ) : null}
         </div>
         <div className="mt-4">
-          {tableLoading ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-              Loading table...
-            </div>
-          ) : tableError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {tableError}
-            </div>
-          ) : (
+          {<PlotTableContent loading={tableLoading} error={tableError} renderTable={() => (
             <PreviewTable rows={tableRows} emptyText="No table rows available for the current selection." plotSummary />
-          )}
+          )} />}
         </div>
       </section>
       ) : null}
     </div>
   );
+
+  function buildReportEntries(): ReportEntry[] {
+    if (!plotView || (kind !== "protein" && kind !== "phospho")) return [];
+    if (activeTab === "boxplot") {
+      return [{
+        type: "single_box",
+        kind,
+        request: {
+          identifier: box.identifier,
+          dataSource,
+          protein: box.protein,
+          conditions: box.conditions,
+          outliers: box.outliers,
+          dots: box.dots,
+          sampleN: box.sampleN,
+          randomSeed: box.randomSeed,
+          header: box.header,
+          legend: box.legend,
+        },
+        render: { type: "Normal", widthCm: box.widthCm, heightCm: box.heightCm, dpi: box.dpi },
+        advanced: currentAdvancedAppearance(),
+      }];
+    }
+    if (activeTab !== "lineplot") return [];
+    return [{
+      type: "single_line",
+      kind,
+      request: {
+        identifier: line.identifier,
+        dataSource,
+        proteins: line.proteins,
+        conditions: line.conditions,
+        includeId: line.includeId,
+        showNaLow: line.showNaLow,
+        header: line.header,
+        legend: line.legend,
+      },
+      render: { type: "Normal", widthCm: line.widthCm, heightCm: line.heightCm, dpi: line.dpi },
+      advanced: currentAdvancedAppearance(),
+    }];
+  }
 
   function renderOptions() {
     const proteinOptions = options?.proteins ?? [];
@@ -876,3 +902,5 @@ function plotTitle(tab: SingleProteinTab): string {
   if (tab === "lineplot") return "Protein Lineplot";
   return "Phosphosites on Protein Heatmap";
 }
+
+export default withWorkflowSettings("single.protein.v1", SingleProteinPageView, props => props.activeTab === "heatmap" ? [{ value: "phospho" }] : []);

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { buildPlotUrl } from "../lib/api";
-import { IS_VIEWER_MODE } from "../lib/appMode";
+import { NOTEBOOK_EXPORTS_ENABLED, notebookExportQuery } from "../lib/notebookExportOptions";
 import { fetchPlot } from "../lib/fetchPlot";
 import { plotErrorMessage } from "../lib/plotError";
 
@@ -43,7 +43,7 @@ export default function NotebookDownload({ plotUrl, rendered, outputLabel = 'plo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Viewers may download plots and tables, not notebook exports (D11).
-  if (IS_VIEWER_MODE) return null;
+  if (!NOTEBOOK_EXPORTS_ENABLED) return null;
   const token = rendered?.url === plotUrl ? rendered.token : null;
 
   async function download() {
@@ -52,7 +52,7 @@ export default function NotebookDownload({ plotUrl, rendered, outputLabel = 'plo
     setError("");
     let objectUrl = "";
     try {
-      const zip = (value: string) => fetch(buildPlotUrl(`/api/plots/notebooks/${encodeURIComponent(value)}.zip`));
+      const zip = (value: string) => fetch(buildPlotUrl(`/api/plots/notebooks/${encodeURIComponent(value)}.zip${notebookExportQuery()}`));
       const current = prepareOnClick ? await renewToken(plotUrl, true) : token;
       if (!current) throw new Error("The applied table could not be prepared for notebook export.");
       let response = await zip(current);

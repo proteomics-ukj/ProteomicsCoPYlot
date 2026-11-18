@@ -1,3 +1,8 @@
+import { paletteColorOverride } from "../../lib/conditionColorSets";
+import CsvDownloadLink from "../../components/CsvDownloadLink";
+import PlotTableContent from "../../components/PlotTableContent";
+import PlotOptionsContent from "../../components/PlotOptionsContent";
+import { usePhosphoOptionsLoader } from "./usePhosphoOptions";
 import PlotImage from "../../components/PlotImage";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
 import OptionsLayout from "../../components/OptionsLayout";
@@ -90,7 +95,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
   // The localization cutoff is the session-wide one (LocalizationCutoffField at
   // the top of the Phospho-specific module), not a setting of this plot.
   const [phosphositePlot, setPhosphositePlot] = useState({
-    color: String(persistedPhosphositePlot.color ?? "#87CEEB"),
+    color: paletteColorOverride(persistedPhosphositePlot.color, "#87CEEB"),
     widthCm: restorePlotDimensionCm(persistedPhosphositePlot.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedPhosphositePlot.heightCm, 10),
     dpi: restorePlotDpi(persistedPhosphositePlot.dpi, 300),
@@ -101,8 +106,8 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     header: true,
     legend: true,
     mode: String(persistedCoverage.mode ?? "Normal"),
-    colorClassI: String(persistedCoverage.colorClassI ?? "#2563eb"),
-    colorNotClassI: String(persistedCoverage.colorNotClassI ?? "#f59e0b"),
+    colorClassI: paletteColorOverride(persistedCoverage.colorClassI, "#2563eb"),
+    colorNotClassI: paletteColorOverride(persistedCoverage.colorNotClassI, "#f59e0b"),
     randomSeed: Number(persistedCoverage.randomSeed ?? 1),
     widthCm: restorePlotDimensionCm(persistedCoverage.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedCoverage.heightCm, 10),
@@ -114,7 +119,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     // otherwise stretch the axis to a single 200-site protein; 0 shows all.
     cutoff: Number(persistedDistribution.cutoff ?? 0.01),
     header: true,
-    color: String(persistedDistribution.color ?? "#87CEEB"),
+    color: paletteColorOverride(persistedDistribution.color, "#87CEEB"),
     widthCm: restorePlotDimensionCm(persistedDistribution.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedDistribution.heightCm, 15),
     dpi: restorePlotDpi(persistedDistribution.dpi, 300),
@@ -180,6 +185,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
   // (report_function reads them as qcSettings.phospho.phosphoCoverage).
   useEffect(() => {
     saveQcReportSettings("phospho", {
+      sty: { widthCm: sty.widthCm, heightCm: sty.heightCm, dpi: sty.dpi },
       phosphoCoverage: {
         mode: coverage.mode,
         includeId: coverage.includeId,
@@ -188,37 +194,11 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
         randomSeed: coverage.randomSeed,
       },
     });
-  }, [coverage.mode, coverage.includeId, coverage.colorClassI, coverage.colorNotClassI, coverage.randomSeed]);
+  }, [coverage.mode, coverage.includeId, coverage.colorClassI, coverage.colorNotClassI, coverage.randomSeed, sty.widthCm, sty.heightCm, sty.dpi]);
 
-  useEffect(() => {
-    if (!hasPhosphoDataset) {
-      setOptions(null);
-      setOptionsLoading(false);
-      setOptionsError("No phospho dataset loaded.");
-      return;
-    }
-    const controller = new AbortController();
-    setOptionsLoading(true);
-    setOptionsError(null);
-    getPhosphoOptions({ signal: controller.signal })
-      .then((data) => {
-        setOptions(data);
-        applyDataSourceChoices(data);
-      })
-      .catch((err) => {
-        if (isAbortError(err)) return;
-        setOptions(null);
-        setOptionsError(err instanceof Error ? err.message : "Failed to load phospho options");
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        setOptionsLoading(false);
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [hasPhosphoDataset, applyDataSourceChoices]);
+  usePhosphoOptionsLoader(
+    hasPhosphoDataset, applyDataSourceChoices, setOptions, setOptionsLoading, setOptionsError,
+  );
 
   useEffect(() => {
     const conditionOptions = options?.conditions ?? [];
@@ -230,6 +210,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
       const nextCondition2 = conditionOptions.includes(prev.condition2)
         ? prev.condition2
         : nextCondition1;
+      if (prev.condition1 === nextCondition1 && prev.condition2 === nextCondition2) return prev;
       return { ...prev, condition1: nextCondition1, condition2: nextCondition2 };
     });
   }, [options]);
@@ -544,17 +525,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
           <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-6 text-sm text-sky-800">
             Upload a phospho dataset in the Data tab to configure phospho-specific options.
           </div>
-        ) : optionsLoading ? (
-          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-            Loading options...
-          </div>
-        ) : optionsError ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {optionsError}
-          </div>
-        ) : (
-          <div className="mt-4">{renderOptions()}</div>
-        )}
+        ) : <PlotOptionsContent loading={optionsLoading} error={optionsError} renderOptions={renderOptions} />}
       </section>
 
       {advancedPlotOptions}
@@ -614,13 +585,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
           <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
           {hasPhosphoDataset && tableCsvUrl ? (
             <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={tableCsvUrl}
-              download={`phospho_${activeTab}.csv`}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-            >
-              Download CSV
-            </a>
+            <CsvDownloadLink href={tableCsvUrl} filename={`phospho_${activeTab}.csv`} />
             {notebookSupported && plotView ? <NotebookDownload plotUrl={plotView.url}
               rendered={!tableLoading && !tableError && tableSnapshot === plotToken ? notebook : null} /> : null}
             </div>
@@ -635,17 +600,9 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
             <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-6 text-sm text-sky-800">
               Please select two different conditions to generate the table.
             </div>
-          ) : tableLoading ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-              Loading table...
-            </div>
-          ) : tableError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {tableError}
-            </div>
-          ) : (
+          ) : <PlotTableContent loading={tableLoading} error={tableError} renderTable={() => (
             <PreviewTable rows={tableRows} emptyText="No table rows available for the current selection." plotSummary />
-          )}
+          )} />}
         </div>
       </section>
     </div>
@@ -657,7 +614,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     if (activeTab === "phosphositePlot") {
       return (
         <OptionsLayout columns={2}
-          fields={[]}
           size={
             <SizeRow
               widthCm={phosphositePlot.widthCm}
@@ -724,8 +680,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
               onChange={(value) => setDistribution({ ...distribution, cutoff: Math.max(0, Math.min(1, value)) })}
             />,
           ]}
-          toggles={[
-          ]}
           size={
             <SizeRow
               widthCm={distribution.widthCm}
@@ -751,6 +705,14 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
               options={volcanoDataSourceOptions.map((option) => option.value)}
               labels={Object.fromEntries(volcanoDataSourceOptions.map((option) => [option.value, option.label]))}
               onChange={(value) => chooseDataSource(value as DataSource)}
+            />,
+            <SelectField
+              key="testType"
+              label="Test Type"
+              value={availableTestType(phosprotRegulation.testType as StatsTestType, moderatedAvailable)}
+              options={testTypeOptions.map(({ value }) => value)}
+              labels={TEST_TYPE_LABELS}
+              onChange={(value) => setPhosprotRegulation({ ...phosprotRegulation, testType: value })}
             />,
             <SelectField
               key="condition1"
@@ -786,14 +748,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
               label="log2 FC Threshold"
               value={phosprotRegulation.log2fcThreshold}
               onChange={(value) => setPhosprotRegulation({ ...phosprotRegulation, log2fcThreshold: Math.max(0, value) })}
-            />,
-            <SelectField
-              key="testType"
-              label="Test Type"
-              value={availableTestType(phosprotRegulation.testType as StatsTestType, moderatedAvailable)}
-              options={testTypeOptions.map(({ value }) => value)}
-              labels={TEST_TYPE_LABELS}
-              onChange={(value) => setPhosprotRegulation({ ...phosprotRegulation, testType: value })}
             />,
             ...((PAIRED_TEST_TYPES as string[]).includes(phosprotRegulation.testType)
               ? [
@@ -839,9 +793,6 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
 
     return (
       <OptionsLayout columns={2}
-        fields={[]}
-        toggles={[
-        ]}
         size={
           <SizeRow
             widthCm={sty.widthCm}

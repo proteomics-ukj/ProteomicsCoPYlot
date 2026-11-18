@@ -10,7 +10,7 @@ from app.services.notebook_archive import build_notebook_archive
 from app.services.notebook_imputation import applied_imputation_notebook
 from app.services.notebook_snapshots import snapshots
 from app.services.session_context import get_session_id
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, set_original_path
 
 
 def test_applied_csv_and_three_figures_match_gui(inputs, tmp_path, monkeypatch):
@@ -25,7 +25,7 @@ def test_applied_csv_and_three_figures_match_gui(inputs, tmp_path, monkeypatch):
     with ZipFile(io.BytesIO(blob)) as archive:
         archive.extractall(tmp_path)
     notebook = json.loads(next(tmp_path.glob("*.ipynb")).read_text())
-    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    cells = notebook_code(notebook)
     replay = set_original_path(cells, tmp_path)
     subprocess.run([sys.executable, "-I", "-c", "import sys;sys.path.insert(0,'.')\n" + replay],
                    cwd=tmp_path, check=True, timeout=90)

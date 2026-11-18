@@ -1,13 +1,18 @@
 """Extract a dependency-closed subset of trusted notebook source, never user code."""
 from __future__ import annotations
 
+from functools import lru_cache
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import ast
 import builtins
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 import re
 import symtable
 import sys
+from types import ModuleType
 
 
 @dataclass(frozen=True)
@@ -15,6 +20,33 @@ class NotebookSource:
     code: str
     functions: tuple[str, ...]
     imports: tuple[str, ...]
+
+
+def bound_settings(function: Callable, /, *args, **options) -> dict:
+    """Bind renderer options and include its defaults in declaration order."""
+    bound = inspect.signature(function).bind(*args, **options)
+    bound.apply_defaults()
+    from app.services.condition_palette_store import fill_category_palette
+
+    return fill_category_palette(function, dict(bound.arguments))
+
+
+@contextmanager
+def portable_output_format(module: ModuleType, fmt: str) -> Iterator[None]:
+    """Set a portable renderer's output format for this scope, then restore it."""
+    token = module.plot_output_format.set(fmt)
+    try:
+        yield
+    finally:
+        module.plot_output_format.reset(token)
+
+
+def portable_module(name: str, source: Callable[[], NotebookSource]) -> ModuleType:
+    """Load trusted notebook code; the adapter owns caching and module naming."""
+    module = ModuleType(name)
+    sys.modules[name] = module
+    exec(source().code, module.__dict__)
+    return module
 
 
 def _target_names(target: ast.expr) -> set[str]:
@@ -67,6 +99,7 @@ def _segment(source: str, node: ast.stmt) -> str:
     return "\n".join(source.splitlines()[start - 1:node.end_lineno])
 
 
+@lru_cache(maxsize=64)
 def extract_notebook_source(source: str, entry_points: tuple[str, ...]) -> NotebookSource:
     """Select definitions, constants and imports without executing the source.
 
@@ -193,6 +226,16 @@ def _inline_core(text: str) -> str:
         inlined = "\n\n".join(_segment(core, node) for node in core_body if node in selected)
         text = text[:match.start()] + inlined + "\n" + text[match.end():]
     return text
+
+
+def portable_styling(*, include_matplotlib: bool = False) -> str:
+    """Prepare styling source without app imports; adapters retain their caches."""
+    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines()
+                        if not line.startswith("from app."))
+    if include_matplotlib:
+        styling += "\n\n" + function_definition(module_source("plotting_common.py"), "get_plt")
+        styling += "\n\ndef _get_plt():\n    return get_plt()\n"
+    return styling
 
 
 def function_definition(source: str, name: str) -> str:

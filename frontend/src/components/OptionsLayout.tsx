@@ -13,7 +13,7 @@ export default function OptionsLayout({
   toggles?: ReactNode[];
   size?: ReactNode | null;
   columns?: 2 | 3;
-  order?: "fields-toggles-size" | "toggles-fields-size" | "fields-size-toggles";
+  order?: "fields-toggles-size" | "toggles-fields-size";
 }) {
   const parts: Record<string, ReactNode> = {
     fields: fields.length > 0

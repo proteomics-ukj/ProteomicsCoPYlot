@@ -10,13 +10,11 @@ drop them, and say how many directly beneath the plot.
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.stats import AnovaRequest
 from app.services.clustering_tools import (

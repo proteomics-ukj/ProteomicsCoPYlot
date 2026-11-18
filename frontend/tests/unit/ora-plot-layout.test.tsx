@@ -16,17 +16,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OraPanel } from "../../src/features/stats/OraPanel";
 import * as api from "../../src/lib/api";
 import type { EnrichmentResultResponse, StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "../component/apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "../component/apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("../component/apiMock")).mockApiModule(original));
 
-const OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["Treated", "Vehicle"],
-  samplesByCondition: { Treated: ["t1", "t2"], Vehicle: ["v1", "v2"] }, pairIdsBySample: {},
+const OPTIONS: StatisticalOptionsResponse = statisticalOptions({
+  availableConditions: ["Treated", "Vehicle"],
+  samplesByCondition: { Treated: ["t1", "t2"], Vehicle: ["v1", "v2"] },
   // ORA needs gene names to look terms up by.
-  availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }], warnings: [],
-  availableDataSources: ["data"], defaultDataSource: "data",
-};
+  availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }],
+});
 const TERM = {
   source: "BP", termId: "GO:1", name: "a process", termSize: 10, intersectionSize: 2, querySize: 5,
   geneRatio: 0.4, hitPercent: 20, pValue: 0.001, adjPValue: 0.01, intersectingGenes: ["G1", "G2"],

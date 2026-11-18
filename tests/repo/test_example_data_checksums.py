@@ -1,10 +1,9 @@
 """Example-data downloads/checkouts match their documented LF-byte checksums."""
-from pathlib import Path
 import hashlib
 import re
 
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 EXAMPLES = ROOT / 'proteomicscopylot' / 'example_data'
 
 

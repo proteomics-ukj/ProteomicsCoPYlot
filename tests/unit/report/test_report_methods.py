@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.summary import SummaryVolcanoEntry
 from app.services.report_function import (

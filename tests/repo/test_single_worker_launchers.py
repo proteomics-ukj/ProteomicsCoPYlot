@@ -1,14 +1,13 @@
 """Launchers must override inherited concurrency while stores are in memory."""
 import ast
 import importlib
-from pathlib import Path
 import re
 
 from click.testing import CliRunner
 import pytest
 import uvicorn
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 SCRIPTS = [ROOT / "packaging" / platform / f"run_{mode}{suffix}"
            for platform, suffix in [("windows", ".bat"), ("unix", ".sh")]
            for mode in ("app", "app_ai", "viewer", "viewer_ai")]

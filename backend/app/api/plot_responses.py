@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from typing import TypeVar
 
 from fastapi import HTTPException
 from fastapi.responses import Response
@@ -15,6 +16,7 @@ from app.services.functions import (
 
 
 LOGGER = logging.getLogger(__name__)
+_ResponseT = TypeVar("_ResponseT", bound=Response)
 
 
 def validation_messages(error: ValidationError) -> str:
@@ -103,6 +105,13 @@ def png_response(content: bytes) -> Response:
             "Content-Encoding": "identity",
         },
     )
+
+
+def with_notebook_token(response: _ResponseT, token: str) -> _ResponseT:
+    """Attach an available notebook token, preserving the existing response."""
+    if token:
+        response.headers["X-CoPYlot-Notebook"] = token
+    return response
 
 
 def table_rows(df) -> dict[str, list[dict[str, object]]]:

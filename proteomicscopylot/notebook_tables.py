@@ -69,7 +69,7 @@ def prepare_coverage_df(data: pd.DataFrame, meta: pd.DataFrame, name: bool = Fal
     meta = _grouped_meta_order(meta.copy())
     meta["sample"] = meta["sample"].astype(str)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    meta["new_sample"] = meta.apply(lambda row: f"{row['condition']}_{row['new_sample']}", axis=1)
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample")
 
     rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
     data_filtered = data.rename(columns=rename_dict)
@@ -137,10 +137,7 @@ def prepare_coverage_summary_df(data: pd.DataFrame, meta: pd.DataFrame) -> pd.Da
     condition_order = meta["condition"].dropna().unique().tolist()
     meta["id"] = meta["sample"].apply(extract_sample_id)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    meta["new_sample"] = meta.apply(
-        lambda row: f"{row['condition']}_{row['new_sample']}\n({row['id']})",
-        axis=1,
-    )
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample", include_id=True)
 
     rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
     data_filtered = data.rename(columns=rename_dict)
@@ -181,6 +178,16 @@ def qc_coverage_table(data, metadata, summary: bool = False) -> pd.DataFrame:
     if summary:
         return prepare_coverage_summary_df(frame, meta)
     return prepare_coverage_df(frame, meta)
+
+def sample_display_labels(
+    frame: pd.DataFrame, *, index_column: str, include_id: bool = False, id_separator: str = "\n",
+) -> pd.Series:
+    """Format existing sample counters, retaining row-wise null and empty-input behavior."""
+    if include_id:
+        return frame.apply(
+            lambda row: f"{row['condition']}_{row[index_column]}{id_separator}({row['id']})", axis=1,
+        )
+    return frame.apply(lambda row: f"{row['condition']}_{row[index_column]}", axis=1)
 
 import numpy as np
 
@@ -224,7 +231,7 @@ def prepare_boxplot_single_df(data: pd.DataFrame, meta: pd.DataFrame, name: bool
     meta = meta.copy()
     meta["id"] = meta["sample"].apply(extract_sample_id)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    meta["new_sample"] = meta.apply(lambda row: f"{row['condition']}_{row['new_sample']}", axis=1)
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample")
 
     rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
     data_renamed = data.rename(columns=rename_dict)
@@ -1264,7 +1271,7 @@ def _heatmap_matrix(data, metadata,
         )
         matrix = matrix.loc[completeness.kept]
 
-    if cluster_rows and matrix.shape[0] > 1:
+    if cluster_matrix is not None and cluster_rows and matrix.shape[0] > 1:
         try:
             from scipy.cluster.hierarchy import leaves_list, linkage
         except ModuleNotFoundError as exc:
@@ -1276,7 +1283,7 @@ def _heatmap_matrix(data, metadata,
         matrix = matrix.iloc[row_order]
         cluster_matrix = cluster_matrix[row_order]
 
-    if cluster_cols and matrix.shape[1] > 1:
+    if cluster_matrix is not None and cluster_cols and matrix.shape[1] > 1:
         try:
             from scipy.cluster.hierarchy import leaves_list, linkage
         except ModuleNotFoundError as exc:
@@ -1424,16 +1431,7 @@ def _renamed_meta(meta: pd.DataFrame, include_id: bool = True) -> pd.DataFrame:
     renamed["sample"] = renamed["sample"].astype(str)
     renamed["id"] = renamed["sample"].apply(extract_sample_id)
     renamed["new_sample"] = renamed.groupby("condition").cumcount() + 1
-    if include_id:
-        renamed["new_sample"] = renamed.apply(
-            lambda row: f"{row['condition']}_{row['new_sample']} ({row['id']})",
-            axis=1,
-        )
-    else:
-        renamed["new_sample"] = renamed.apply(
-            lambda row: f"{row['condition']}_{row['new_sample']}",
-            axis=1,
-        )
+    renamed['new_sample'] = sample_display_labels(renamed, index_column="new_sample", include_id=include_id, id_separator=" ")
     return renamed
 
 def _selected_matrix(
@@ -1821,11 +1819,11 @@ def _pathway_matrix(data, metadata, database, *, centered=False,
             heatmap_data, context="pathway heatmap"
         )
         heatmap_data = heatmap_data.loc[pathway_completeness.kept]
-    if cluster_rows and heatmap_data.shape[0] > 1:
+    if cluster_matrix is not None and cluster_rows and heatmap_data.shape[0] > 1:
         row_order = leaves_list(linkage(pdist(cluster_matrix), method="average"))
         heatmap_data = heatmap_data.iloc[row_order]
         cluster_matrix = cluster_matrix[row_order]
-    if cluster_cols and heatmap_data.shape[1] > 1:
+    if cluster_matrix is not None and cluster_cols and heatmap_data.shape[1] > 1:
         col_order = leaves_list(linkage(pdist(cluster_matrix.T), method="average"))
         heatmap_data = heatmap_data.iloc[:, col_order]
 
@@ -2003,10 +2001,12 @@ def _enrichment_terms(
     return terms[:top_n]
 
 def calculate_enrichment(database, query_genes, background_genes, *, min_term_size=20,
-                         max_term_size=300, top_n=10, adj_p_value_cutoff=0.05):
+                         max_term_size=300, top_n=10, adj_p_value_cutoff=0.05, universe=None):
     if min_term_size > max_term_size:
         raise ValueError("Minimum term size cannot be larger than maximum term size.")
-    background, eligible = prepare_universe(database, background_genes, min_term_size, max_term_size)
+    if universe is None:
+        universe = prepare_universe(database, background_genes, min_term_size, max_term_size)
+    background, eligible = universe
     counts = {}
     terms = _enrichment_terms(query_genes, top_n, adj_p_value_cutoff, background, eligible, counts)
     return {"terms": [vars(term) for term in terms], "counts": counts,

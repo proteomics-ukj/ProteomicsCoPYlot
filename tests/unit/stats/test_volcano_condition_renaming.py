@@ -12,12 +12,10 @@ still states condition 1 minus condition 2, which `comparison_contrast` owns.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services import stats_tools
 from app.services.functions import comparison_contrast

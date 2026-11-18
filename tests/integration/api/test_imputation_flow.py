@@ -3,7 +3,6 @@
 Moved out of test_api_smoke.py (2026-10-02)."""
 from __future__ import annotations
 
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -13,7 +12,7 @@ from app.services.restore_state import _parse_state_blob, export_state_blob
 from app.services.viewer_bootstrap import load_viewer_state
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 
@@ -56,7 +55,7 @@ def test_numerical_imputation_api_persists_and_renders() -> None:
             for entry in package.get("annotations", [])
             if entry.get("kind") == "protein"
         ]
-        assert any(entry.get("imputedFrame") is not None for entry in protein_annotations)
+        assert any(entry.get("imputedSparse") is not None for entry in protein_annotations)
 
         plot = client.get(
             "/api/plots/imputation/protein/overall-fit.png",

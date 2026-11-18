@@ -3,7 +3,6 @@
 Moved out of test_api_smoke.py (2026-10-02)."""
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -18,7 +17,7 @@ from app.services.plot_images import (
 from app.services.viewer_bootstrap import load_viewer_state
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 

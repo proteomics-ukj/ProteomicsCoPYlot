@@ -2,13 +2,14 @@
 
 import { withPlotDownloadFilename, withPlotDownloadFormat, type PlotDownloadFormat } from "../../lib/plotDownload";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
-import { useMemo } from "react";
-import { collectColumns, csvDataUrl, rowsToQuotedCsv } from "../../lib/tableData";
+
+import { collectColumns, rowsToQuotedCsv } from "../../lib/tableData";
 import PaginatedTable from "../../components/PaginatedTable";
 import PlotImage from "../../components/PlotImage";
 import InteractivePlot from "../../components/InteractivePlot";
 import NotebookDownload, { type RenderedNotebook } from "../../components/NotebookDownload";
 import SelectField from "../../components/SelectField";
+import SummaryCard from "../../components/SummaryCard";
 
 export function Notice({ error, warnings }: { error: string | null; warnings?: string[] }) {
   if (!error && (!warnings || warnings.length === 0)) return null;
@@ -25,10 +26,7 @@ export function SummarySection({ items, warnings }: { items: { label: string; va
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {items.map((item) => (
-          <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{item.label}</div>
-            <div className="mt-1 text-sm font-semibold text-slate-900">{item.value}</div>
-          </div>
+          <SummaryCard key={item.label} label={item.label} value={item.value} />
         ))}
       </div>
       {warnings && warnings.length > 0 ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{warnings.join(" ")}</div> : null}
@@ -86,10 +84,8 @@ export function ImageSection({
         <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
         <div className="flex flex-wrap items-center gap-2">
           {download ? (
-            <>
-              <PlotDownloadControls label={title} format={download.format} onFormatChange={download.onFormatChange}
-                href={withPlotDownloadFormat(url, download.format)} filename={withPlotDownloadFilename(download.filename, download.format)} />
-            </>
+            <PlotDownloadControls label={title} format={download.format} onFormatChange={download.onFormatChange}
+              href={withPlotDownloadFormat(url, download.format)} filename={withPlotDownloadFilename(download.filename, download.format)} />
           ) : null}
           <a href={url} target="_blank" rel="noreferrer" className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
             Open Image
@@ -106,28 +102,25 @@ export function TableSection({ title, rows, filename, notebook, plotUrl }: {
   title: string; rows: Record<string, unknown>[]; filename: string;
   notebook?: RenderedNotebook | null; plotUrl?: string;
 }) {
-  const csvUrl = useMemo(() => {
-    if (!rows.length) return null;
+  function downloadCsv(link: HTMLAnchorElement) {
     const csv = rowsToQuotedCsv(rows, collectColumns(rows));
-    return csvDataUrl(csv);
-  }, [rows]);
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    link.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
         <div className="flex flex-wrap items-center gap-2">
-          {csvUrl ? <a href={csvUrl} download={filename} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">Download CSV</a> : null}
+          {rows.length ? <a href="#" download={filename} onClick={event => downloadCsv(event.currentTarget)} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">Download CSV</a> : null}
           {plotUrl ? <NotebookDownload plotUrl={plotUrl} rendered={notebook ?? null} /> : null}
         </div>
       </div>
-      <StatsResultTable rows={rows} />
+      <PaginatedTable rows={rows} pageSize={50} emptyText="No rows available." maxHeightClassName="max-h-[36rem]" />
     </section>
   );
-}
-
-function StatsResultTable({ rows }: { rows: Record<string, unknown>[] }) {
-  return <PaginatedTable rows={rows} pageSize={50} emptyText="No rows available." maxHeightClassName="max-h-[36rem]" />;
 }
 
 export function InfoSection({ message }: { message: string }) {

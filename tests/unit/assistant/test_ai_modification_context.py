@@ -19,6 +19,29 @@ SEQUENCES = [
 ]
 
 
+def _modification_frame():
+    frame = pd.DataFrame(
+        {
+            "File.Name": ["sample_1.raw"] * len(SEQUENCES),
+            "Modified.Sequence": SEQUENCES,
+            "Precursor.Quantity": [1.0] * len(SEQUENCES),
+        }
+    )
+    return frame
+
+
+def _patch_peptide_context(monkeypatch, frame):
+    metadata = pd.DataFrame(
+        {"sample": ["sample_1.raw"], "id": ["1"], "label": ["control_1"], "condition": ["control"]}
+    )
+    monkeypatch.setattr(ai_functions, "get_peptide_frame", lambda: frame.copy())
+    monkeypatch.setattr(
+        ai_functions._plot_images,
+        "_peptide_coverage_metadata",
+        lambda source, include_id: metadata.copy(),
+    )
+
+
 def test_shared_modification_classifier_is_boundary_safe_and_scale_aware() -> None:
     frame = pd.DataFrame(
         {
@@ -65,22 +88,8 @@ def test_shared_modification_classifier_counts_duplicate_sequences_once() -> Non
 
 
 def test_ai_modification_context_uses_shared_counts_and_correct_scientific_terms(monkeypatch) -> None:
-    frame = pd.DataFrame(
-        {
-            "File.Name": ["sample_1.raw"] * len(SEQUENCES),
-            "Modified.Sequence": SEQUENCES,
-            "Precursor.Quantity": [1.0] * len(SEQUENCES),
-        }
-    )
-    metadata = pd.DataFrame(
-        {"sample": ["sample_1.raw"], "id": ["1"], "label": ["control_1"], "condition": ["control"]}
-    )
-    monkeypatch.setattr(ai_functions, "get_peptide_frame", lambda: frame.copy())
-    monkeypatch.setattr(
-        ai_functions._plot_images,
-        "_peptide_coverage_metadata",
-        lambda source, include_id: metadata.copy(),
-    )
+    frame = _modification_frame()
+    _patch_peptide_context(monkeypatch, frame)
 
     text = ai_functions.peptide_modification_plot_context()["data"]["text"]
 
@@ -104,22 +113,8 @@ def test_ai_does_not_duplicate_unimod_matching_logic(monkeypatch) -> None:
     copy of the UniMod matching inside the AI code would report the unmarked
     count instead, and would also leave the wrapper uncalled.
     """
-    frame = pd.DataFrame(
-        {
-            "File.Name": ["sample_1.raw"] * len(SEQUENCES),
-            "Modified.Sequence": SEQUENCES,
-            "Precursor.Quantity": [1.0] * len(SEQUENCES),
-        }
-    )
-    metadata = pd.DataFrame(
-        {"sample": ["sample_1.raw"], "id": ["1"], "label": ["control_1"], "condition": ["control"]}
-    )
-    monkeypatch.setattr(ai_functions, "get_peptide_frame", lambda: frame.copy())
-    monkeypatch.setattr(
-        ai_functions._plot_images,
-        "_peptide_coverage_metadata",
-        lambda source, include_id: metadata.copy(),
-    )
+    frame = _modification_frame()
+    _patch_peptide_context(monkeypatch, frame)
 
     real_counts = peptide_tools.peptide_modification_counts
     calls: list[int] = []
@@ -181,15 +176,7 @@ def test_ai_missed_cleavage_context_uses_selected_backend_rule(monkeypatch) -> N
             "Precursor.Quantity": [1.0, 1.0, 1.0],
         }
     )
-    metadata = pd.DataFrame(
-        {"sample": ["sample_1.raw"], "id": ["1"], "label": ["control_1"], "condition": ["control"]}
-    )
-    monkeypatch.setattr(ai_functions, "get_peptide_frame", lambda: frame.copy())
-    monkeypatch.setattr(
-        ai_functions._plot_images,
-        "_peptide_coverage_metadata",
-        lambda source, include_id: metadata.copy(),
-    )
+    _patch_peptide_context(monkeypatch, frame)
 
     text = ai_functions.peptide_missed_cleavage_plot_context(
         mode={"protease": "trypsin_lysc"}

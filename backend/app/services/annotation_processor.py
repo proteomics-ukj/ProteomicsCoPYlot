@@ -8,7 +8,7 @@ import pandas as pd
 
 from app.services.contaminant_filter import contaminant_mask, contaminant_reference
 
-from app.schemas.annotation import ConditionAssignment, FilterMode
+from app.schemas.annotation import AnnotationFilterConfig, ConditionAssignment, FilterMode, MetadataSource
 # One reading of the sample column for uploads and annotation (2026-10-02).
 from app.services.metadata_upload_store import MAX_MANUAL_METADATA_PROFILES, _resolve_sample_column
 from app.services.functions import (
@@ -20,6 +20,19 @@ from app.services.functions import (
     normalize_data,
     use_existing_log2_data,
 )
+
+def annotation_filter_kwargs(config: AnnotationFilterConfig) -> dict:
+    """Translate stored filter settings into annotation computation arguments."""
+    return {
+        "min_present": config.minPresent,
+        "filter_mode": config.mode,
+        "filter_method": config.method,
+        "min_percentage": config.minPercentage,
+        "normalization": config.normalization,
+        "normalization_fit": config.normalizationFit,
+        "contaminants": config.contaminants.model_dump(),
+    }
+
 
 @dataclass
 class AnnotationComputationResult:
@@ -62,11 +75,12 @@ _LOG2_NAME = re.compile(r"(?<![a-z0-9])log2(?![0-9])", re.IGNORECASE)
 def log2_scale_hint(data: pd.DataFrame, sample_columns: list[str]) -> str | None:
     """A note for the scale checkbox when the values look unusual for log2 intensities.
 
-    The auto-detection cannot tell log2 from log10, natural-log or count data:
-    all of them sit in a narrow positive range. Two patterns are worth a word:
-    mostly whole numbers (count data such as spectral counts), and a median
+    The auto-detection cannot tell log2 from log10 or natural-log data: all of
+    them sit in a narrow positive range. One pattern is worth a word: a median
     below 12 with no negative values (log2 intensities from mass spectrometry
-    usually lie around 15-30; log10 or ln intensities lie lower). Centred data
+    usually lie around 15-30; log10 or ln intensities lie lower). Whole numbers
+    are not remarked on: MaxQuant LFQ intensities and summed Skyline areas are
+    whole numbers too (the note called them count data, 2026-11-13). Centred data
     and log2 ratios have negative values and are left alone, and so are columns
     whose names all say log2. The checkbox itself is not changed.
     """
@@ -95,12 +109,6 @@ def log2_scale_hint(data: pd.DataFrame, sample_columns: list[str]) -> str | None
                 "linear intensities -- for example background-subtracted ones. The box is ticked because "
                 "of the negative values; untick it if these are linear values."
             )
-    whole = float(np.mean(np.isclose(finite, np.round(finite), rtol=0, atol=1e-9)))
-    if whole >= 0.95 and float(finite.min()) >= 0:
-        return (
-            f"{whole:.0%} of the values are whole numbers, which looks like count data (for example "
-            "spectral counts) rather than log2 values. If so, untick the box so the counts are log2-transformed."
-        )
     if all(_LOG2_NAME.search(column) for column in columns):
         return None
     median = float(np.median(finite))
@@ -439,9 +447,11 @@ def filter_then_normalize(
         assert reference is not None  # Enabled matching above requires a reference.
         filtered_data.attrs["contaminant_filter"] = (
             f"Contaminant filter: removed {contaminant_count:,} rows after the valid-value filter; "
-            f"{reference['database']}; categories {contaminants.get('categories', [1, 2, 3, 4, 5])}; "
+            f"{reference['database']}; categories {contaminants.get('categories', [1, 2, 3, 4, 5, 6])}; "
             f"exact names{' and accessions' if contaminants.get('matchAccessions', True) else ' only'}; "
-            f"every member must match. Metadata SHA-256: {reference['metadataSha256']}."
+            f"every member must match for database categories. "
+            + ("Upstream-flagged contaminants are independently removed. " if 6 in contaminants.get('categories', [1, 2, 3, 4, 5, 6]) else "")
+            + f"Metadata SHA-256: {reference['metadataSha256']}."
         )
     return log2_data, filtered_data
 
@@ -527,16 +537,23 @@ def _table_shape_warnings(data: pd.DataFrame) -> list[str]:
     flagged = np.zeros(len(data), dtype=bool)
     if label is not None:
         flagged |= data[label].fillna("").astype(str).str.startswith(_DECOY_PREFIXES).to_numpy(dtype=bool)
-    for column in ("Reverse", "Potential contaminant", "Only identified by site"):
+    for column in ("Reverse", "Potential contaminant"):
         if column in columns:
             flagged |= data[column].astype(str).str.strip().eq("+").to_numpy(dtype=bool)
     decoys = int(flagged.sum())
     if decoys:
         warnings.append(
             f"{decoys:,} rows look like decoy or contaminant entries (REV__/CON__ identifiers or a '+' in "
-            "Reverse / Potential contaminant / Only identified by site). These flags do not themselves remove rows. Remove them from "
-            "the export if they should not enter the analysis."
+            "Reverse / Potential contaminant). Select Upstream-flagged contaminants "
+            "to remove upstream contaminant flags independently of the cRAP database; remove other "
+            "rows from the export if they should not enter the analysis."
         )
+    removed = data.attrs.get("decoy_rows_removed")
+    if removed:
+        warnings.append(
+            f"{int(removed):,} decoy rows (\"+\" in MaxQuant's Reverse column) were removed when the file was loaded."
+        )
+    warnings.extend(str(note) for note in data.attrs.get("loading_notes") or [])
     return warnings
 
 
@@ -848,6 +865,52 @@ def _dropped_samples_warning(dropped: list[str], annotated: int, source: str) ->
     )
 
 
+UPLOADED_METADATA_NOTICE = "Using uploaded metadata table for annotation."
+
+
+def _annotation_warnings(
+    data: pd.DataFrame,
+    metadata: pd.DataFrame,
+    filtered_data: pd.DataFrame,
+    sample_columns: list[str],
+    *,
+    metadata_source: MetadataSource,
+    dropped_samples: list[str],
+    unparseable_columns: list[tuple[str, int, int]],
+    resolved_log2: bool,
+    log2_warning: str | None,
+    normalization: str,
+    normalization_fit: str,
+) -> list[str]:
+    warnings = [UPLOADED_METADATA_NOTICE] if metadata_source == "uploaded" else []
+    if unparseable_columns:
+        warnings.append(_unparseable_warning(unparseable_columns))
+    identifier_warning = _identifier_warning(data)
+    if identifier_warning:
+        warnings.append(identifier_warning)
+    warnings.extend(_table_shape_warnings(data))
+    if dropped_samples:
+        label = "uploaded metadata row(s)" if metadata_source == "uploaded" else "assigned column(s)"
+        warnings.append(_dropped_samples_warning(dropped_samples, len(sample_columns), label))
+    if log2_warning:
+        warnings.append(log2_warning)
+    negative_warning = _negative_linear_warning(data, sample_columns, resolved_log2)
+    if negative_warning:
+        warnings.append(negative_warning)
+    zero_warning = _log2_zero_warning(data, sample_columns, resolved_log2)
+    if zero_warning:
+        warnings.append(zero_warning)
+    if metadata_source == "auto":
+        warnings.append("Metadata was auto-generated from date-like column names.")
+    if filtered_data.attrs.get("contaminant_filter"):
+        warnings.append(filtered_data.attrs["contaminant_filter"])
+    warnings.append(_normalization_warning(normalization, normalization_fit))
+    missingness_warning = _missingness_warning(filtered_data, metadata, normalization, normalization_fit)
+    if missingness_warning:
+        warnings.append(missingness_warning)
+    return warnings
+
+
 def compute_annotation(
     data: pd.DataFrame,
     conditions: list[ConditionAssignment],
@@ -904,35 +967,12 @@ def compute_annotation(
         if str(column) not in annotated and str(column).strip() not in annotated_stripped
     ]
 
-    warnings: list[str] = []
-    if unparseable_columns:
-        warnings.append(_unparseable_warning(unparseable_columns))
-    identifier_warning = _identifier_warning(data)
-    if identifier_warning:
-        warnings.append(identifier_warning)
-    warnings.extend(_table_shape_warnings(data))
-    if dropped_columns:
-        warnings.append(
-            _dropped_samples_warning(
-                dropped_columns, len(sample_columns), "assigned column(s)"
-            )
-        )
-    if log2_warning:
-        warnings.append(log2_warning)
-    negative_warning = _negative_linear_warning(data, sample_columns, resolved_log2)
-    if negative_warning:
-        warnings.append(negative_warning)
-    zero_warning = _log2_zero_warning(data, sample_columns, resolved_log2)
-    if zero_warning:
-        warnings.append(zero_warning)
-    if auto_detected:
-        warnings.append("Metadata was auto-generated from date-like column names.")
-    if filtered_data.attrs.get("contaminant_filter"):
-        warnings.append(filtered_data.attrs["contaminant_filter"])
-    warnings.append(_normalization_warning(normalization, normalization_fit))
-    missingness_warning = _missingness_warning(filtered_data, metadata, normalization, normalization_fit)
-    if missingness_warning:
-        warnings.append(missingness_warning)
+    warnings = _annotation_warnings(
+        data, metadata, filtered_data, sample_columns,
+        metadata_source="auto" if auto_detected else "manual", dropped_samples=dropped_columns,
+        unparseable_columns=unparseable_columns, resolved_log2=resolved_log2,
+        log2_warning=log2_warning, normalization=normalization, normalization_fit=normalization_fit,
+    )
 
     return AnnotationComputationResult(
         metadata=metadata,
@@ -985,35 +1025,12 @@ def compute_annotation_from_metadata(
         contaminants=contaminants, contaminant_snapshot=contaminant_snapshot,
     )
 
-    warnings = ["Using uploaded metadata table for annotation."]
-    if unparseable_columns:
-        warnings.append(_unparseable_warning(unparseable_columns))
-    identifier_warning = _identifier_warning(data)
-    if identifier_warning:
-        warnings.append(identifier_warning)
-    warnings.extend(_table_shape_warnings(data))
-    if unmatched_metadata_samples:
-        warnings.append(
-            _dropped_samples_warning(
-                unmatched_metadata_samples,
-                len(sample_columns),
-                "uploaded metadata row(s)",
-            )
-        )
-    if log2_warning:
-        warnings.append(log2_warning)
-    negative_warning = _negative_linear_warning(data, sample_columns, resolved_log2)
-    if negative_warning:
-        warnings.append(negative_warning)
-    zero_warning = _log2_zero_warning(data, sample_columns, resolved_log2)
-    if zero_warning:
-        warnings.append(zero_warning)
-    if filtered_data.attrs.get("contaminant_filter"):
-        warnings.append(filtered_data.attrs["contaminant_filter"])
-    warnings.append(_normalization_warning(normalization, normalization_fit))
-    missingness_warning = _missingness_warning(filtered_data, normalized_metadata, normalization, normalization_fit)
-    if missingness_warning:
-        warnings.append(missingness_warning)
+    warnings = _annotation_warnings(
+        data, normalized_metadata, filtered_data, sample_columns,
+        metadata_source="uploaded", dropped_samples=unmatched_metadata_samples,
+        unparseable_columns=unparseable_columns, resolved_log2=resolved_log2,
+        log2_warning=log2_warning, normalization=normalization, normalization_fit=normalization_fit,
+    )
 
     return AnnotationComputationResult(
         metadata=normalized_metadata,

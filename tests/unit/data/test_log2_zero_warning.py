@@ -8,7 +8,6 @@ and the report does not repeat it.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,7 +19,7 @@ from app.schemas.annotation import ConditionAssignment
 from app.services.annotation_processor import compute_annotation, compute_annotation_from_metadata
 from app.services.dataset_store import reset_all_datasets, save_table_dataset
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 EXAMPLE = ROOT / "proteomicscopylot" / "example_data"
 SAMPLES = ["A1", "A2", "A3", "B1", "B2", "B3"]
 PREFIX = "values ("

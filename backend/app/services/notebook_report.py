@@ -9,7 +9,7 @@ import logging
 import pandas as pd
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes, portable_filename
-from app.services.notebook_preprocessing import report_recipe_sink
+from app.services.notebook_preprocessing import report_recipe_sink, report_replays
 from app.services.notebook_snapshots import snapshots
 from app.services.notebook_source import (
     NotebookSource, extract_notebook_source, function_definition, merge_source, module_source,
@@ -36,10 +36,14 @@ _SECTION_NAMES = {
     'qc_abundance_interactive_html': 'Interactive Abundance', 'qc_peptide_coverage_plot': 'Coverage',
     'peptide_rt_plot': 'Retention Time', 'peptide_modification_plot': 'Modifications',
     'peptide_missed_cleavage_plot': 'Missed Cleavages', 'phosphosite_plot_png': 'Phosphosite Counts',
-    'phospho_coverage_png': 'Phosphosite Coverage', 'completeness_missing_value_plot': 'Missing Value Plot',
+    'phospho_coverage_png': 'Phosphosite Coverage', 'phospho_sty_png': 'STY Plot', 'completeness_missing_value_plot': 'Missing Value Plot',
     'completeness_missing_value_plot_peptide': 'Missing Value Plot', 'volcano_png': 'Volcano Plot',
     'volcano_html': 'Interactive Volcano Plot', 'qc_coverage_table': 'Coverage summary table',
     'qc_boxplot_table': 'Boxplot summary table', 'qc_cv_table': 'CV summary table',
+    'pearson_correlation_png': 'Pearson Correlation', 'pearson_correlation_html': 'Interactive Pearson Correlation',
+    'venn_png': 'Venn Diagram', 'single_protein_boxplot_plot': 'Single Protein Boxplot',
+    'single_protein_lineplot_plot': 'Single Protein Line Plot', 'anova_png': 'One-way ANOVA',
+    'ora_plot_png': 'GO Enrichment (ORA)',
 }
 
 
@@ -83,6 +87,9 @@ def _render(name, *args, **options):
     from app.services import notebook_peptide as peptide, notebook_phospho as phospho
     from app.services import notebook_completeness as completeness, notebook_interactive as interactive
     from app.services.notebook_volcano import render_volcano
+    from app.services import notebook_comparison as comparison, notebook_single as single
+    from app.services.notebook_anova import render_anova
+    from app.services.notebook_ora import render_ora
 
     qc_names = {renderer: plot for plot, renderer in qc.QC_RENDERERS.items()}
     if name in qc_names:
@@ -97,10 +104,18 @@ def _render(name, *args, **options):
         'peptide_missed_cleavage_plot': peptide.render_missed_cleavage,
         'phosphosite_plot_png': phospho.render_counts,
         'phospho_coverage_png': phospho.render_coverage,
+        'phospho_sty_png': phospho.render_sty,
         'completeness_missing_value_plot': lambda **kw: completeness.render_completeness(plot='missing-value', **kw),
         'completeness_missing_value_plot_peptide': lambda **kw: completeness.render_peptide_missing_values('peptide', **kw),
         'volcano_png': render_volcano,
         'volcano_html': lambda *a, **kw: render_volcano(*a, interactive=True, **kw),
+        'pearson_correlation_png': lambda **kw: comparison.render_comparison('pearson', **kw),
+        'pearson_correlation_html': lambda **kw: comparison.render_comparison('pearson', interactive=True, **kw),
+        'venn_png': lambda **kw: comparison.render_comparison('venn', **kw),
+        'single_protein_boxplot_plot': single.render_box,
+        'single_protein_lineplot_plot': single.render_line,
+        'anova_png': render_anova,
+        'ora_plot_png': render_ora,
     }
     return adapters[name](*args, **options)
 
@@ -131,8 +146,11 @@ def report_plot(renderer, *args, **options):
         # An unavailable export must not take a working HTML report away.
         LOGGER.exception('Report notebook adapter failed: %s', renderer.__name__)
         del collector.recipes[before:]
+        # A plot that cannot be drawn either is left out of the report, so the
+        # notebook is not missing it.
+        content = renderer(*args, **options)
         collector.omitted.append(_section_label(renderer, args, options))
-        return renderer(*args, **options)
+        return content
 
 
 def _merge_counts(code):
@@ -167,6 +185,10 @@ def report_table(renderer, *args, **options):
         code = recipe.calculation[recipe.calculation.index('table_options ='):]
         roots = tuple(dict.fromkeys(node.attr for node in ast.walk(ast.parse(recipe.preparation + '\n' + code))
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'functions'))
+        if recipe.replay:
+            # The input cell is written at download; it reads and replays the original file.
+            roots = tuple(dict.fromkeys((*roots, 'read_original_table', 'replay_id_translations',
+                                         'place_imputed_values', recipe.replay['function'])))
         collector.recipes[-1] = replace(recipe, plot_name=f'{kind.capitalize()} {plot} summary table',
             source=extract_notebook_source(recipe.source.code, roots),
             resources={key: value for key, value in recipe.resources.items() if not key.startswith('original.')},
@@ -213,15 +235,43 @@ def load_functions(path, name):
     return module
 
 
-def combine_report(title, recipes):
+def combine_report(title, recipes, ship_matrices=False, ship_imputed=False):
+    """One notebook for the whole report, packaged for the two export options.
+
+    Each section keeps its own code and settings. A data matrix several
+    sections share is stored once, an original file is read once, and a
+    preprocessing is run once.
+    """
+    from hashlib import sha256
+    from app.services.notebook_archive import (
+        BASIS_MATRIX, INPUT_MATRIX, export_explanation, imputed_values_note, protein_side_code, replay_preparation, shipped_matrices,
+        side_resource,
+    )
+
     loader = extract_notebook_source(module_source('notebook_report.py'), ('load_functions',))
     imports = tuple(sorted(set(loader.imports).union(*(recipe.source.imports for recipe in recipes))))
     resources = {'input.parquet': dataframe_bytes(pd.DataFrame()),
                  'metadata.parquet': dataframe_bytes(pd.DataFrame())}
-    sections, provenance, inputs = [], [], {}
+    sections, provenance, inputs, recorded, required = [], [], {}, {}, set()
     for index, recipe in enumerate(recipes, 1):
         section = f'section_{index:03d}'
-        resources.update({f'{section}/{key}': value for key, value in recipe.resources.items()})
+        replay = recipe.replay
+        shipped = shipped_matrices(replay, ship_matrices, ship_imputed) if replay else set()
+        protein = replay.get('protein') if replay else None
+        protein_shipped = shipped_matrices(protein, ship_matrices, ship_imputed) if protein else set()
+        matrices, protein_matrices = {}, {}
+        for key, value in recipe.resources.items():
+            for base, wanted, found in ((INPUT_MATRIX, shipped, matrices), (BASIS_MATRIX, shipped, matrices),
+                                        (side_resource('protein', INPUT_MATRIX), protein_shipped, protein_matrices),
+                                        (side_resource('protein', BASIS_MATRIX), protein_shipped, protein_matrices)):
+                if key == base and (replay if found is matrices else protein):
+                    if key.removeprefix('protein_') in wanted:
+                        name = f'shared/{sha256(value).hexdigest()[:16]}.parquet'
+                        resources[name] = value
+                        found[key.removeprefix('protein_')] = f"ROOT_RESOURCES / {json.dumps(name)}"
+                    break
+            else:
+                resources[f'{section}/{key}'] = value
         resources[f'{section}/functions.py'] = recipe.source.code.encode()
         resources[f'{section}/settings.json'] = json.dumps(recipe.settings, allow_nan=False).encode()
         filename = portable_filename(recipe.original_filename)
@@ -235,43 +285,74 @@ def combine_report(title, recipes):
             "settings = json.loads((RESOURCES / 'settings.json').read_text(encoding='utf-8'))\n"
             "metadata = read_resource_table(RESOURCES / 'metadata.parquet')\n"
             f"Path('outputs/{section}').mkdir(parents=True, exist_ok=True)\n")
+        preparation, explanation, calculation = recipe.preparation, recipe.input_explanation, recipe.calculation
         if recipe.provenance.get('inputReplay') == 'original-file':
-            key = recipe.provenance['kind']
+            # A collapsed table is rebuilt from the phosphosite file, the same one
+            # the phosphosite sections read.
+            key = 'phospho' if replay and replay.get('collapse') else recipe.provenance['kind']
             if key in inputs and inputs[key] != filename:
                 raise ValueError('Conflicting original uploads in the report.')
             inputs[key] = filename
-            code += f'data_path = data_paths[{json.dumps(key)}]\n'
+            if replay:
+                recorded[section] = replay['recorded']
+                if not shipped:
+                    required.add(key)
+                preparation = replay_preparation(replay, shipped, {'section': section, 'path': key, 'matrices': matrices})
+                explanation = export_explanation(replay, shipped)
+                item['provenance'] = {**section_provenance, 'shippedMatrices': sorted(shipped)}
+                if protein:
+                    protein_file = portable_filename(protein['recorded']['filename'])
+                    if inputs.setdefault('protein', protein_file) != protein_file:
+                        raise ValueError('Conflicting original uploads in the report.')
+                    recorded[section] = {**replay['recorded'], 'protein': protein['recorded']}
+                    if not protein_shipped:
+                        required.add('protein')
+                    calculation, _ = protein_side_code(calculation, replay, ship_matrices, ship_imputed,
+                        {'section': section, 'path': 'protein', 'matrices': protein_matrices})
+            else:
+                required.add(key)
+                code += f'data_path = data_paths[{json.dumps(key)}]\n'
         if recipe.uses_imputed_input:
             if not recipe.imputation_recipe.strip():
                 raise ValueError('Imputation history is required for every imputed report section.')
-            code += '# Reuse the exact imputed matrix; do not draw new values.\n'
-            code += ''.join('# ' + line + '\n' for line in recipe.imputation_recipe.splitlines())
-            item['imputationRecipe'] = recipe.imputation_recipe
-        code += recipe.preparation + '\n' + recipe.calculation
+            code += '# The imputed values are the ones CoPYlot drew; no new values are drawn.\n'
+            note = imputed_values_note(recipe.imputation_recipe, replay)
+            code += ''.join('# ' + line + '\n' for line in note.splitlines())
+            item['imputationRecipe'] = note
+        code += preparation + '\n' + calculation
         # Existing recipes use fixed output basenames; isolate those, not their calculations.
         code = code.replace("'reproduced", f"'outputs/{section}/reproduced")
+        code = code.replace("'recalculated", f"'outputs/{section}/recalculated")
         code = code.replace('"reproduced', f'"outputs/{section}/reproduced')
-        sections.append((f'## {index}. {recipe.plot_name}\n\n{recipe.input_explanation}', code))
+        sections.append((f'## {index}. {recipe.plot_name}\n\n{explanation}', code))
     preparation = ('report_functions = functions\nROOT_RESOURCES = RESOURCES\n\n'
-                   '# Set each path once, using the original uploaded files (filenames below).\n'
+                   '# The original uploaded files (filenames below). A path marked required must be set;\n'
+                   '# an optional one may stay empty, the shipped matrices are then used.\n'
                    'data_paths = {\n')
     for kind, filename in inputs.items():
-        preparation += f'    {json.dumps(kind)}: Path("YOUR_ORIGINAL_DATA_FILE"),  # {json.dumps(filename)}\n'
-    preparation += '}\n'
+        value, note = (('Path("YOUR_ORIGINAL_DATA_FILE")', 'required') if kind in required else ('""', 'optional'))
+        preparation += f'    {json.dumps(kind)}: {value},  # {note}: {json.dumps(filename)}\n'
+    preparation += ('}\n\n'
+                    '# A file is read once and a preprocessing is run once for all sections that use it.\n'
+                    '_shared = {}\n'
+                    'def shared(key, compute):\n'
+                    '    if key not in _shared:\n'
+                    '        _shared[key] = compute()\n'
+                    '    return _shared[key]\n')
     return NotebookRecipe(plot_name=title + ' — Report',
         source=NotebookSource(loader.code, loader.functions, imports), settings={},
         provenance={'inputReplay': 'report-sections', 'sections': provenance, 'originalFiles': inputs,
-                    'omittedSections': []},
+                    'requiredOriginalFiles': sorted(required), 'recordedInputs': recorded, 'omittedSections': []},
         original_filename='', resources=resources, preparation=preparation, calculation='',
         uses_imputed_input=any(recipe.uses_imputed_input for recipe in recipes),
-        imputation_recipe='Only sections marked usesImputedInput use captured imputation. Exact parameters and '
-            'the corresponding reconstruction code are documented separately in those sections and in the manifest.',
+        imputation_recipe='Sections marked usesImputedInput use the imputed values CoPYlot drew. Exact parameters '
+            'are documented in those sections and in the manifest.',
         calculation_sections=tuple(sections), input_explanation=
             'This notebook reproduces the plots, summary tables and volcano counts of the generated report. '
             'The report\u2019s prose (methods paragraphs and any text you wrote) is not regenerated. '
             'Set the original-file paths below, then run from top to bottom. Each section contains its '
             'own calculation code and settings; outputs are saved in separate numbered folders. '
-            'Only sections that actually use imputed values reuse their documented captured matrix. '
+            'An original file is read once and each preprocessing is run once for all sections that use it. '
             'The manifest identifies imputation separately for every section.')
 
 
@@ -282,21 +363,26 @@ def report_with_notebook(builder, payload):
     collector = ReportRecipes()
     active_token = _active.set(collector)
     sink_token = report_recipe_sink.set(collector.append)
+    replay_token = report_replays.set({})
     try:
         result = builder(payload)
     finally:
+        report_replays.reset(replay_token)
         report_recipe_sink.reset(sink_token)
         _active.reset(active_token)
     try:
-        from app.services.viewer_bootstrap import viewer_mode_enabled
-        if viewer_mode_enabled():
+        from app.services.viewer_policy import notebook_exports_blocked
+        if notebook_exports_blocked():
             return result  # Viewers download the report, not its notebook.
         if runtime_cache_version() != revision:
             raise ValueError('The data changed while the report was generated.')
         if collector.omitted:
             raise ValueError('Report sections could not be captured: ' + '; '.join(collector.omitted))
         if collector.recipes:
-            recipe = combine_report(payload.title.strip() or 'CoPYlot', collector.recipes)
+            title, recipes = payload.title.strip() or 'CoPYlot', tuple(collector.recipes)
+            # Packaged again at download for the user's export options.
+            recipe = replace(combine_report(title, recipes),
+                assemble=lambda matrices, imputed: combine_report(title, recipes, matrices, imputed))
             result.notebookToken = snapshots.capture(get_session_id(), recipe)
     except Exception:
         LOGGER.exception('Full report notebook unavailable')

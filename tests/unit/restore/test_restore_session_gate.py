@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services.session_operation_gate import session_operation_scope
 

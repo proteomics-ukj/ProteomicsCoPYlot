@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from app.services import r_vsn
 from app.services.functions import normalize_data

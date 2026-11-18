@@ -16,13 +16,12 @@ below plants the collision.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.schemas.annotation import AnnotationFilterConfig
 from app.services.annotation_store import save_annotation

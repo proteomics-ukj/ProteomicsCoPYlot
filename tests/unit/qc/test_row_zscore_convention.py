@@ -9,13 +9,12 @@ statistics and of the R functions -- and leaves a row with no spread at zero.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.services import clustering_tools, single_protein_tools, stats_tools
 from proteomicscopylot import notebook_functions

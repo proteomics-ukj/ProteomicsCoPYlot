@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, Response
 from app.services.plot_styling import (
     parse_advanced_plot_settings,
 )
-from app.api.plot_responses import plot_errors, png_response
+from app.api.plot_responses import with_notebook_token, plot_errors, png_response
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -43,9 +43,7 @@ def peptide_rt_route(
             advanced=parse_advanced_plot_settings(advanced),
         )
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/peptide/rt-interactive.html", response_class=HTMLResponse)
@@ -92,9 +90,7 @@ def peptide_modification_route(
             advanced=parse_advanced_plot_settings(advanced),
         )
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/peptide/missed-cleavage.png")
@@ -117,6 +113,4 @@ def peptide_missed_cleavage_route(
             advanced=parse_advanced_plot_settings(advanced),
         )
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)

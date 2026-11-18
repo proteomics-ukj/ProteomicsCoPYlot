@@ -11,7 +11,6 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -19,7 +18,7 @@ import pytest
 from app.api import routes_plots
 from app.services import plot_images
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 # Two groups of three replicates, ~2 units of scatter, 20 units apart -- the
 # scale of PC scores on a proteome.

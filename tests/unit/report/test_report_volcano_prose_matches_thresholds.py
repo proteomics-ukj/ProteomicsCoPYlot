@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 import app.services.report_function as report
 from app.schemas.summary import SummaryVolcanoEntry

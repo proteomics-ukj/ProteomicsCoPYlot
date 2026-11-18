@@ -8,12 +8,10 @@ their labels inline. These tests pin the two together.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services.functions import sample_label_frame
 from app.services.report_function import _sample_mapping_html, _sample_mapping_rows_html

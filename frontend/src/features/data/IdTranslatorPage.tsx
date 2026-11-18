@@ -1,3 +1,5 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import SummaryCard from "../../components/SummaryCard";
 import PreviewTable from "../../components/PreviewTable";
 import SelectField from "../../components/SelectField";
@@ -36,17 +38,21 @@ const DEFAULT_DATABASES = [
   "MGI Synonym",
 ];
 
-export default function IdTranslatorPage() {
-  const [kind, setKind] = useState<AnnotationKind>("protein");
+function IdTranslatorPageView() {
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const saved = useMemo(() => readWorkflowState("data.translator.v1", kind), [kind]);
   const [datasets, setDatasets] = useState<CurrentDatasetsResponse | null>(null);
-  const [column, setColumn] = useState("");
-  const [inputDb, setInputDb] = useState("HGNC Symbol");
-  const [outputDb, setOutputDb] = useState("HGNC Symbol");
-  const [autoDetectInput, setAutoDetectInput] = useState(true);
+  const [column, setColumn] = useState(String(saved.column ?? ""));
+  const [inputDb, setInputDb] = useState(String(saved.inputDb ?? "HGNC Symbol"));
+  const [outputDb, setOutputDb] = useState(String(saved.outputDb ?? "HGNC Symbol"));
+  const [autoDetectInput, setAutoDetectInput] = useState(saved.autoDetectInput !== false);
   const [result, setResult] = useState<IdTranslationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => writeWorkflowState("data.translator.v1", { kind, column, inputDb, outputDb, autoDetectInput }),
+    [kind, column, inputDb, outputDb, autoDetectInput]);
 
   const activeDataset = datasets?.[kind] ?? null;
   const kindOptions = useMemo(() => {
@@ -74,19 +80,15 @@ export default function IdTranslatorPage() {
     if (!kindOptions.some((option) => option.value === kind)) {
       setKind(kindOptions[0].value);
     }
-  }, [kindOptions, kind]);
+  }, [kindOptions, kind, setKind]);
 
   useEffect(() => {
+    if (!activeDataset) return;
     setColumn((current) => {
       if (columns.includes(current)) return current;
       return columns[0] ?? "";
     });
-  }, [kind, columns]);
-
-  useEffect(() => {
-    setResult(null);
-    setError(null);
-  }, [kind]);
+  }, [kind, columns, activeDataset]);
 
   const canRun = Boolean(activeDataset && column && outputDb && (autoDetectInput || inputDb));
   const canDownload = canRun && !loading;
@@ -275,3 +277,5 @@ export default function IdTranslatorPage() {
     </div>
   );
 }
+
+export default withWorkflowSettings("data.translator.v1", IdTranslatorPageView);

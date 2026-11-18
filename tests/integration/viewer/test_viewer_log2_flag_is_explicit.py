@@ -16,7 +16,7 @@ import pytest
 from app.services import viewer_bootstrap
 from app.services.viewer_bootstrap import _log2_flag, _parse_log2_flag, _validate_log2_flags
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 def _package(**overrides):

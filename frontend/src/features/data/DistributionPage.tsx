@@ -1,11 +1,13 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 import { AssistantInput } from "../../components/AssistantFields";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildPlotUrl, getDistributionSummary, isAbortError } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
 import { withBasePath } from "../../lib/basePath";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import type { ContextMode, AnnotationKind, DistributionSummaryResponse } from "../../lib/types";
+import NotebookDownload from "../../components/NotebookDownload";
 import SelectField from "../../components/SelectField";
 import LocalizationCutoffField from "../../components/LocalizationCutoffField";
 
@@ -14,16 +16,10 @@ type Props = {
   advancedPlotOptions?: ReactNode;
 };
 
-export default function DistributionPage({ advancedPlotOptions, onContextModeChange }: Props) {
+function DistributionPageView({ advancedPlotOptions, onContextModeChange }: Props) {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("data.distribution.v1", {}),
-    []
-  );
-  const [kind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein");
-    return value === "phospho" || value === "phosprot" ? value : "protein";
-  });
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("data.distribution.v1", kind), [kind]);
   const { availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +30,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
   }, [onContextModeChange, kind, randomSeed]);
 
   useEffect(() => {
-    writePersistedUiState("data.distribution.v1", { kind, randomSeed });
+    writeWorkflowState("data.distribution.v1", { kind, randomSeed });
   }, [kind, randomSeed]);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
@@ -68,7 +64,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
     const controller = new AbortController();
     loadSummary(controller.signal);
     return () => controller.abort();
-  }, [kind, availableKinds, loadSummary]);
+  }, [kind, availableKinds, loadSummary, setKind]);
 
   const qqPlotUrl = useMemo(
     () => {
@@ -135,7 +131,10 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
       {kindOptions.length > 0 && summary ? (
         <>
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900">QQ Norm Plot</h3>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-slate-900">QQ Norm Plot</h3>
+              <NotebookDownload plotUrl={qqPlotUrl} rendered={null} prepareOnClick />
+            </div>
             {summary.warnings.length > 0 ? (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {summary.warnings.join(" ")}
@@ -194,3 +193,5 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
     </div>
   );
 }
+
+export default withWorkflowSettings("data.distribution.v1", DistributionPageView);

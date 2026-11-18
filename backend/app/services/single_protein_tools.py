@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 from app.services.plot_export import (
     to_png_bytes as _to_png_bytes,
     cm_to_inch as _cm_to_inch,
 )
+
 
 from typing import Literal
 
@@ -661,7 +666,7 @@ def _heatmap_matrix(
         )
         matrix = matrix.loc[completeness.kept]
 
-    if cluster_rows and matrix.shape[0] > 1:
+    if cluster_matrix is not None and cluster_rows and matrix.shape[0] > 1:
         try:
             from scipy.cluster.hierarchy import leaves_list, linkage
         except ModuleNotFoundError as exc:
@@ -673,7 +678,7 @@ def _heatmap_matrix(
         matrix = matrix.iloc[row_order]
         cluster_matrix = cluster_matrix[row_order]
 
-    if cluster_cols and matrix.shape[1] > 1:
+    if cluster_matrix is not None and cluster_cols and matrix.shape[1] > 1:
         try:
             from scipy.cluster.hierarchy import leaves_list, linkage
         except ModuleNotFoundError as exc:
@@ -855,6 +860,7 @@ def single_protein_lineplot_plot(
     advanced: dict | None = None,
     data_source: str = "data",
     show_na_low: bool = False,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     table, ordered_samples = _lineplot_long_table(
@@ -868,7 +874,7 @@ def single_protein_lineplot_plot(
 
     fig, ax = plt.subplots(figsize=(_cm_to_inch(width_cm), _cm_to_inch(height_cm)))
     features = table["Feature"].drop_duplicates().tolist()
-    color_map = plt.get_cmap("tab10", max(1, len(features)))
+    color_map = resolve_plot_colors(len(features), plot_colors)
     if show_na_low and phosprot_values_are_centred(kind):
         # Centred ratios: log2 0 is the middle of the scale, so a baseline
         # there would read as a measurement. Missing stays missing.
@@ -886,7 +892,7 @@ def single_protein_lineplot_plot(
             marker="o",
             markevery=np.flatnonzero(measured.to_numpy()).tolist() if show_na_low else None,
             label=feature,
-            color=color_map(idx),
+            color=color_map[idx],
         )
 
     ax.set_xticks(range(len(ordered_samples)))
@@ -933,6 +939,7 @@ def single_protein_lineplot_plot(
         fig.tight_layout()
 
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
 
 
 def single_protein_boxplot_table(
@@ -1211,6 +1218,10 @@ def single_protein_heatmap_plot(
     apply_advanced_axes(ax, advanced)
     fig.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
+
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['single_protein_lineplot_plot'], kind='protein')
 
 
 apply_cached_wrappers(

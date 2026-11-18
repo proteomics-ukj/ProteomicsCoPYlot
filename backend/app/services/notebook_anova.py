@@ -1,12 +1,10 @@
 """Portable ANOVA calculations and heatmaps extracted from the application."""
 from functools import lru_cache
 import json
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
+from app.services.notebook_source import portable_styling, portable_output_format, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_volcano import volcano_source
 
 
@@ -24,9 +22,12 @@ def anova_source():
         "mask = imputation_mask")
     tables = function_definition(original, "run_anova")
     tables = replace_once(tables, "def run_anova(payload: AnovaRequest) -> AnovaResultResponse:",
-        "def calculate_tables(data, metadata, request, imputation_mask=None):\n    payload = SimpleNamespace(**request)")
+        "def calculate_tables(data, metadata, request, imputation_mask=None, *, analysis=None, clustering=None):\n    payload = SimpleNamespace(**request)")
     tables = replace_once(tables, "_anova_dataframe(payload)",
-                           "_anova_dataframe(payload, data, metadata, imputation_mask)")
+                           "analysis if analysis is not None else _anova_dataframe(payload, data, metadata, imputation_mask)")
+    cluster_call = "_anova_cluster_dataframe(anova_df, metadata, payload)"
+    shared_cluster = f"clustering if clustering is not None else {cluster_call}"
+    tables = replace_once(tables, cluster_call, shared_cluster)
     start = tables.index("    metadata: pd.DataFrame | None = None")
     end = tables.index("    completeness_notice:", start)
     tables = tables[:start] + tables[end:]
@@ -37,6 +38,11 @@ def anova_source():
     prepare = replace_once(prepare,
         "    _, label_column, anova_df, _ = _anova_dataframe(payload)\n    _, _, metadata, _ = _stats_source(payload.kind, data_source=payload.dataSource)",
         "    payload = SimpleNamespace(**request)\n    _, label_column, anova_df, _ = _anova_dataframe(payload, data, metadata, imputation_mask)")
+    prepare = replace_once(prepare, "    selected_cluster: int | None = None,",
+                           "    selected_cluster: int | None = None, *, analysis=None, clustering=None,")
+    prepare = replace_once(prepare, "= _anova_dataframe(payload, data, metadata, imputation_mask)",
+                           "= analysis if analysis is not None else _anova_dataframe(payload, data, metadata, imputation_mask)")
+    prepare = replace_once(prepare, cluster_call, shared_cluster)
     figure = function_definition(original, "_anova_heatmap_figure")
     figure = replace_once(figure, "    kind: AnnotationKind,", "    condition_palette: dict,")
     figure = replace_once(figure,
@@ -52,8 +58,7 @@ def anova_source():
     rendering = replace_once(rendering, "kind=payload.kind,", "condition_palette=condition_palette,")
     helpers = "\n\n".join(function_definition(original, name) for name in (
         "_anova_cluster_dataframe", "_condition_columns"))
-    styles = "\n".join(line for line in module_source("plot_styling.py").splitlines()
-                       if not line.startswith("from app."))
+    styles = portable_styling()
     code = merge_source(
         "import numpy as np\nimport pandas as pd\nfrom types import SimpleNamespace\n"
         "from scipy.cluster.hierarchy import linkage, leaves_list, fcluster",
@@ -75,12 +80,10 @@ def anova_source():
 
 @lru_cache(maxsize=1)
 def anova_module():
-    module = ModuleType("_copylot_portable_anova")
-    sys.modules[module.__name__] = module
-    exec(anova_source().code, module.__dict__)
-    return module
+    return portable_module("_copylot_portable_anova", anova_source)
 
 
+@cached_notebook_render
 def render_anova(payload, *, selected_cluster=None, advanced=None):
     from app.services import stats_tools
     from app.services.annotation_store import get_annotation
@@ -111,17 +114,25 @@ def render_anova(payload, *, selected_cluster=None, advanced=None):
     # Labels/legend/dendrogram controls only change the figure. Reuse the
     # scientific result for this session and data revision when restyling it.
     analysis_request = {**request, "showRowLabels": False, "showLegend": False, "showDendrograms": False}
+    def calculate():
+        from types import SimpleNamespace
+        params = SimpleNamespace(**analysis_request)
+        analysis = module._anova_dataframe(params, data, metadata, mask)
+        clustering = (module._anova_cluster_dataframe(analysis[2], metadata, params)
+                      if params.source == "anova_cluster" else None)
+        inputs = (data, metadata, analysis_request, mask)
+        tables = module.calculate_tables(*inputs, analysis=analysis, clustering=clustering)
+        prepared = module._prepare_anova_plot_frame(*inputs, selected_cluster=selected_cluster,
+                                                    analysis=analysis, clustering=clustering)
+        return tables, prepared
+
     results, prepared = cached_call("notebook-anova-analysis",
         {"revision": revision, "request": analysis_request, "selected_cluster": selected_cluster},
-        lambda: (module.calculate_tables(data, metadata, analysis_request, mask),
-                 module._prepare_anova_plot_frame(data, metadata, analysis_request, mask, selected_cluster=selected_cluster)))
+        calculate)
     figure_settings = dict(selected_cluster=selected_cluster, advanced=advanced, condition_palette=palette)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = module.render_plot(data, metadata, request, imputation_mask=mask, prepared=prepared, **figure_settings)
-    finally:
-        module.plot_output_format.reset(format_token)
     resources = {"input.parquet": dataframe_bytes(data), "metadata.parquet": dataframe_bytes(metadata),
                  f"original.{fmt}": bytes(content)}
     for key in ("rows", "clusterRows", "postHocRows"):

@@ -1,4 +1,4 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
@@ -45,7 +45,7 @@ def test_canvas_gene_list_download_replays_the_gui_table(database, monkeypatch, 
     with ZipFile(io.BytesIO(blob)) as archive:
         archive.extractall(tmp_path)
     notebook = json.loads(next(tmp_path.glob("*.ipynb")).read_text())
-    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    cells = notebook_code(notebook)
     subprocess.run([sys.executable, "-I", "-c", "import sys;sys.path.insert(0,'.')\n" + cells],
                    cwd=tmp_path, check=True, timeout=90)
     exported = pd.read_csv(tmp_path / "ora_terms.csv")
@@ -158,10 +158,9 @@ def test_ora_standalone_notebook_recalculates_and_renders_exact_plot(database, m
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    replay = replay_cells(cells, tmp_path, timeout=90)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == actual
 
@@ -213,10 +212,9 @@ def test_captured_ora_reruns_upstream_statistics(inputs, analysis_database, tmp_
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    replay = replay_cells(cells, tmp_path, timeout=90)
     assert replay.returncode == 0, replay.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
 
@@ -277,10 +275,9 @@ def test_no_term_snapshot_is_exportable_without_rendering(inputs, analysis_datab
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    replay = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    replay = replay_cells(cells, tmp_path, timeout=90)
     assert replay.returncode == 0, replay.stderr
     assert not (tmp_path / 'reproduced.png').exists()
     assert 'No enriched terms passed' in replay.stdout

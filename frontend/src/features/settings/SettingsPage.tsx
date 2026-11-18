@@ -7,6 +7,12 @@ import {
   setSessionTheme,
   type AppTheme,
 } from "../../lib/appSettings";
+import {
+  NOTEBOOK_EXPORTS_ENABLED,
+  getNotebookExportOptions,
+  setNotebookExportOptions,
+  type NotebookExportOptions,
+} from "../../lib/notebookExportOptions";
 import type { RRuntimeStatusResponse } from "../../lib/types";
 
 function SettingsCard({
@@ -68,6 +74,11 @@ function RuntimeRow({ label, value }: { label: string; value: string }) {
 export default function SettingsPage() {
   const [theme, setTheme] = useState<AppTheme>(() => getSessionTheme());
   const [advancedPlots, setAdvancedPlots] = useState(() => getAdvancedPlotMode());
+  const [notebookExport, setNotebookExport] = useState(() => getNotebookExportOptions());
+  const updateNotebookExport = (next: NotebookExportOptions) => {
+    setNotebookExportOptions(next);
+    setNotebookExport(next);
+  };
   const [rRuntime, setRRuntime] = useState<RRuntimeStatusResponse | null>(null);
   const [runtimeLoading, setRuntimeLoading] = useState(true);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -170,6 +181,25 @@ export default function SettingsPage() {
             description="Show the full styling panel under every plot: title, axes, legend, points, colors. Toggle it from anywhere with Ctrl/Cmd + Shift + E."
           />
         </SettingsCard>
+
+        {NOTEBOOK_EXPORTS_ENABLED ? (
+          <SettingsCard eyebrow="Features" title="Notebook Export">
+            <Toggle
+              checked={notebookExport.matrices}
+              onChange={(matrices) => updateNotebookExport({ ...notebookExport, matrices })}
+              label="Ship data matrices"
+              description="Include the data matrix each output was drawn from, so the notebook runs without your original file. Off: the export stays small and asks for the path of your original file."
+            />
+            <div className="mt-4">
+              <Toggle
+                checked={notebookExport.imputed}
+                onChange={(imputed) => updateNotebookExport({ ...notebookExport, imputed })}
+                label="Ship full imputed matrix"
+                description="Include the whole imputed matrix. Off: only the imputed values are shipped and placed into the matrix rebuilt from your data."
+              />
+            </div>
+          </SettingsCard>
+        ) : null}
 
         <div className="lg:col-span-2">
           <SettingsCard eyebrow="Runtime" title="R Compatibility">

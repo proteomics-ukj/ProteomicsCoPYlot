@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 
 from app.services.plot_export import (
     cm_to_inch as _cm_to_inch,
@@ -23,6 +27,7 @@ from app.services.functions import (
 from app.services.analysis_matrix import DATA_SOURCES, data_source_options, select_matrix, imputed_data_available
 from app.services.plot_styling import (
     advanced_label,
+    advanced_number,
     advanced_plotly_layout,
     apply_advanced_axes,
     advanced_color,
@@ -191,11 +196,12 @@ def phosphosite_plot_table() -> pd.DataFrame:
 
 
 def phosphosite_plot_png(
-    color: str = "#87CEEB",
+    color: str = "",
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt, _ = _get_plt()
     summary = phosphosite_plot_table()
@@ -206,7 +212,7 @@ def phosphosite_plot_png(
         ax.axis("off")
         return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
 
-    ax.barh(summary["Term"], summary["Count"], color=advanced_color(advanced, "barColor", color))
+    ax.barh(summary["Term"], summary["Count"], color=advanced_color(advanced, "barColor", color or resolve_plot_colors(1, plot_colors)[0]))
     max_count = max(summary["Count"].max(), 1)
     for index, value in enumerate(summary["Count"]):
         ax.text(float(value) + max_count * 0.01, index, str(int(value)), va="center", fontweight="bold")
@@ -220,6 +226,7 @@ def phosphosite_plot_png(
     apply_advanced_axes(ax, advanced)
     plt.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
 
 
 def _coverage_counts(
@@ -298,14 +305,15 @@ def phospho_coverage_png(
     header: bool = True,
     legend: bool = True,
     mode: str = "Normal",
-    color_class_i: str = "#2563eb",
-    color_not_class_i: str = "#f59e0b",
+    color_class_i: str = "",
+    color_not_class_i: str = "",
     random_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
     conditions: list[str] | None = None,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt, _ = _get_plt()
     counts, summary = _coverage_counts(include_id=include_id, conditions=conditions)
@@ -316,15 +324,15 @@ def phospho_coverage_png(
         conds = summary["Condition"].astype(str).tolist()
         x = np.arange(len(conds))
         categories = [
-            ("Class I", "classI", advanced_color(advanced, "classIColor", color_class_i)),
+            ("Class I", "classI", advanced_color(advanced, "classIColor", color_class_i or resolve_plot_colors(3, plot_colors)[0])),
             (
                 "Not Class I",
                 "notClassI",
-                advanced_color(advanced, "classNotIColor", color_not_class_i),
+                advanced_color(advanced, "classNotIColor", color_not_class_i or resolve_plot_colors(3, plot_colors)[1]),
             ),
         ]
         if counts["Unclassified"].any():
-            categories.append(("Unclassified", "unclassified", "#94a3b8"))
+            categories.append(("Unclassified", "unclassified", resolve_plot_colors(3, plot_colors)[2]))
         width = .7 / len(categories)
         for index, (category, prefix, color) in enumerate(categories):
             offset = (index - (len(categories) - 1) / 2) * width
@@ -350,19 +358,19 @@ def phospho_coverage_png(
         ax.bar(
             x,
             class_vals,
-            color=advanced_color(advanced, "classIColor", color_class_i),
+            color=advanced_color(advanced, "classIColor", color_class_i or resolve_plot_colors(3, plot_colors)[0]),
             label="Class I",
         )
         ax.bar(
             x,
             not_vals,
             bottom=class_vals,
-            color=advanced_color(advanced, "classNotIColor", color_not_class_i),
+            color=advanced_color(advanced, "classNotIColor", color_not_class_i or resolve_plot_colors(3, plot_colors)[1]),
             label="Not Class I",
         )
         if counts["Unclassified"].any():
             ax.bar(x, counts["Unclassified"], bottom=class_vals + not_vals,
-                   color="#94a3b8", label="Unclassified")
+                   color=resolve_plot_colors(3, plot_colors)[2], label="Unclassified")
         ax.set_xticks(x)
         ax.set_xticklabels(counts["Sample"].astype(str).tolist(), rotation=90, fontsize=7)
         ax.set_xlabel("Sample")
@@ -379,6 +387,7 @@ def phospho_coverage_png(
         fig.tight_layout()
 
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
 
 
 def phospho_distribution_table(cutoff: float = 0.0) -> pd.DataFrame:
@@ -416,11 +425,12 @@ def phospho_distribution_table(cutoff: float = 0.0) -> pd.DataFrame:
 def phospho_distribution_png(
     cutoff: float = 0.0,
     header: bool = True,
-    color: str = "#87CEEB",
+    color: str = "",
     width_cm: float = 20,
     height_cm: float = 15,
     dpi: int = 300,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt, _ = _get_plt()
     table = phospho_distribution_table(cutoff=cutoff)
@@ -434,7 +444,7 @@ def phospho_distribution_png(
     ax.bar(
         table["SiteCount"].to_numpy(),
         table["Frequency"].to_numpy(),
-        color=advanced_color(advanced, "barColor", color),
+        color=advanced_color(advanced, "barColor", color or resolve_plot_colors(1, plot_colors)[0]),
     )
     max_site = int(table["SiteCount"].max())
     xticks = np.arange(0, max_site + 1, 10 if max_site >= 10 else 1)
@@ -444,18 +454,21 @@ def phospho_distribution_png(
     if header:
         ax.set_title("Distribution of phosphosite counts per protein")
     trimmed = int(table.attrs.get("trimmed_proteins", 0) or 0)
-    if trimmed:
-        # The default trim hides the long tail (one protein with 200 sites
-        # would stretch the axis past everything else); say what is missing.
-        ax.text(
-            0.98, 0.97,
-            f"{trimmed:,} protein{'s' if trimmed != 1 else ''} with more than "
-            f"{int(table.attrs['trim_threshold'])} sites not shown (upper-tail trim)",
-            transform=ax.transAxes, ha="right", va="top", fontsize=8, color="#555555",
-        )
+    note_visible = (advanced or {}).get("distributionNoteVisible") is not False
+    note_text = str((advanced or {}).get("distributionNoteText") or "").strip()
+    note_x = advanced_number(advanced, "distributionNoteXOffset", 0)
+    note_y = advanced_number(advanced, "distributionNoteYOffset", 0)
+    if not note_text and trimmed:
+        note_text = (f"{trimmed:,} protein{'s' if trimmed != 1 else ''} with more than "
+                     f"{int(table.attrs['trim_threshold'])} sites not shown (upper-tail trim)")
+    if note_visible and note_text:
+        ax.annotate(note_text, (0.98, 0.97), xycoords="axes fraction",
+                    xytext=(note_x, note_y), textcoords="offset points",
+                    ha="right", va="top", fontsize=8, color="#555555")
     apply_advanced_axes(ax, advanced)
     plt.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
 
 
 def phospho_sty_table() -> pd.DataFrame:
@@ -490,11 +503,12 @@ def phospho_sty_png(
     height_cm: float = 10,
     dpi: int = 300,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt, mtick = _get_plt()
     table = phospho_sty_table()
     fig, ax = plt.subplots(figsize=(_cm_to_inch(width_cm), _cm_to_inch(height_cm)))
-    colors = {"S": "#4C78A8", "T": "#F58518", "Y": "#54A24B"}
+    colors = dict(zip("STY", resolve_plot_colors(3, plot_colors)))
     bar_colors = [colors.get(label, "#64748b") for label in table["Residue"].tolist()]
     ax.bar(table["Residue"], table["Count"], color=bar_colors, edgecolor="black", linewidth=0.6)
 
@@ -526,6 +540,7 @@ def phospho_sty_png(
 
     plt.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
 
 
 def _convert_to_centered(seq: object) -> str:
@@ -1299,6 +1314,10 @@ def phosprot_regulation_html(
     fig = _phosprot_regulation_figure(table, header=header, advanced=advanced)
     fig.update_layout(**advanced_plotly_layout(advanced))
     return _plotly_html(fig)
+
+
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['phosphosite_plot_png', 'phospho_distribution_png', 'phospho_coverage_png', 'phospho_sty_png'], kind='phospho')
 
 
 apply_cached_wrappers(

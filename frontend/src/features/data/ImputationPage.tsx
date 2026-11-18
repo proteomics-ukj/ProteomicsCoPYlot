@@ -1,3 +1,5 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import SummaryCard from "../../components/SummaryCard";
 import NotebookDownload from "../../components/NotebookDownload";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -48,9 +50,10 @@ function appliedFromAnnotation(info: AnnotationImputationInfo): AppliedImputatio
   };
 }
 
-export default function ImputationPage() {
+function ImputationPageView() {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const [kind, setKind] = useState<Exclude<AnnotationKind, "phosprot">>("protein");
+  const [kind, setKind] = useWorkflow<Exclude<AnnotationKind, "phosprot">>();
+  const saved = useMemo(() => readWorkflowState("data.imputation.v1", kind), [kind]);
   const datasets = useCurrentDatasetsSnapshot();
   const availableKinds = useMemo(
     () => datasets.availableKinds.filter((value) => value !== "phosprot"),
@@ -68,8 +71,8 @@ export default function ImputationPage() {
   const [width, setWidth] = useState(0.3);
   const [seed, setSeed] = useState(1);
   const [sampleWise, setSampleWise] = useState(true);
-  const [showImputationDraw, setShowImputationDraw] = useState(true);
-  const [afterNormalization, setAfterNormalization] = useState<"together" | "separate">("separate");
+  const [showImputationDraw, setShowImputationDraw] = useState(saved.showImputationDraw !== false);
+  const [afterNormalization, setAfterNormalization] = useState<"together" | "separate">(saved.afterNormalization === "together" ? "together" : "separate");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImputationResultResponse | null>(null);
@@ -192,6 +195,15 @@ export default function ImputationPage() {
         setSampleWise(true);
       } finally {
         if (!controller.signal.aborted) {
+          if (saved.method === "quantile" || saved.method === "numerical") {
+            setMethod(saved.method);
+            setQValue(Number(saved.qValue ?? 0.01));
+            setAdjustStd(Number(saved.adjustStd ?? 0.3));
+            setDownShift(Number(saved.downShift ?? 1.8));
+            setWidth(Number(saved.width ?? 0.3));
+            setSeed(Number(saved.seed ?? 1));
+            setSampleWise(saved.sampleWise !== false);
+          }
           setSettingsReady(true);
         }
       }
@@ -202,7 +214,13 @@ export default function ImputationPage() {
     return () => {
       controller.abort();
     };
-  }, [kind, availableKinds, availableKindsKey]);
+  }, [kind, availableKinds, availableKindsKey, saved, setKind]);
+
+  useEffect(() => {
+    if (settingsReady) writeWorkflowState("data.imputation.v1", {
+      kind, method, qValue, adjustStd, downShift, width, seed, sampleWise, showImputationDraw, afterNormalization,
+    });
+  }, [kind, method, qValue, adjustStd, downShift, width, seed, sampleWise, showImputationDraw, afterNormalization, settingsReady]);
 
   const plotParams = useMemo(
     () => ({
@@ -541,3 +559,5 @@ function PlotSection({
     </section>
   );
 }
+
+export default withWorkflowSettings("data.imputation.v1", ImputationPageView);

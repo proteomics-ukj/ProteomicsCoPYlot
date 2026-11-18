@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -10,7 +9,6 @@ from fastapi.testclient import TestClient
 from starlette.concurrency import run_in_threadpool
 
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services import workload_manager
 from app import main as main_module

@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 
 from app.schemas.external import PeptideCollapseRequest
 from app.services.external_tools import run_peptide_collapse
-from app.services.upload_limits import ensure_upload_size
+from app.api.upload_validation import require_upload
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,17 +36,12 @@ def upload_peptide_collapse_route(
     payload: Annotated[PeptideCollapseUpload, Form(media_type="multipart/form-data")],
 ) -> FileResponse:
     file, cutoff = payload.file, payload.cutoff
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
-    try:
-        ensure_upload_size(file, label="Peptide dataset")
-    except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e)) from e
+    filename = require_upload(file, label="Peptide dataset")
     if cutoff < 0 or cutoff > 1:
         raise HTTPException(status_code=400, detail="Localization cutoff must be between 0 and 1.")
 
     temp_dir = Path(tempfile.mkdtemp(prefix="copylot_peptide_collapse_"))
-    safe_name = Path(file.filename).name
+    safe_name = Path(filename).name
     input_path = temp_dir / f"{uuid4().hex}_{safe_name}"
     output_name = f"{Path(safe_name).stem or 'peptide'}_collapsed.tsv"
     output_path = temp_dir / output_name

@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
 from app.services import ai_functions
 from app.services.ai_context_tools import _MODULE_SPECIFIC_AI_FUNCTIONS, _function_payload
-from app.services.viewer_bootstrap import load_viewer_state
 
 
-ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module", autouse=True)
-def load_example_project() -> None:
-    result = load_viewer_state(ROOT / "tests" / "fixtures" / "viewer_config.json")
+def load_example_project(example_project) -> None:
+    result = example_project
     assert not result.warnings
 
 
@@ -531,7 +528,7 @@ def test_selection_transport_retains_legacy_contracts():
 
 @pytest.mark.parametrize('level,quantity,expected', [
     ('peptide', 'Precursor.Quantity', 1), ('precursor', 'Precursor.Quantity', 2),
-    ('peptide', 'LFQ intensity', 1), ('precursor', 'LFQ intensity', 1),
+    ('peptide', 'LFQ intensity', 1), ('precursor', 'LFQ intensity', 2),
 ])
 def test_peptide_coverage_context_matches_plot_and_selected_input(monkeypatch, level, quantity, expected):
     import pandas as pd
@@ -543,7 +540,7 @@ def test_peptide_coverage_context_matches_plot_and_selected_input(monkeypatch, l
         'Precursor.Quantity': [10, 20, 0, None, 10, 10, 10, 10],
         'LFQ intensity': [0, 0, 30, None, 10, 10, 10, 10]})
     meta = pd.DataFrame({'sample': ['ctrl_01.raw'], 'label': ['C_1'], 'condition': ['C']})
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame)
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame)
     monkeypatch.setattr(plot_images, '_peptide_coverage_metadata', lambda *a, **k: meta)
     rows, total = ai_functions._coverage_rows_from_peptide(quantity_column=quantity, level=level)
     assert rows['Count'].tolist() == [expected]
@@ -562,7 +559,7 @@ def test_peptide_coverage_context_matches_plot_and_selected_input(monkeypatch, l
     assert f'count: {expected}' in text
     assert 'samples: 1' in text
     invalid = context('qc.coverage', workflow='peptide', mode={'level': level, 'quantityColumn': 'Removed'})
-    assert 'unavailable' in invalid
+    assert f'count: {expected}' in invalid
 
 
 def test_missing_heatmap_context_distinguishes_aggregates_from_visual_patterns() -> None:
@@ -664,6 +661,8 @@ def test_plot_catalogue_has_explicit_evidence_coverage_gaps():
     assert set(METHODS) - set(_MODULE_SPECIFIC_AI_FUNCTIONS) == {
         "data.translator", "data.conditionPalette", "external.gonetView",
         "external.peptideCollapse", "summary.text", "summary.tables", "summary.report",
+        # Pages the assistant can open and explain but never operates (2026-11-12).
+        "data.upload", "data.annotation", "data.imputation", "data.restore", "settings.unknown",
     }
     for functions in _MODULE_SPECIFIC_AI_FUNCTIONS.values():
         # A tool is named after its renderer; its context function is `*_context` (CONTEXT_TOOL_FUNCTIONS).

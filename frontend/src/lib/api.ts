@@ -1,3 +1,4 @@
+import { fetchPlot } from "./fetchPlot";
 import type {
   ContextMode,
   ChatProvider,
@@ -39,7 +40,6 @@ import type {
   PeptideMetadataResponse,
   PeptideMetadataGenerateRequest,
   PeptideOverviewResponse,
-  PeptideQuantityOptionsResponse,
   PeptidePathResponse,
   PeptideSpecies,
   PhosprotAggregationMode,
@@ -189,7 +189,7 @@ export async function assistantStep(
 }
 let DATASET_SCOPE_NONCE = 0;
 
-export type ApiRequestOptions = {
+type ApiRequestOptions = {
   signal?: AbortSignal;
 };
 
@@ -1014,16 +1014,23 @@ export async function getCompletenessTables(
   return data as CompletenessTablesResponse;
 }
 
+// Switching workflows can leave an earlier plot finishing. Respect Retry-After
+// on read-only option lookups; abort retries when the workflow changes again.
+async function readPlotOptions(url: string, signal: AbortSignal | undefined, fallback: string) {
+  const response = await fetchPlot(url, signal ?? new AbortController().signal);
+  const payload = await parseJson(response);
+  if (!response.ok) throw new Error(apiErrorMessage(payload, fallback));
+  return payload;
+}
+
 export async function getQcPlotOptions(
-  kind: AnnotationKind,
+  kind: AnnotationKind | "peptide" | "precursor",
   requestOptions: ApiRequestOptions = {}
 ): Promise<QcPlotOptionsResponse> {
-  const data = await request(`/api/plots/qc/${kind}/options`, {
-    signal: requestOptions.signal,
-    fallback: "Failed to load QC plot options",
-  });
+  const data = await readPlotOptions(`${API_BASE}/api/plots/qc/${kind}/options`, requestOptions.signal, "Failed to load QC plot options");
   const payload = data as Partial<QcPlotOptionsResponse>;
   return {
+    abundanceIdentifiers: payload.abundanceIdentifiers,
     conditions: Array.isArray(payload.conditions) ? payload.conditions : [],
     imputedAvailable: Boolean(payload.imputedAvailable),
     samples: Array.isArray(payload.samples) ? payload.samples : [],
@@ -1037,28 +1044,13 @@ export async function getQcPlotOptions(
   };
 }
 
-export async function getPeptideQuantityOptions(
-  requestOptions: ApiRequestOptions = {}
-): Promise<PeptideQuantityOptionsResponse> {
-  const data = await request(`/api/peptide/quantity-options`, {
-    signal: requestOptions.signal,
-    fallback: "Failed to load peptide abundance columns",
-  });
-  const payload = data as Partial<PeptideQuantityOptionsResponse>;
-  return {
-    columns: Array.isArray(payload.columns) ? payload.columns : [],
-    defaultColumn: typeof payload.defaultColumn === "string" ? payload.defaultColumn : null,
-    requiresSelection: Boolean(payload.requiresSelection),
-  };
-}
-
 /** Every control that moves a point in the PCA projection.
  *
  * The summary names the groups that got no ellipse, and whether a group has
  * one depends on where its points land -- so the notice has to be computed
  * from the same settings the figure was drawn with, not from the defaults.
  */
-export type QcPcaFeatureQuery = {
+type QcPcaFeatureQuery = {
   dataSource: string;
   plotDim: string;
   addEllipses: boolean;
@@ -1142,10 +1134,7 @@ export async function getStatisticalOptions(
   kind: AnnotationKind,
   requestOptions: ApiRequestOptions = {}
 ): Promise<StatisticalOptionsResponse> {
-  const data = await request(`/api/stats/options/${kind}`, {
-    signal: requestOptions.signal,
-    fallback: "Failed to load statistical options",
-  });
+  const data = await readPlotOptions(`${API_BASE}/api/stats/options/${kind}`, requestOptions.signal, "Failed to load statistical options");
   const payloadRaw = data as Partial<StatisticalOptionsResponse>;
   return {
     kind: (payloadRaw.kind as AnnotationKind) ?? kind,
@@ -1197,11 +1186,27 @@ export async function getOraNotebookTables(kind: AnnotationKind, direction: stri
   }) as EnrichmentResultResponse;
 }
 
+async function requestStats(path: string, options: RequestOptions) {
+  const response = await requestResponse(API_BASE + path, {
+    ...options, headers: { Accept: "application/vnd.copylot.stats+json" },
+  });
+  const data = await parseJson(response);
+  if (response.headers.get("content-type")?.includes("application/vnd.copylot.stats+json")) {
+    for (const [key, table] of Object.entries(data) as [string, { columns?: string[]; values?: unknown[][] } | null][]) {
+      if (Array.isArray(table?.columns) && Array.isArray(table.values)) {
+        const columns = table.columns;
+        data[key] = table.values.map(row => Object.fromEntries(columns.map((name, i) => [name, row[i]])));
+      }
+    }
+  }
+  return data;
+}
+
 export async function runVolcanoAnalysis(
   payload: VolcanoRequest,
   requestOptions: ApiRequestOptions = {}
 ): Promise<VolcanoResultResponse> {
-  const data = await request(`/api/stats/volcano/run`, {
+  const data = await requestStats(`/api/stats/volcano/run`, {
     method: "POST",
     json: payload,
     signal: requestOptions.signal,
@@ -1214,7 +1219,7 @@ export async function runVolcanoControlAnalysis(
   payload: VolcanoControlRequest,
   requestOptions: ApiRequestOptions = {}
 ): Promise<VolcanoResultResponse> {
-  const data = await request(`/api/stats/volcano-control/run`, {
+  const data = await requestStats(`/api/stats/volcano-control/run`, {
     method: "POST",
     json: payload,
     signal: requestOptions.signal,
@@ -1227,7 +1232,7 @@ export async function runAnovaAnalysis(
   payload: AnovaRequest,
   requestOptions: ApiRequestOptions = {}
 ): Promise<AnovaResultResponse> {
-  const data = await request(`/api/stats/anova/run`, {
+  const data = await requestStats(`/api/stats/anova/run`, {
     method: "POST",
     json: payload,
     signal: requestOptions.signal,
@@ -1445,7 +1450,7 @@ export async function runSimulationAnalysis(
   payload: SimulationRequest,
   requestOptions: ApiRequestOptions = {}
 ): Promise<SimulationResultResponse> {
-  const data = await request(`/api/stats/simulation/run`, {
+  const data = await requestStats(`/api/stats/simulation/run`, {
     method: "POST",
     json: payload,
     signal: requestOptions.signal,
@@ -1470,10 +1475,7 @@ export async function getSingleProteinOptions(
     params.carry = JSON.stringify(requestOptions.carry.names.slice(0, 50));
     params.carryIdentifier = requestOptions.carry.identifier;
   }
-  const data = await requestUrl(buildPlotUrl(`/api/plots/single-protein/${kind}/options`, params), {
-    signal: requestOptions.signal,
-    fallback: "Failed to load single-protein options",
-  });
+  const data = await readPlotOptions(buildPlotUrl(`/api/plots/single-protein/${kind}/options`, params), requestOptions.signal, "Failed to load single-protein options");
   return data as SingleProteinOptionsResponse;
 }
 
@@ -1576,7 +1578,7 @@ export async function renderKseaVolcanoFromFiles(payload: {
   condition1Control?: string;
   condition2Control?: string;
   annotateHits: boolean;
-}): Promise<{ html: string; evidenceToken: string }> {
+}): Promise<{ html: string; evidenceToken: string; notebookToken: string }> {
   const form = new FormData();
   form.append("fileSt", payload.fileSt);
   form.append("fileTnc", payload.fileTnc);
@@ -1608,7 +1610,11 @@ export async function renderKseaVolcanoFromFiles(payload: {
         : apiErrorMessage(parsed, "Failed to generate Kinase Library volcano")
     );
   }
-  return { html: text, evidenceToken: response.headers.get("X-Copylot-Evidence") ?? "" };
+  return {
+    html: text,
+    evidenceToken: response.headers.get("X-Copylot-Evidence") ?? "",
+    notebookToken: response.headers.get("X-CoPYlot-Notebook") ?? "",
+  };
 }
 
 export async function getComparisonOptions(
@@ -1616,10 +1622,7 @@ export async function getComparisonOptions(
   requestOptions: ApiRequestOptions = {}
 ): Promise<ComparisonOptionsResponse> {
   // Comparison is QC: it reads the data as loaded and takes no source.
-  const data = await requestUrl(buildPlotUrl(`/api/plots/comparison/${kind}/options`, {}), {
-    signal: requestOptions.signal,
-    fallback: "Failed to load comparison options",
-  });
+  const data = await readPlotOptions(buildPlotUrl(`/api/plots/comparison/${kind}/options`, {}), requestOptions.signal, "Failed to load comparison options");
   return data as ComparisonOptionsResponse;
 }
 
@@ -1749,7 +1752,7 @@ export function buildPlotUrl(path: string, params?: Record<string, string | numb
   return suffix ? `${base}?${suffix}` : base;
 }
 
-export type PhosphoLocalizationCutoff = { cutoff: number; available: boolean; belowClassOne?: number; sites?: number };
+type PhosphoLocalizationCutoff = { cutoff: number; available: boolean; belowClassOne?: number; sites?: number };
 
 // The session-wide phosphosite localization probability cutoff. Every
 // phosphosite module reads its matrix through the backend with this cutoff

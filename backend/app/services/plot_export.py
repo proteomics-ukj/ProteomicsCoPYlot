@@ -86,6 +86,70 @@ def _tick_label_space(fig, renderer) -> tuple[float, float]:
     return tuple(extra)
 
 
+def _fit_crowded_legend(fig, dpi: int) -> None:
+    """Reflow a single crowded axes legend without shrinking its text or data."""
+    legends = [(ax, ax.get_legend()) for ax in getattr(fig, "axes", [])
+               if ax.get_legend() is not None]
+    if len(legends) != 1 or getattr(fig, "_copylot_legend_bottom", None) is not None:
+        return
+    ax, old = legends[0]
+    if getattr(old, "_copylot_manual_position", False):
+        return
+    renderer = fig.canvas.get_renderer()
+    width, height = fig.get_size_inches()
+    bounds = old.get_window_extent(renderer)
+    if len(old.get_texts()) < 8 or bounds.height / fig.dpi < height * 0.55:
+        return
+    texts = list(old.get_texts())
+    handles = old.legend_handles
+    # Measure candidate columns, including handles and inter-column padding.
+    # Rebuilding through the public API preserves handler-generated artists.
+    best = 1
+    for columns in range(1, len(texts) + 1):
+        candidate = ax.legend(handles, [t.get_text() for t in texts],
+                              ncols=columns, prop=texts[0].get_fontproperties(),
+                              title=old.get_title().get_text(),
+                              title_fontproperties=old.get_title().get_fontproperties(),
+                              loc="lower center", bbox_to_anchor=(0.5, 0.02),
+                              bbox_transform=fig.transFigure)
+        if candidate.get_window_extent(renderer).width / fig.dpi > width - 0.3:
+            break
+        best = columns
+    legend = ax.legend(handles, [t.get_text() for t in texts], ncols=best,
+                       prop=texts[0].get_fontproperties(),
+                       title=old.get_title().get_text(),
+                       title_fontproperties=old.get_title().get_fontproperties(),
+                       loc="lower center", bbox_to_anchor=(0.5, 0.02),
+                       bbox_transform=fig.transFigure, frameon=old.get_frame_on(),
+                       markerscale=1, handlelength=old.handlelength,
+                       handletextpad=old.handletextpad, columnspacing=old.columnspacing,
+                       labelspacing=old.labelspacing, borderpad=old.borderpad)
+    for original, replacement in zip(texts, legend.get_texts()):
+        replacement.set_fontproperties(original.get_fontproperties())
+        replacement.set_color(original.get_color())
+    legend.get_title().set_color(old.get_title().get_color())
+    legend.get_frame().update_from(old.get_frame())
+    legend_height = legend.get_window_extent(renderer).height / fig.dpi + 0.35
+    # Keep at least the usual 65% of the requested height for the axes, with
+    # another inch for title/ticks. Grow only when the legend needs that room.
+    target_height = max(height, height * 0.65 + 1 + legend_height)
+    target_height = min(target_height, MAX_AUTO_FIT_CM / 2.54,
+                        MAX_AUTO_FIT_PIXELS / max(72, dpi)**2 / width)
+    fig.set_size_inches(width, max(height, target_height))
+    fig._copylot_legend_bottom = legend_height
+    # The legend is in figure coordinates. Reserve its measured space rather
+    # than letting tight_layout treat it as an axes decoration.
+    legend.set_in_layout(False)
+
+
+def _tight_plot_layout(fig) -> None:
+    bottom = getattr(fig, "_copylot_legend_bottom", None)
+    if bottom is None:
+        fig.tight_layout(pad=0.8)
+    else:
+        fig.tight_layout(pad=0.8, rect=(0, bottom / fig.get_size_inches()[1], 1, 1))
+
+
 def fit_figure_to_labels(
     fig,
     plt,
@@ -110,7 +174,7 @@ def fit_figure_to_labels(
 
     with _SAVE_LOCK, plt.rc_context({"savefig.bbox": None}):
         for _ in range(max(1, int(max_passes))):
-            fig.tight_layout(pad=0.8)
+            _tight_plot_layout(fig)
             fig.canvas.draw()
             bounds = fig.get_tightbbox(fig.canvas.get_renderer())
             if bounds is None:
@@ -201,8 +265,11 @@ def to_png_bytes(fig, plt, dpi: int = 150, tight: bool = True) -> bytes:
                     artist.set_rasterized(False)
         with _SAVE_LOCK, plt.rc_context({"pdf.fonttype": 42, "savefig.bbox": None}):
             fig.canvas.draw()
-            if tight and not getattr(fig, "_copylot_layout_final", False):
-                fig.tight_layout(pad=0.8)
+            _fit_crowded_legend(fig, save_kwargs["dpi"])
+            if getattr(fig, "_copylot_legend_bottom", None) is not None or (
+                tight and not getattr(fig, "_copylot_layout_final", False)
+            ):
+                _tight_plot_layout(fig)
             fig.canvas.draw()
             bounds = fig.get_tightbbox(fig.canvas.get_renderer())
             width, height = fig.get_size_inches()
@@ -224,6 +291,16 @@ def to_png_bytes(fig, plt, dpi: int = 150, tight: bool = True) -> bytes:
                         "Plot labels do not fit even after automatic layout adjustment. "
                         "Increase width/height or reduce text size."
                     )
+            if getattr(fig, "_copylot_legend_bottom", None) is not None:
+                renderer = fig.canvas.get_renderer()
+                for ax in fig.axes:
+                    legend = ax.get_legend()
+                    if legend is None:
+                        continue
+                    extent = legend.get_window_extent(renderer).transformed(fig.dpi_scale_trans.inverted())
+                    if (extent.x0 < -tolerance or extent.y0 < -tolerance
+                            or extent.x1 > width + tolerance or extent.y1 > height + tolerance):
+                        raise ValueError("Plot legend does not fit. Increase width/height or reduce text size.")
             fig.savefig(buf, **save_kwargs)
     finally:
         plt.close(fig)

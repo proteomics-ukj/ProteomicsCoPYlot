@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import re
 from contextlib import contextmanager
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.main import app
 from app.schemas.annotation import AnnotationImputationInfo
@@ -248,7 +247,16 @@ def test_unfiltered_pca_distinguishes_configured_filtering_from_applied_filterin
 
 
 def _report_with_pca_source(source: str) -> str:
-    with TestClient(app, base_url="http://localhost") as client:
+    # These tests read the text around the figure. A figure that cannot be drawn
+    # (this project holds no imputed matrix) would leave its section out of the
+    # report, so the figure itself is stood in for.
+    from unittest.mock import patch
+
+    from app.services import report_function as module
+
+    with patch.object(module, "report_plot", lambda renderer, *args, **kwargs: b"png"), TestClient(
+        app, base_url="http://localhost"
+    ) as client:
         response = client.post(
             "/api/summary/report",
             json={
@@ -337,3 +345,11 @@ def test_the_pca_and_volcano_blocks_are_built_by_the_same_function(monkeypatch) 
         assert section.count(marker) == 1, f"the {name} section does not use the shared provenance block"
         said = _text(section[section.index(marker):])
         assert said.index("Data source:") < said.index("Filtering:") < said.index("Imputation:"), name
+
+
+def test_imputation_paragraph_is_compact_and_marks_the_selected_source():
+    with recorded_imputation("protein", QUANTILE):
+        rendered = _level_imputation_html("protein")
+        assert "<p>The values were drawn" not in rendered
+        assert "parameters.</p>" in rendered
+        assert "<strong>Imputed Data</strong>" in rendered

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy.stats import false_discovery_control
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from app.services.stats_tools import _bh_adjust
 

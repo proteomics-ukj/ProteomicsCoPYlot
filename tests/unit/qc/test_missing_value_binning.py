@@ -3,12 +3,10 @@
 Split out of test_small_bugs.py (2026-10-02)."""
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services.completeness_tools import (
     _missing_value_plot_from_matrix,

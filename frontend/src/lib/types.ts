@@ -9,8 +9,8 @@ type Served<T> = T extends readonly (infer U)[] ? Served<U>[] : T extends object
 export type DatasetKind = "protein" | "phospho" | "phosprot" | "peptide";
 export type AnnotationKind = Extract<DatasetKind, "protein" | "phospho" | "phosprot">;
 export type MetadataAnnotationKind = Extract<AnnotationKind, "protein" | "phospho">;
-export type FilterMethod = "at_least_n" | "percentage";
-export type FilterMode = "per_group" | "in_at_least_one_group" | "overall";
+type FilterMethod = "at_least_n" | "percentage";
+type FilterMode = "per_group" | "in_at_least_one_group" | "overall";
 
 export type RRuntimeStatusResponse = Served<Schemas["RRuntimeStatusResponse"]>;
 
@@ -40,6 +40,10 @@ export type AdvancedPlotSettings = {
   // itself chose.
   // Moved out of every page's options row, where "Toggle Header" appeared at 20
   // call sites under three different labels for one setting.
+  distributionNoteVisible?: boolean;
+  distributionNoteText?: string;
+  distributionNoteXOffset?: number;
+  distributionNoteYOffset?: number;
   titleVisible?: boolean;
   legendVisible?: boolean;
   legendTitle?: string;
@@ -102,12 +106,20 @@ export type AdvancedPlotSettings = {
   volcanoNsSize?: number;
   volcanoNsAlpha?: number;
   volcanoNsColor?: string;
-  volcanoHighlightSize?: number;
+  volcanoHighlightWidth?: number;
   volcanoHighlightColor?: string;
   // The ring's own legend entry (default on) and its text (default "Highlighted").
   volcanoHighlightLegend?: boolean;
   volcanoHighlightLegendLabel?: string;
+  volcanoLabelConnector?: boolean;
+  volcanoLabelConnectorColor?: string;
+  volcanoLabelConnectorWidth?: number;
   volcanoLabelSize?: number;
+  abundanceHighlightWidth?: number;
+  abundanceHighlightColor?: string;
+  abundanceHighlightLegend?: boolean;
+  abundanceHighlightLegendLabel?: string;
+  abundanceLabelSize?: number;
   // Colours that used to be pickers in a plot's own options row.
   barColor?: string;
   classIColor?: string;
@@ -186,7 +198,7 @@ export type StatisticsCapabilityResponse = Served<Schemas["StatisticsCapabilityR
 
 export type ContaminantFilterConfig = {
   enabled: boolean;
-  categories: (1 | 2 | 3 | 4 | 5)[];
+  categories: (1 | 2 | 3 | 4 | 5 | 6)[];
   matchAccessions: boolean;
 };
 
@@ -218,7 +230,7 @@ export type Log2DetectionRequest = {
  * A JSON value. An object member may be `undefined`: an unset optional field,
  * which `JSON.stringify` leaves out, exactly as the request will carry it.
  */
-export type ContextValue = string | number | boolean | null | ContextValue[] | { [key: string]: ContextValue | undefined };
+type ContextValue = string | number | boolean | null | ContextValue[] | { [key: string]: ContextValue | undefined };
 
 /**
  * What the visible plot or panel shows: its data level, source, test and the
@@ -349,29 +361,6 @@ export type ImputationRunRequest = {
 
 export type ImputationResultResponse = Served<Schemas["ImputationResultResponse"]>;
 
-export type HistogramBin = {
-  start: number;
-  end: number;
-  count: number;
-};
-
-export type ComparativeHistogramBin = {
-  start: number;
-  end: number;
-  leftCount: number;
-  rightCount: number;
-};
-
-export type CurvePoint = {
-  x: number;
-  y: number;
-};
-
-export type QQPoint = {
-  theoretical: number;
-  sample: number;
-};
-
 export type DistributionSummaryResponse = Served<Schemas["DistributionSummaryResponse"]>;
 
 export type IdTranslationRequest = {
@@ -409,6 +398,7 @@ export type QcPcaFeatureSummary = {
 };
 
 export type QcPlotOptionsResponse = {
+  abundanceIdentifiers?: { key: string; label: string }[];
   conditions: string[];
   imputedAvailable: boolean;
   samples?: string[];
@@ -583,7 +573,7 @@ export type SimulationRequest = {
 
 export type SimulationResultResponse = Served<Schemas["SimulationResultResponse"]>;
 
-export type AnalysisSource = "volcano" | "volcano_control";
+type AnalysisSource = "volcano" | "volcano_control";
 
 export type AnalysisVolcanoRequest = {
   dataSource?: DataSource;
@@ -718,38 +708,29 @@ export function restoreVolcanoRenderType(value: unknown): VolcanoRenderType {
   return String(value ?? "").trim() === "Normal" ? "Normal" : "Interactive";
 }
 
-export type SummaryVolcanoEntry = {
-  kind: AnnotationKind;
-  control: boolean;
-  dataSource: DataSource;
-  condition1: string;
-  condition2: string;
-  condition1Control?: string | null;
-  condition2Control?: string | null;
-  identifier: StatsIdentifier;
-  pValueThreshold: number;
-  log2fcThreshold: number;
-  testType: StatsTestType;
-  useUncorrected: boolean;
-  proteinCorrection?: boolean;
-  highlightTerms: string[];
-  // Captured when the entry is added, so the report renders each comparison the
-  // way it was being looked at.
-  renderType?: VolcanoRenderType;
-  labelTopUp?: number;
-  labelTopDown?: number;
-  // What the highlight terms draw: a ring (both renderers) and/or text
-  // labels placed like the top hits (static renderer only).
-  highlightOutline?: boolean;
-  highlightLabels?: boolean;
+export type ReportEntryType = "volcano" | "pearson" | "venn" | "anova" | "ora" | "single_box" | "single_line";
+
+// One plot added to the report, as it was when it was added: the page's
+// options, how it was drawn and its advanced appearance.
+export type ReportEntry = {
+  type: ReportEntryType;
+  kind: "protein" | "phospho";
+  request: Record<string, unknown>;
+  render: { type: "Normal" | "Interactive"; widthCm?: number; heightCm?: number; dpi?: number };
+  advanced: AdvancedPlotSettings | null;
 };
 
 export type SummaryReportContext = {
   completenessSettings?: Record<string, unknown>;
   qcSettings?: Record<string, Record<string, unknown>>;
-  volcanoEntries?: SummaryVolcanoEntry[];
+  entries?: ReportEntry[];
   advancedPlotMode?: boolean;
   advancedPlotSettingsByKey?: Record<string, AdvancedPlotSettings>;
+  workflowPlotSettings?: Record<string, {
+    qcAppearance: Record<string, AdvancedPlotSettings>;
+    completenessAppearance: Record<string, AdvancedPlotSettings>;
+    missingPlot: Record<string, unknown>;
+  }>;
   qcAdvancedSettingsByTab?: Record<string, AdvancedPlotSettings>;
   completenessAdvancedSettingsByTab?: Record<string, AdvancedPlotSettings>;
 };
@@ -798,7 +779,7 @@ export type PhosphoTab =
   | "sty"
   | "phosprotRegulation";
 
-export type ChatRole = "system" | "user" | "assistant";
+type ChatRole = "system" | "user" | "assistant";
 export type ChatProvider = "ollama" | "openai_compatible" | "openai" | "anthropic" | "gemini";
 export type ChatMessage = {
   role: ChatRole;
@@ -854,7 +835,7 @@ export type ToolAuthStatusResponse = Served<Schemas["ToolAuthStatusResponse"]>;
 
 export type ToolAuthLoginResponse = Served<Schemas["ToolAuthLoginResponse"]>;
 
-export type RestoreDatasetKind = "protein" | "phospho" | "phosprot" | "peptide";
+type RestoreDatasetKind = "protein" | "phospho" | "phosprot" | "peptide";
 
 export type RestoreMissingFile = {
   packageName: string;

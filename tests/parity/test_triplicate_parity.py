@@ -24,11 +24,10 @@ import importlib
 import inspect
 import json
 import subprocess
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 R_SOURCE = ROOT / "proteomicscopylot" / "notebook_functions.R"
 
 BACKEND_MODULE = "app.services.functions"
@@ -117,6 +116,7 @@ BACKEND_ONLY_ANALYSIS_NAMES = (
     "effective_test_type",
     "sample_label_frame",  # Plot/report display labels, not a statistical method.
     "condition_sample_labels",  # The "condition_N" axis label rule behind sample_label_frame.
+    "sample_display_labels",  # Formats existing counters for display; not a separate analysis method.
     "entity_labels_for_kind",  # Entity nouns for report/UI prose, not a method.
     "intensity_unit_label",  # UI units for stored phosphoprotein provenance.
     "parse_selection_list",  # JSON/legacy HTTP selection transport.
@@ -135,6 +135,8 @@ BACKEND_ONLY_ANALYSIS_NAMES = (
 )
 
 PIP_ONLY_NAMES = (
+    "copylot_colors",  # R stores .copylot_colors as a vector and repeats it with .plot_colors; outputs checked in test_abundance_palette_parity.py.
+    "resolve_plot_colors",  # R uses .plot_colors for the same named/custom palette resolution (tested in test_category_palettes.py).
     "contaminant_mask",  # Shared Python row mask; R computes it inside filter_contaminants (results checked in test_notebook_contaminants.py).
     "adjust_finite_pvalues",  # R adjusts finite p-values inline in volcano calculations.
     "refuse_moderated",  # the moderated tests run in R limma; R runs them, this package refuses them (as it does VSN).
@@ -302,6 +304,16 @@ def test_the_inventories_find_a_plausible_number_of_functions(functions) -> None
 
 KNOWN_PARAMETER_RENAMES: dict[tuple[str, int], tuple[str, str]] = {}
 
+# Private helpers can adapt language-native representations. Pin both signatures
+# so this exception cannot silently hide a later interface change; compare their
+# behavior in test_abundance_palette_parity.py. Public notebook calls stay checked.
+PRIVATE_REPRESENTATION_SIGNATURES = {
+    "abundance_selection": (
+        ["frame", "search", "top_high", "top_low"],
+        ["features", "values", "search", "top_high", "top_low"],
+    ),
+}
+
 
 @pytest.mark.requires_r("jsonlite")
 def test_positional_arguments_mean_the_same_thing_in_both_packages(
@@ -311,6 +323,9 @@ def test_positional_arguments_mean_the_same_thing_in_both_packages(
     problems: list[str] = []
     for name in sorted(set(pip_params) & set(r_signatures)):
         left, right = pip_params[name], r_signatures[name]
+        if name in PRIVATE_REPRESENTATION_SIGNATURES:
+            assert (left, right) == PRIVATE_REPRESENTATION_SIGNATURES[name]
+            continue
         for index in range(min(len(left), len(right))):
             if left[index] == right[index]:
                 continue

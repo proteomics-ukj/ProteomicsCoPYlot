@@ -9,12 +9,15 @@ from types import ModuleType
 import pandas as pd
 
 from app.services.functions import raw_zero_to_nan
-from app.services.notebook_archive import dataframe_bytes
+from app.services.notebook_archive import dataframe_bytes, table_fingerprint
 from app.services.notebook_snapshots import RetainedReplay
 from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source
 
 
 def replay_peptide_matrix(raw, config):
+    quantity = config['quantity_column']
+    if not pd.api.types.is_numeric_dtype(raw[quantity]):
+        raw = raw.assign(**{quantity: pd.to_numeric(raw[quantity], errors="coerce")})
     matrix = raw.pivot_table(index=config['feature_column'], columns=config['file_column'],
         values=config['quantity_column'], aggfunc='max')
     rename = {name: config['runs'][sha256(str(name).encode()).hexdigest()]
@@ -31,32 +34,25 @@ def bind_peptide_preprocessing(recipe):
     from app.services.notebook_preprocessing import preprocessing_source
     from app.services.notebook_provenance import NotebookProvenanceError
 
-    from app.services.annotation_store import get_annotation
-    from app.services.contaminant_filter import contaminant_reference, filter_peptide_contaminants
-    original_raw = peptide_tools.get_peptide_frame(apply_contaminants=False)
-    protein_annotation = get_annotation('protein')
-    contaminant_config = protein_annotation.filter_config.contaminants.model_dump() if protein_annotation else {}
-    reference = contaminant_reference() if contaminant_config.get('enabled') else None
-    raw = filter_peptide_contaminants(original_raw, contaminant_config, reference)
-    meta = None
     plot = recipe.provenance.get('plot', recipe.provenance.get('output'))
+    uses_detection_matrix = plot in {'coverage', 'completeness/missing-value'}
+    raw = peptide_tools.get_peptide_frame(detection_only=True) if uses_detection_matrix else peptide_tools.get_peptide_frame()
+    meta = None
     expected = pd.read_parquet(io.BytesIO(recipe.resources['input.parquet']))
     loader = extract_notebook_source(preprocessing_source().code, ('read_original_table',)).code
     extra = ''
     resources = dict(recipe.resources)
     config = {}
-    prefix = "raw = functions.read_original_table(data_path)\n"
-    if plot in {'coverage', 'completeness/missing-value'}:
-        file_column = peptide_tools._file_name_column(raw)
+    read, read_key, shipped_lines = "functions.read_original_table(original, peptide=True)", "rows", []
+    if uses_detection_matrix:
+        pivot, runs = plot_images.peptide_detection_matrix(recipe.provenance['kind'])
+        file_column = runs.columns[0]
         if plot == 'coverage':
-            meta = plot_images._peptide_coverage_metadata(raw, include_id=recipe.settings['include_id'])
-            mapping = peptide_tools._sample_rename_map(raw[file_column].dropna().unique(),
+            meta = plot_images._peptide_coverage_metadata(runs, include_id=recipe.settings['include_id'])
+            mapping = peptide_tools._sample_rename_map(pivot.columns,
                 meta.rename(columns={'label': 'new_sample'}), recipe.provenance['featureColumn'])
         else:
-            runs = completeness_tools._peptide_sample_columns(raw)
-            available = raw.pivot_table(index=recipe.provenance['featureColumn'], columns=file_column,
-                values=recipe.provenance['quantityColumn'], aggfunc='max').columns
-            runs = [run for run in runs if run in available]
+            runs = [run for run in completeness_tools._peptide_sample_columns(runs) if run in pivot.columns]
             # The existing export disambiguates basenames in this same run order.
             mapping = dict(zip(runs, expected.columns, strict=True))
         config = {'file_column': file_column, 'feature_column': recipe.provenance['featureColumn'],
@@ -67,7 +63,9 @@ def bind_peptide_preprocessing(recipe):
             function_definition(module_source('notebook_peptide_preprocessing.py'), 'replay_peptide_matrix'),
             extract_notebook_source(module_source('functions.py'), ('raw_zero_to_nan',)).code)
         preparation = "data = functions.replay_peptide_matrix(raw, processing)\n"
-        roots = ('replay_peptide_matrix',)
+        extra = merge_source(extra, extract_notebook_source(module_source('peptide_tools.py'), ('_detection_column',)).code)
+        roots = ('replay_peptide_matrix', '_detection_column')
+        read, read_key = "functions.read_original_table(original, functions._detection_column, True)", "detection"
     elif plot in {'missed_cleavages', 'modifications'}:
         meta = peptide_tools._prepare_metadata(raw, recipe.settings['include_id'])
         file_column = peptide_tools._file_name_column(raw)
@@ -79,6 +77,7 @@ def bind_peptide_preprocessing(recipe):
         full_source = missed_cleavage_source() if plot == 'missed_cleavages' else modification_source()
         extra = extract_notebook_source(full_source.code, ('prepare_input',)).code
         preparation = "from hashlib import sha256\n"
+        preparation += "raw = raw.copy()\n"
         preparation += "raw[processing['file_column']] = raw[processing['file_column']].map(\n"
         preparation += "    lambda name: processing['runs'].get(sha256(str(name).encode()).hexdigest(), sha256(str(name).encode()).hexdigest()))\n"
         preparation += "processing_metadata = read_resource_table(RESOURCES / 'processing_metadata.parquet')\n"
@@ -94,11 +93,8 @@ def bind_peptide_preprocessing(recipe):
         roots = ()
     else:
         raise NotebookProvenanceError('This peptide output has no original-file replay recipe.')
-    config['contaminants'] = contaminant_config
-    config['contaminant_reference'] = reference
-    extra = merge_source(extra, extract_notebook_source(module_source('contaminant_filter.py'), ('filter_peptide_contaminants',)).code)
     source = extract_notebook_source(merge_source(recipe.source.code, loader, extra),
-        tuple(dict.fromkeys((*recipe.source.functions, 'read_original_table', 'filter_peptide_contaminants', *roots))))
+        tuple(dict.fromkeys((*recipe.source.functions, 'read_original_table', *roots))))
     resources['processing.json'] = json.dumps(config, allow_nan=False).encode()
 
     def finish():
@@ -106,7 +102,7 @@ def bind_peptide_preprocessing(recipe):
         module = ModuleType('_copylot_peptide_replay_check')
         sys.modules[module.__name__] = module
         exec(source.code, module.__dict__)
-        if plot in {'coverage', 'completeness/missing-value'}:
+        if uses_detection_matrix:
             replayed = module.replay_peptide_matrix(raw, config)
         elif plot in {'missed_cleavages', 'modifications'}:
             renamed = raw.copy()
@@ -114,24 +110,31 @@ def bind_peptide_preprocessing(recipe):
                 sha256(str(name).encode()).hexdigest(), sha256(str(name).encode()).hexdigest()))
             replayed = module.prepare_input(renamed, meta)
             if plot == 'missed_cleavages':
-                replayed = replayed[0]
+                replayed, sequence_column = replayed
         elif roots:
             replayed = module.prepare_points(raw)
         else:
             replayed = raw
+        recorded = {'filename': recipe.original_filename, 'replayKey': '',
+                    'sourceFingerprint': table_fingerprint(raw),
+                    'inputFingerprint': table_fingerprint(expected, index=True),
+                    'columns': expected.columns.tolist()}
+        if plot == 'missed_cleavages':
+            recorded['sequenceColumn'] = sequence_column
+            shipped_lines.append("sequence_column = recorded['sequenceColumn']")
         try:
             pd.testing.assert_frame_equal(replayed.loc[expected.index, expected.columns], expected, check_exact=True)
         except (AssertionError, KeyError) as exc:
             raise NotebookProvenanceError('Original peptide processing does not reproduce the displayed input.') from exc
-        return replace(recipe, source=source, resources=resources,
+        final = dict(resources)
+        if not replayed.index.equals(expected.index):
+            final['input_rows.parquet'] = dataframe_bytes(pd.DataFrame(index=expected.index))
+        return replace(recipe, source=source, resources=final,
             provenance={**recipe.provenance, 'inputReplay': 'original-file', 'preprocessing': {'kind': 'peptide'}},
-            input_explanation='Select the original peptide report below. Its loading, aggregation and run mapping '
-                'are repeated before calculating the plot/table. Run matching uses hashes so original filesystem '
-                'paths are not written into the ZIP. The captured matrix is checked, never substituted.',
-            preparation=prefix + "processing = json.loads((RESOURCES / 'processing.json').read_text(encoding='utf-8'))\n"
-                + "raw = functions.filter_peptide_contaminants(raw, processing['contaminants'], processing['contaminant_reference'])\n"
-                + preparation + "reference = read_resource_table(RESOURCES / 'input.parquet')\n"
-                "data = data.loc[reference.index, reference.columns]\n"
-                "pd.testing.assert_frame_equal(data, reference, check_exact=True)\n")
+            replay={'function': '', 'collapse': False, 'imputed': False, 'recorded': recorded,
+                    'custom': {'read': read, 'readKey': read_key, 'body': preparation.splitlines(), 'shipped': shipped_lines},
+                    'notes': ' This is the peptide report: the notebook uses its unfiltered rows and repeats loading, '
+                             'aggregation and run mapping. Run matching uses hashes, so original filesystem paths '
+                             'are not written into the ZIP.'})
 
     return RetainedReplay(finish, tuple(frame for frame in (raw, expected, meta) if frame is not None))

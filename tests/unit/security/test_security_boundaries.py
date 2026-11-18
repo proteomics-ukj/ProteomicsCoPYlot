@@ -499,15 +499,28 @@ def test_invalid_auth_combinations_and_placeholder_credentials_fail_closed(
     assert "placeholder" in (_authentication_configuration_error() or "")
 
 
-def test_passive_security_headers_do_not_restrict_embedding(monkeypatch) -> None:
+def test_passive_security_headers_allow_framing_by_the_application_only(monkeypatch) -> None:
+    """Another website must not be able to frame a hosted tool (clickjacking); the app frames its own plots."""
     monkeypatch.setenv("COPYLOT_TOOL_ACCESS_ENABLED", "0")
     monkeypatch.setenv("COPYLOT_VIEWER_PORTAL_ENABLED", "0")
+    monkeypatch.delenv("COPYLOT_FRAME_ANCESTORS", raising=False)
     with TestClient(app) as client:
         response = client.get("/api/tool/auth/status")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
+    assert response.headers["content-security-policy"] == "frame-ancestors 'self'"
+
+
+def test_an_operator_can_name_pages_that_may_frame_the_application(monkeypatch) -> None:
+    monkeypatch.setenv("COPYLOT_TOOL_ACCESS_ENABLED", "0")
+    monkeypatch.setenv("COPYLOT_VIEWER_PORTAL_ENABLED", "0")
+    monkeypatch.setenv("COPYLOT_FRAME_ANCESTORS", "https://portal.example.org, javascript:alert(1) https://lab.example.org:8443/")
+    with TestClient(app) as client:
+        response = client.get("/api/tool/auth/status")
+    assert response.headers["content-security-policy"] == (
+        "frame-ancestors 'self' https://portal.example.org https://lab.example.org:8443")
     assert "x-frame-options" not in response.headers
-    assert "content-security-policy" not in response.headers
 
 
 def test_ollama_override_requires_local_or_explicitly_allowed_origin(monkeypatch) -> None:

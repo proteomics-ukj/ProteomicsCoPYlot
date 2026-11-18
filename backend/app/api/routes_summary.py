@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
+from app.api.error_handling import api_errors
 from app.schemas.summary import (
     SummaryReportRequest,
     SummaryReportResponse,
@@ -31,13 +32,8 @@ def summary_tables_route() -> SummaryTablesResponse:
 
 @router.post("/report", response_model=SummaryReportResponse)
 def summary_report_route(payload: SummaryReportRequest) -> SummaryReportResponse:
-    try:
+    with api_errors("Failed to build report", logger=LOGGER):
         # A report draws many figures; they are drawn one at a time like any
         # other plot (RENDER_LOCK in plot_export.py).
         with RENDER_LOCK:
             return report_with_notebook(report_function, payload)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        LOGGER.exception("Failed to build report")
-        raise HTTPException(status_code=500, detail="Failed to build report.") from e

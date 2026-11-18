@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 from app.services.plot_export import (
     to_png_bytes as _to_png_bytes,
     cm_to_inch as _cm_to_inch,
@@ -13,10 +17,9 @@ from app.schemas.completeness import CompletenessTablesResponse
 from app.services.annotation_store import get_annotation
 from app.services.data_tools import _get_sample_columns
 from app.services.dataset_store import get_current_dataset
-from app.services.functions import extract_sample_id as _extract_id_or_number
+from app.services.functions import extract_sample_id as _extract_id_or_number, sample_display_labels
 from app.services.functions import raw_zero_to_nan
-from app.services.peptide_quantity import resolve_peptide_quantity_column
-from app.services.plot_images import peptide_file_column, peptide_precursor_column, peptide_sequence_column
+from app.services.plot_images import peptide_file_column
 from app.services.plot_styling import (
     advanced_label,
     apply_advanced_axes,
@@ -174,16 +177,7 @@ def _renamed_meta(meta: pd.DataFrame, include_id: bool = True) -> pd.DataFrame:
     renamed["sample"] = renamed["sample"].astype(str)
     renamed["id"] = renamed["sample"].apply(_extract_id_or_number)
     renamed["new_sample"] = renamed.groupby("condition").cumcount() + 1
-    if include_id:
-        renamed["new_sample"] = renamed.apply(
-            lambda row: f"{row['condition']}_{row['new_sample']} ({row['id']})",
-            axis=1,
-        )
-    else:
-        renamed["new_sample"] = renamed.apply(
-            lambda row: f"{row['condition']}_{row['new_sample']}",
-            axis=1,
-        )
+    renamed['new_sample'] = sample_display_labels(renamed, index_column="new_sample", include_id=include_id, id_separator=" ")
     return renamed
 
 
@@ -228,11 +222,12 @@ def completeness_missing_value_plot(
     header: bool = True,
     text: bool = True,
     text_size: int = 8,
-    color: str = "#2563eb",
+    color: str = "",
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     frame, meta = _frame_and_meta(kind)
     data_filtered, _ = _filtered_data(frame, meta, include_id=False)
@@ -243,7 +238,7 @@ def completeness_missing_value_plot(
         header=header,
         text=text,
         text_size=text_size,
-        color=color,
+        color=color or resolve_plot_colors(1, plot_colors)[0],
         width_cm=width_cm,
         height_cm=height_cm,
         dpi=dpi,
@@ -251,22 +246,15 @@ def completeness_missing_value_plot(
     )
 
 
-def completeness_peptide_matrix(level: str, quantity_column: str | None = None) -> pd.DataFrame:
-    from app.services.peptide_tools import get_peptide_frame
 
-    if level not in {"peptide", "precursor"}:
-        raise ValueError("Choose peptide or precursor completeness.")
-    frame = get_peptide_frame()
-    file_col = peptide_file_column(frame)
-    feature_col = peptide_sequence_column(frame) if level == "peptide" else peptide_precursor_column(frame)
-    quantity_col = resolve_peptide_quantity_column(frame, requested=quantity_column)
-    pivot = frame.pivot_table(index=feature_col, columns=file_col, values=quantity_col, aggfunc="max")
-    sample_cols = [value for value in _peptide_sample_columns(frame) if value in pivot.columns]
+def completeness_peptide_matrix(level: str, quantity_column: str | None = None) -> pd.DataFrame:
+    from app.services.plot_images import peptide_detection_matrix
+
+    pivot, runs = peptide_detection_matrix(level)
+    sample_cols = [value for value in _peptide_sample_columns(runs) if value in pivot.columns]
     if not sample_cols:
         raise ValueError("Selected peptide samples have no usable quantity values.")
-    matrix = raw_zero_to_nan(pivot[sample_cols], sample_cols)
-    matrix.attrs.update(feature_column=feature_col, quantity_column=quantity_col)
-    return matrix
+    return pivot[sample_cols].copy()
 
 
 def completeness_missing_value_plot_peptide(
@@ -275,12 +263,13 @@ def completeness_missing_value_plot_peptide(
     header: bool = True,
     text: bool = True,
     text_size: int = 8,
-    color: str = "#2563eb",
+    color: str = "",
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
     advanced: dict | None = None,
     quantity_column: str | None = None,
+    plot_colors=None,
 ) -> bytes:
     matrix = completeness_peptide_matrix("peptide", quantity_column)
     return _missing_value_plot_from_matrix(
@@ -290,12 +279,13 @@ def completeness_missing_value_plot_peptide(
         header=header,
         text=text,
         text_size=text_size,
-        color=color,
+        color=color or resolve_plot_colors(1, plot_colors)[0],
         width_cm=width_cm,
         height_cm=height_cm,
         dpi=dpi,
         advanced=advanced,
     )
+
 
 
 def completeness_missing_value_plot_precursor(
@@ -304,12 +294,13 @@ def completeness_missing_value_plot_precursor(
     header: bool = True,
     text: bool = True,
     text_size: int = 8,
-    color: str = "#2563eb",
+    color: str = "",
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
     advanced: dict | None = None,
     quantity_column: str | None = None,
+    plot_colors=None,
 ) -> bytes:
     matrix = completeness_peptide_matrix("precursor", quantity_column)
     return _missing_value_plot_from_matrix(
@@ -319,12 +310,13 @@ def completeness_missing_value_plot_precursor(
         header=header,
         text=text,
         text_size=text_size,
-        color=color,
+        color=color or resolve_plot_colors(1, plot_colors)[0],
         width_cm=width_cm,
         height_cm=height_cm,
         dpi=dpi,
         advanced=advanced,
     )
+
 
 
 def completeness_missing_value_heatmap(
@@ -449,6 +441,10 @@ def completeness_tables(
 # single_protein_tools already did. These were cached one layer up, by a facade
 # in functions.py that forwarded to them; the facade is gone and the cache
 # stays where the work is.
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['completeness_missing_value_plot', 'completeness_missing_value_plot_peptide', 'completeness_missing_value_plot_precursor'], kind='protein')
+
+
 apply_cached_wrappers(
     globals(),
     [

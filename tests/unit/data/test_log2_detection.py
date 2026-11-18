@@ -15,6 +15,23 @@ from app.services.annotation_processor import (
 from app.services.functions import filter_data
 
 
+def _log2_detection_data():
+    frame = pd.DataFrame(
+        {
+            "score": [500.0] * 8,
+            "measurement_1": np.linspace(7.5, 12.0, 8),
+            "measurement_2": np.linspace(8.0, 12.5, 8),
+        }
+    )
+    metadata = pd.DataFrame(
+        {
+            "sample": ["measurement_1", "measurement_2"],
+            "condition": ["control", "treated"],
+        }
+    )
+    return frame, metadata
+
+
 def test_detection_uses_confirmed_samples_not_numeric_qc_columns() -> None:
     frame = pd.DataFrame(
         {
@@ -102,19 +119,7 @@ def test_filter_supports_count_and_percentage_across_all_scopes() -> None:
 
 
 def test_uploaded_metadata_defines_columns_for_automatic_detection() -> None:
-    frame = pd.DataFrame(
-        {
-            "score": [500.0] * 8,
-            "measurement_1": np.linspace(7.5, 12.0, 8),
-            "measurement_2": np.linspace(8.0, 12.5, 8),
-        }
-    )
-    metadata = pd.DataFrame(
-        {
-            "sample": ["measurement_1", "measurement_2"],
-            "condition": ["control", "treated"],
-        }
-    )
+    frame, metadata = _log2_detection_data()
 
     computed = compute_annotation_from_metadata(
         data=frame,
@@ -185,7 +190,7 @@ def test_generate_endpoint_detects_after_condition_mapping() -> None:
     assert payload["isLog2Transformed"] is True
     assert payload["log2AutoDetected"] is True
     assert payload["filter"] == {
-        "contaminants": {"enabled": False, "categories": [1, 2, 3, 4, 5], "matchAccessions": True},
+        "contaminants": {"enabled": False, "categories": [1, 2, 3, 4, 5, 6], "matchAccessions": True},
         "method": "at_least_n",
         "minPresent": 0,
         "minPercentage": 70.0,
@@ -197,19 +202,7 @@ def test_generate_endpoint_detects_after_condition_mapping() -> None:
 
 
 def test_detection_endpoint_uses_uploaded_metadata() -> None:
-    frame = pd.DataFrame(
-        {
-            "score": [500.0] * 8,
-            "measurement_1": np.linspace(7.5, 12.0, 8),
-            "measurement_2": np.linspace(8.0, 12.5, 8),
-        }
-    )
-    metadata = pd.DataFrame(
-        {
-            "sample": ["measurement_1", "measurement_2"],
-            "condition": ["control", "treated"],
-        }
-    )
+    frame, metadata = _log2_detection_data()
 
     with TestClient(app) as client:
         upload = client.post(

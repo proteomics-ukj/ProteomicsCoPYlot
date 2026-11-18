@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 SUFFIXES = {".py", ".ts", ".tsx", ".mjs", ".R", ".json", ".md", ".yml", ".yaml", ".toml", ".cfg"}
 SKIP = {"node_modules", ".git", "dist", "build", "__pycache__", ".venv", "test-results"}
 

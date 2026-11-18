@@ -6,6 +6,7 @@ import pandas as pd
 from app.schemas.annotation import AnnotationKind
 from app.services.data_tools import _get_sample_columns, metadata_for_kind as _metadata_for_kind, linear_qc_frame, log2_qc_frame
 from app.services.functions import (
+    sample_display_labels,
     condition_cvs,
     extract_sample_id as _extract_id_or_number,
     raw_zero_to_nan,
@@ -19,7 +20,7 @@ def prepare_coverage_df(data: pd.DataFrame, meta: pd.DataFrame, name: bool = Fal
     meta = _grouped_meta_order(meta.copy())
     meta["sample"] = meta["sample"].astype(str)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    meta["new_sample"] = meta.apply(lambda row: f"{row['condition']}_{row['new_sample']}", axis=1)
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample")
 
     rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
     data_filtered = data.rename(columns=rename_dict)
@@ -88,10 +89,7 @@ def prepare_coverage_summary_df(data: pd.DataFrame, meta: pd.DataFrame) -> pd.Da
     condition_order = meta["condition"].dropna().unique().tolist()
     meta["id"] = meta["sample"].apply(_extract_id_or_number)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    meta["new_sample"] = meta.apply(
-        lambda row: f"{row['condition']}_{row['new_sample']}\n({row['id']})",
-        axis=1,
-    )
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample", include_id=True)
 
     rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
     data_filtered = data.rename(columns=rename_dict)
@@ -169,7 +167,7 @@ def prepare_boxplot_single_df(data: pd.DataFrame, meta: pd.DataFrame, name: bool
     meta = meta.copy()
     meta["id"] = meta["sample"].apply(_extract_id_or_number)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    meta["new_sample"] = meta.apply(lambda row: f"{row['condition']}_{row['new_sample']}", axis=1)
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample")
 
     rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
     data_renamed = data.rename(columns=rename_dict)

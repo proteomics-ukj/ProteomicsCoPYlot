@@ -24,7 +24,7 @@ print(table(meta$condition))
 # Filter proteins ----------------------------------------------------------
 filtered <- filter_data(data, meta, 3, mode = "per_group")
 filter_protein_contaminants <- TRUE
-contaminant_categories <- 1:5
+contaminant_categories <- 1:6
 filtered <- filter_contaminants(filtered, enabled = filter_protein_contaminants,
                            categories = contaminant_categories, match_accessions = TRUE)
 if (!nrow(filtered)) stop("No proteins remain; revise the filters.")
@@ -58,7 +58,15 @@ cv_summary <- qc_cv_table(linear, meta)
 print(head(cv_summary, 10))
 feature_cvs <- qc_feature_cvs(linear, meta)
 print(head(feature_cvs, 10))
-fig <- abundance_plot(linear, meta, workflow = "Protein", data_scale = "linear")
+fig <- abundance_plot(
+  linear, meta, workflow = "Protein", data_scale = "linear",
+  top_high = 2, top_low = 2, search = c("AKT1"), highlight_labels = TRUE
+)
+fig <- interactive_abundance_plot(
+  linear, meta, "All Conditions", workflow = "Protein", data_scale = "linear",
+  top_high = 2, top_low = 2, search = c("AKT1"), highlight_labels = FALSE
+)
+invisible(fig)
 fig <- corr_plot(filtered, meta, id = FALSE, data_scale = "log2")
 correlations <- sample_correlation_matrix(filtered, meta, id=FALSE)
 print(head(correlations, 10))
@@ -114,7 +122,7 @@ cat(nrow(sites), "phosphosite rows\n")
 sites_filtered <- filter_data(sites, meta_sites, 3, mode = "per_group")
 filter_phospho_contaminants <- TRUE
 sites_filtered <- filter_contaminants(sites_filtered, enabled = filter_phospho_contaminants,
-                                     categories = 1:5)
+                                     categories = contaminant_categories)
 sites_filtered <- filter_localization(sites_filtered, 0)
 fig <- simple_phos_site_plot(sites_filtered)
 site_counts <- phospho_counts_table(sites_filtered)
@@ -149,7 +157,7 @@ phosprot <- transform_phosprot(sites_filtered, meta_sites, mode = "robust_site_m
                               data_scale = "log2", coverage_data = sites_filtered)
 phosprot_filtered <- filter_data(phosprot, meta_sites, 3, mode = "per_group")
 phosprot_filtered <- filter_contaminants(phosprot_filtered, enabled = filter_phospho_contaminants,
-                                        categories = 1:5)
+                                        categories = contaminant_categories)
 cat(nrow(sites_filtered), "retained sites;", nrow(phosprot_filtered), "phosphoproteins after filtering\n")
 fig <- phossite_dist(phosprot_filtered, cutoff = 0.01)
 site_distribution <- phospho_distribution_table(phosprot_filtered, cutoff=0.01)

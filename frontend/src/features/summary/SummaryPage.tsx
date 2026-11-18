@@ -1,4 +1,4 @@
-import { collectColumns } from "../../lib/tableData";
+import { collectColumns, formatCellValue } from "../../lib/tableData";
 import NotebookDownload from "../../components/NotebookDownload";
 import { useEffect, useId, useMemo, useState } from "react";
 import {
@@ -39,12 +39,18 @@ const proteinTextKeys = [
   "PCAProt",
   "AbundanceProt",
   "CorrelationProt",
+  "PearsonProt",
+  "VennProt",
   "VolcanoProt",
+  "AnovaProt",
+  "OraProt",
+  "SingleProt",
 ] as const;
 const phosphoTextKeys = [
   "Phossite",
   "Coverage(Number)Phos",
   "Coverage(Quality)Phos",
+  "STYPhos",
   "MissingValuePhos",
   "HistogramIntPhos",
   "BoxplotIntPhos",
@@ -52,7 +58,11 @@ const phosphoTextKeys = [
   "PCAPhos",
   "AbundancePhos",
   "CorrelationPhos",
+  "PearsonPhos",
+  "VennPhos",
   "VolcanoPhos",
+  "AnovaPhos",
+  "SinglePhos",
 ] as const;
 
 type Props = {
@@ -77,10 +87,16 @@ const plotTextLabels: Record<string, string> = {
   PCAProt: "PCA Plot - Protein Level",
   AbundanceProt: "Abundance Plot - Protein Level",
   CorrelationProt: "Correlation Plot - Protein Level",
+  PearsonProt: "Pearson Correlation - Protein Level",
+  VennProt: "Venn Diagram - Protein Level",
   VolcanoProt: "Volcano Plot - Protein Level",
+  AnovaProt: "One-way ANOVA - Protein Level",
+  OraProt: "GO Enrichment (ORA) - Protein Level",
+  SingleProt: "Single Protein - Protein Level",
   Phossite: "Overview Phosphosites",
   "Coverage(Number)Phos": "Coverage Plot (per condition) - Phosphosite Level",
-  "Coverage(Quality)Phos": "Coverage Plot (localization) - Phosphosite Level",
+  "Coverage(Quality)Phos": "Coverage Plot (localization probability) - Phosphosite Level",
+  STYPhos: "STY Plot - Phosphosite Level",
   MissingValuePhos: "Missing Value Plot - Phosphosite Level",
   HistogramIntPhos: "Histogram Intensity - Phosphosite Level",
   BoxplotIntPhos: "Boxplot Intensity - Phosphosite Level",
@@ -88,7 +104,11 @@ const plotTextLabels: Record<string, string> = {
   PCAPhos: "PCA Plot - Phosphosite Level",
   AbundancePhos: "Abundance Plot - Phosphosite Level",
   CorrelationPhos: "Correlation Plot - Phosphosite Level",
+  PearsonPhos: "Pearson Correlation - Phosphosite Level",
+  VennPhos: "Venn Diagram - Phosphosite Level",
   VolcanoPhos: "Volcano Plot - Phosphosite Level",
+  AnovaPhos: "One-way ANOVA - Phosphosite Level",
+  SinglePhos: "Single Phosphosite - Phosphosite Level",
 };
 
 function plotTextLabel(key: string): string {
@@ -229,10 +249,15 @@ export default function SummaryPage({ activeTab }: Props) {
     }
   }
 
-  const downloadHref = useMemo(() => {
-    if (!reportResult) return null;
-    return `data:text/html;charset=utf-8,${encodeURIComponent(reportResult.html)}`;
-  }, [reportResult]);
+  const reportFile = useMemo(
+    () => (reportResult ? new Blob([reportResult.html], { type: "text/html;charset=utf-8" }) : null),
+    [reportResult]
+  );
+  const downloadHref = useMemo(() => (reportFile ? URL.createObjectURL(reportFile) : null), [reportFile]);
+  useEffect(() => {
+    if (!downloadHref) return;
+    return () => URL.revokeObjectURL(downloadHref);
+  }, [downloadHref]);
 
   async function handleDownloadMetadata(kind: SummaryMetadataTable["kind"], scope: "selected" | "all" = "selected") {
     try {
@@ -471,6 +496,9 @@ export default function SummaryPage({ activeTab }: Props) {
                   </a>
                   <NotebookDownload key={reportResult.notebookToken ?? 'unavailable'} plotUrl={downloadHref} outputLabel="report"
                     rendered={{ url: downloadHref, token: reportResult.notebookToken ?? null }} />
+                  {reportFile ? (
+                    <span className="text-sm text-slate-600">{(reportFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -615,7 +643,7 @@ function MetadataTableCard({
                             key={`${rowIndex}-${column}`}
                             className="border-b border-slate-100 px-3 py-2 text-slate-600"
                           >
-                            {formatCell(row[column])}
+                            {formatCellValue(row[column])}
                           </td>
                         ))}
                       </tr>
@@ -629,15 +657,4 @@ function MetadataTableCard({
       )}
     </section>
   );
-}
-
-
-function formatCell(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "number") {
-    return Number.isInteger(value) ? String(value) : value.toFixed(4);
-  }
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }

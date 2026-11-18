@@ -2,15 +2,12 @@
 from functools import lru_cache
 import json
 from app.services.peptide_preparation_cache import cached_peptide_preparation
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
 from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
 from app.services.notebook_interactive import abundance_source
 from app.services.notebook_qc import qc_source
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
 
 def _cached_image(name, settings, fmt, revision, render):
@@ -33,7 +30,7 @@ def missed_cleavage_source():
                            'def render_plot(data, metadata, *, seq_col, prepared_summary=None,')
     figure = figure.replace('summary = peptide_missed_cleavage_summary(', 'summary = prepared_summary.copy(deep=True) if prepared_summary is not None else peptide_missed_cleavage_summary(')
     figure = figure.replace('_cm_to_inch(', 'cm_to_inch(').replace('_to_png_bytes(', 'to_png_bytes(')
-    source = merge_source('import numpy as np\nimport pandas as pd\nfrom matplotlib import ticker as mtick',
+    source = merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd\nfrom matplotlib import ticker as mtick',
         extract_notebook_source(original, ('peptide_missed_cleavage_summary', 'PROTEASE_LABELS',
                                           '_stripped_sequence_column', '_require_column')).code,
         extract_notebook_source(modification_source().code, ('_file_name_column', '_sample_rename_map')).code,
@@ -45,10 +42,7 @@ def missed_cleavage_source():
 
 @lru_cache(maxsize=1)
 def _missed_cleavage_module():
-    module = ModuleType('_copylot_portable_missed_cleavage')
-    sys.modules[module.__name__] = module
-    exec(missed_cleavage_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_missed_cleavage', missed_cleavage_source)
 
 
 def render_missed_cleavage(**options):
@@ -59,9 +53,7 @@ def render_missed_cleavage(**options):
     from app.services.session_context import get_session_id
 
     revision = runtime_cache_version()
-    bound = inspect.signature(peptide_tools.peptide_missed_cleavage_plot).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(peptide_tools.peptide_missed_cleavage_plot, **options)
     settings['protease'] = peptide_tools.normalize_protease(settings['protease'])
     module = _missed_cleavage_module()
     def prepare():
@@ -77,11 +69,8 @@ def render_missed_cleavage(**options):
     data, metadata, settings['seq_col'], summary, resources = cached_peptide_preparation(
         'cleavage-input', (settings['include_id'], settings['protease']), prepare)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         image = _cached_image('cleavage-image', settings, fmt, revision, lambda: module.render_plot(data, metadata, prepared_summary=summary, **settings))
-    finally:
-        module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Peptide Missed Cleavages',
         source=extract_notebook_source(missed_cleavage_source().code, ('render_plot', 'peptide_missed_cleavage_summary')),
         settings=settings, original_filename=get_current_dataset('peptide').filename,
@@ -126,7 +115,7 @@ def modification_source():
     helpers = '\n\n'.join(function_definition(original, name) for name in
         ('_file_name_column', '_require_column', '_sample_rename_map'))
     helpers = helpers.replace('_extract_id_or_number(', 'extract_sample_id(')
-    source = merge_source('import numpy as np\nimport pandas as pd', preparation, figure, helpers,
+    source = merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', preparation, figure, helpers,
         extract_notebook_source(original, ('peptide_modification_counts',)).code,
         extract_notebook_source(module_source('functions.py'), ('sample_id_map', 'extract_sample_id')).code,
         extract_notebook_source(rt_source().code,
@@ -136,10 +125,7 @@ def modification_source():
 
 @lru_cache(maxsize=1)
 def _modification_module():
-    module = ModuleType('_copylot_portable_peptide_modification')
-    sys.modules[module.__name__] = module
-    exec(modification_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_peptide_modification', modification_source)
 
 
 def render_modification(**options):
@@ -151,9 +137,7 @@ def render_modification(**options):
 
     revision = runtime_cache_version()
     dataset = get_current_dataset('peptide')
-    bound = inspect.signature(peptide_tools.peptide_modification_plot).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(peptide_tools.peptide_modification_plot, **options)
     module = _modification_module()
     def prepare():
         frame = peptide_tools.get_peptide_frame()
@@ -168,11 +152,8 @@ def render_modification(**options):
     data, metadata, counts, resources = cached_peptide_preparation(
         'modification-input', (settings['include_id'],), prepare)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         image = _cached_image('modification-image', settings, fmt, revision, lambda: module.render_plot(data, metadata, prepared_counts=counts, **settings))
-    finally:
-        module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Peptide Modifications',
         source=extract_notebook_source(modification_source().code, ('render_plot', 'peptide_modification_counts')),
         settings=settings, original_filename=dataset.filename,
@@ -208,7 +189,7 @@ def interactive_rt_source():
     preparation = ('def prepare_points(frame):\n' + function[start:boundary]
                    + "    return data.drop(columns=['sample'])\n")
     rendering = ('def plot_figure(data, *, add_line=False, header=True, sampling_seed=1, '
-                 'width_cm=20, height_cm=15, advanced=None):\n    go = get_plotly()[1]\n'
+                 'width_cm=20, height_cm=15, advanced=None, plot_colors=None):\n    go = get_plotly()[1]\n'
                  + function[boundary:])
     rendering = replace_once(rendering, 'return _plotly_html(fig)', 'return force_svg_rendering(fig)')
     rendering = rendering.replace('_cm_to_px(', 'cm_to_px(')
@@ -216,8 +197,8 @@ def interactive_rt_source():
         ('_require_column', '_peptide_feature_column', '_file_name_column', '_short_sample_label'))
     helpers = helpers.replace('_truncate_hover_text(', 'truncate_hover_text(')
     preparation = preparation.replace('_truncate_hover_text(', 'truncate_hover_text(')
-    styling = '\n'.join(line for line in module_source('plot_styling.py').splitlines() if not line.startswith('from app.'))
-    sources = merge_source('import re\nimport numpy as np\nimport pandas as pd',
+    styling = portable_styling()
+    sources = merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import re\nimport numpy as np\nimport pandas as pd',
         extract_notebook_source(abundance_source().code,
             ('get_plotly', 'plotly_html', 'force_svg_rendering', 'cm_to_px', 'advanced_plotly_layout')).code,
         extract_notebook_source(styling, ('plotly_marker', 'resolve_reference_line')).code,
@@ -227,10 +208,7 @@ def interactive_rt_source():
 
 @lru_cache(maxsize=1)
 def _interactive_rt_module():
-    module = ModuleType('_copylot_portable_interactive_rt')
-    sys.modules[module.__name__] = module
-    exec(interactive_rt_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_interactive_rt', interactive_rt_source)
 
 
 def render_interactive_rt(**options):
@@ -242,9 +220,7 @@ def render_interactive_rt(**options):
 
     revision = runtime_cache_version()
     dataset = get_current_dataset('peptide')
-    bound = inspect.signature(peptide_rt_interactive_html).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(peptide_rt_interactive_html, **options)
     module = _interactive_rt_module()
     data = module.prepare_points(get_peptide_frame())
     figure = module.plot_figure(data, **settings)
@@ -295,19 +271,15 @@ def rt_source():
             figure = replace_once(figure, before, after)
     helpers = extract_notebook_source(qc_source('coverage').code,
         ('get_plt', 'to_png_bytes', 'cm_to_inch', 'resolve_reference_line', 'apply_advanced_axes')).code
-    styling = '\n'.join(line for line in module_source('plot_styling.py').splitlines()
-                        if not line.startswith('from app.'))
+    styling = portable_styling()
     markers = extract_notebook_source(styling, ('marker_style',)).code
-    return extract_notebook_source(merge_source('import pandas as pd', helpers, markers,
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import pandas as pd', helpers, markers,
         function_definition(original, '_require_column'), figure), ('render_plot',))
 
 
 @lru_cache(maxsize=1)
 def _rt_module():
-    module = ModuleType('_copylot_portable_peptide_rt')
-    sys.modules[module.__name__] = module
-    exec(rt_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_peptide_rt', rt_source)
 
 
 def render_rt(**options):
@@ -326,16 +298,11 @@ def render_rt(**options):
             _require_column(frame, column)
         return frame, dataframe_bytes(frame)
     frame, input_bytes = cached_peptide_preparation('rt-input', (), prepare)
-    bound = inspect.signature(peptide_rt_plot).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(peptide_rt_plot, **options)
     module = _rt_module()
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = _cached_image('rt-image', settings, fmt, revision, lambda: module.render_plot(frame, **settings))
-    finally:
-        module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Peptide Retention Time', source=rt_source(),
         settings=settings, original_filename=dataset.filename,
         resources={'input.parquet': input_bytes, 'metadata.parquet': dataframe_bytes(pd.DataFrame()),
@@ -365,30 +332,27 @@ def coverage_source():
         ("def qc_peptide_coverage_plot(", "def plot_figure(data, metadata, condition_colors,"),
         ("_get_plt()", "get_plt()"),
         ("_peptide_coverage_summary(include_id, quantity_column, level)", "summarize_peptide_coverage(data, metadata)"),
-        ('advanced_condition_colors("protein", plt, ordered_conditions, advanced)', "condition_colors"),
-        ("return _to_png_bytes(fig, plt, dpi=dpi)", "return fig"),
+        ('advanced_condition_colors("protein", plt, conditions, advanced)', "condition_colors"),
+        ("return _to_png_bytes(fig, plt, dpi=dpi, tight=False)", "return fig"),
     ):
         figure = replace_once(figure, before, after)
     helpers = extract_notebook_source(qc_source("coverage").code, (
         "get_plt", "to_png_bytes", "_make_fig", "advanced_anchor", "advanced_label",
-        "resolve_reference_line", "apply_advanced_axes")).code
-    combined = merge_source(helpers, "import pandas as pd\nfrom typing import Any",
+        "_coverage_figure", "_grouped_meta_order", "resolve_reference_line", "apply_advanced_axes")).code
+    combined = merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, helpers, "import pandas as pd\nfrom typing import Any",
         function_definition(rendering, "summarize_peptide_coverage"), figure)
     return extract_notebook_source(combined, ("plot_figure", "summarize_peptide_coverage", "to_png_bytes", "get_plt"))
 
 
 @lru_cache(maxsize=1)
 def _coverage_module():
-    module = ModuleType("_copylot_portable_peptide_coverage")
-    sys.modules[module.__name__] = module
-    exec(coverage_source().code, module.__dict__)
-    return module
+    return portable_module("_copylot_portable_peptide_coverage", coverage_source)
 
 
 def render_coverage(**options):
     from app.services.dataset_store import get_current_dataset
     from app.services.plot_images import qc_peptide_coverage_plot, _peptide_coverage_data
-    from app.services.plot_styling import advanced_condition_colors
+    from app.services.plot_styling import advanced_condition_colors, advanced_label
     from app.services.plot_export import plot_output_format
     from app.services.runtime_cache import runtime_cache_version
     from app.services.session_context import get_session_id
@@ -397,23 +361,27 @@ def render_coverage(**options):
     dataset = get_current_dataset("peptide")
     if dataset is None:
         raise ValueError("Load a peptide dataset first.")
-    bound = inspect.signature(qc_peptide_coverage_plot).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(qc_peptide_coverage_plot, **options)
     data, metadata = _peptide_coverage_data(settings["include_id"], settings["quantity_column"], settings["level"])
     # Raw run paths are unnecessary: the matrix already uses the plotted sample labels.
+    advanced = dict(settings.get("advanced") or {})
+    renames = advanced.get("sampleLabels")
+    if isinstance(renames, dict):
+        advanced["sampleLabels"] = {
+            label: renamed for sample, label in
+            metadata[["sample", "label"]].itertuples(index=False, name=None)
+            if (renamed := advanced_label(label, advanced, "sampleLabels", sample)) != label}
+        settings["advanced"] = advanced
     metadata = metadata[["label", "condition"]].copy()
+    metadata["sample"] = metadata["label"]
     settings["quantity_column"] = data.attrs["quantity_column"]
     module = _coverage_module()
     settings["condition_colors"] = advanced_condition_colors("protein", module.get_plt(),
         metadata["condition"].astype(str).drop_duplicates().tolist(), settings["advanced"])
     figure = module.plot_figure(data, metadata, **settings)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
-        content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"])
-    finally:
-        module.plot_output_format.reset(format_token)
+    with portable_output_format(module, fmt):
+        content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"], tight=False)
     if not notebook_capture_requested():
         return content, ""
     table, total, _ = module.summarize_peptide_coverage(data, metadata)
@@ -433,7 +401,7 @@ def render_coverage(**options):
             "pd.testing.assert_frame_equal(table, read_resource_table(RESOURCES / 'table.parquet'), check_exact=True)\n"
             "table.to_csv('reproduced_table.csv', index=False)\ndisplay(table)\n"
             "figure = functions.plot_figure(data, metadata, **settings)\n"
-            "image = functions.to_png_bytes(figure, functions.get_plt(), dpi=settings['dpi'])\n"
+            "image = functions.to_png_bytes(figure, functions.get_plt(), dpi=settings['dpi'], tight=False)\n"
             "Path('reproduced.png').write_bytes(image)\ndisplay(Image(data=image))",
         input_explanation="The selected quantity is aggregated by maximum per feature/run, then zero and non-finite "
             "values are treated as missing. This export captures that exact annotated matrix, with the plotted sample "

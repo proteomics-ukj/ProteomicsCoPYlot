@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { getAdvancedPlotMode, setAdvancedPlotMode } from "./appSettings";
 
-export type GlobalShortcut = "quickSave" | "toggleAdvancedPlots";
+type GlobalShortcut = "quickSave" | "toggleAdvancedPlots";
 
 /**
  * Which of the app's two global shortcuts a key press is, if any.

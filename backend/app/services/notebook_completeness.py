@@ -1,13 +1,10 @@
 """Completeness replay from the same observed input used by the app."""
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
 from app.services.notebook_snapshots import snapshots
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
 RENDERERS = {"missing-value": "completeness_missing_value_plot",
              "missing-heatmap": "completeness_missing_value_heatmap"}
@@ -31,28 +28,27 @@ def completeness_source(plot):
     code = code.replace("return _to_png_bytes(fig, plt, dpi=dpi)", "return fig")
     code = code.replace("_get_plt()", "get_plt()").replace("_get_sns()", "get_sns()")
     code = code.replace("_cm_to_inch(", "cm_to_inch(")
-    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines()
-                        if not line.startswith("from app."))
-    styling += "\n\n" + function_definition(module_source("plotting_common.py"), "get_plt")
-    styling += "\n\ndef _get_plt():\n    return get_plt()\n"
+    styling = portable_styling(include_matplotlib=True)
     styles = extract_notebook_source(styling, (
         "advanced_label", "advanced_color", "advanced_label_size", "apply_advanced_axes", "get_plt")).code
     notebook = extract_notebook_source(module_source("notebook_functions.py"), ("extract_sample_id",)).code
     serialization = extract_notebook_source(module_source("plot_export.py"), ("to_png_bytes", "cm_to_inch")).code
-    combined = merge_source("import pandas as pd", styles, notebook, serialization, code,
-                             function_definition(module_source("plotting_common.py"), "get_sns"))
+    combined = merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, "import pandas as pd", styles, notebook, serialization, code,
+                             function_definition(module_source("plotting_common.py"), "get_sns"),
+                             function_definition(module_source("functions.py"), "sample_display_labels"))
     return extract_notebook_source(combined, ("plot_figure", "to_png_bytes", "get_plt",
         "completeness_sample_summary_table", "completeness_feature_summary_table", "_selected_matrix"))
 
 
 @lru_cache(maxsize=2)
 def _completeness_module(plot):
-    module = ModuleType(f"_copylot_portable_completeness_{plot.replace('-', '_')}")
-    sys.modules[module.__name__] = module
-    exec(completeness_source(plot).code, module.__dict__)
-    return module
+    return portable_module(
+        f"_copylot_portable_completeness_{plot.replace('-', '_')}",
+        lambda: completeness_source(plot),
+    )
 
 
+@cached_notebook_render
 def render_completeness(kind, *, plot, table_include_id=True, outlier_threshold=50.0, **options):
     from app.services import completeness_tools
     from app.services.annotation_store import get_annotation
@@ -74,20 +70,15 @@ def render_completeness(kind, *, plot, table_include_id=True, outlier_threshold=
     columns = list(dict.fromkeys(([feature_column] if feature_column else []) + metadata["sample"].tolist()))
     frame = frame[columns].copy(deep=True)
     metadata = metadata[["sample", "condition"]].copy(deep=True)
-    bound = inspect.signature(getattr(completeness_tools, RENDERERS[plot])).bind(kind, **options)
-    bound.apply_defaults()
-    plot_settings = dict(bound.arguments)
+    plot_settings = bound_settings(getattr(completeness_tools, RENDERERS[plot]), kind, **options)
     plot_settings.pop("kind")
     settings = {"plot": plot_settings, "table_include_id": table_include_id,
                 "outlier_threshold": outlier_threshold}
     module = _completeness_module(plot)
     figure = module.plot_figure(frame, metadata, **plot_settings)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = module.to_png_bytes(figure, module.get_plt(), dpi=plot_settings["dpi"])
-    finally:
-        module.plot_output_format.reset(format_token)
     resources = {"input.parquet": dataframe_bytes(frame), "metadata.parquet": dataframe_bytes(metadata),
                  f"original.{fmt}": bytes(content)}
     for name in ("sample", "feature"):
@@ -166,10 +157,7 @@ def peptide_source():
 
 @lru_cache(maxsize=1)
 def _peptide_module():
-    module = ModuleType("_copylot_portable_peptide_missing_values")
-    sys.modules[module.__name__] = module
-    exec(peptide_source().code, module.__dict__)
-    return module
+    return portable_module("_copylot_portable_peptide_missing_values", peptide_source)
 
 
 def render_peptide_missing_values(level, **options):
@@ -188,9 +176,10 @@ def render_peptide_missing_values(level, **options):
     if dataset is None:
         raise ValueError("Load a peptide dataset first.")
     renderer = getattr(completeness_tools, f"completeness_missing_value_plot_{level}")
-    bound = inspect.signature(renderer).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(renderer, **options)
+    from app.services.copylot_core import resolve_plot_colors
+    palette = settings.pop("plot_colors")
+    settings["color"] = settings["color"] or resolve_plot_colors(1, palette)[0]
     matrix = completeness_tools.completeness_peptide_matrix(level, settings.pop("quantity_column"))
     # Missing-count bars do not use run names. Keep basenames, disambiguated without exposing paths.
     labels = []
@@ -208,11 +197,8 @@ def render_peptide_missing_values(level, **options):
     module = _peptide_module()
     figure = module._missing_value_plot_from_matrix(matrix, **settings)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"])
-    finally:
-        module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(
         plot_name=f"{level.capitalize()} Missing Values", source=peptide_source(), settings=settings,
         original_filename=dataset.filename,

@@ -11,13 +11,13 @@ from typing import Any, Callable, cast
 
 import pandas as pd
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, Response
 
 from app.services.plot_export import note_notebook_unavailable
 from app.schemas.annotation import AnnotationKind
 from app.schemas.dataset import CompletenessDatasetKind
-from app.schemas.qc import BoxplotMode, FeatureScaling, PcaColorBy, PlotDimension
+from app.schemas.qc import BoxplotMode, FeatureIdentifier, FeatureScaling, PcaColorBy, PlotDimension
 from app.services.annotation_store import get_annotation
 from app.services.plot_images import (
     qc_abundance_interactive_html,
@@ -44,7 +44,7 @@ from app.services.plot_images import (
     _sample_label,
     qc_pca_feature_summary,
 )
-from app.api.plot_responses import plot_errors, png_response, snapshot_table, table_rows, table_snapshot
+from app.api.plot_responses import with_notebook_token, plot_errors, png_response, snapshot_table, table_rows, table_snapshot
 from app.services.data_tools import _get_sample_columns, linear_qc_frame, metadata_for_kind
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
@@ -77,11 +77,10 @@ def qc_coverage_route(
                 width_cm=widthCm, height_cm=heightCm, dpi=dpi,
                 advanced=advanced_settings, quantity_column=quantityColumn or None,
                 level=kind_normalized, reference_line=referenceLine,
+                summary=summary, text=text, text_size=textSize, random_seed=randomSeed,
             )
             response = png_response(content)
-            if token:
-                response.headers["X-CoPYlot-Notebook"] = token
-            return response
+            return with_notebook_token(response, token)
         if kind_normalized in {"protein", "phospho", "phosprot"}:
             annotation_kind = cast(AnnotationKind, kind_normalized)
             return _qc_paired_plot(
@@ -126,9 +125,7 @@ def _qc_paired_plot(plot: str, *, kind: AnnotationKind, **options) -> Response:
         response.headers["X-CoPYlot-Notice"] = quote(f"Notebook export unavailable: {exc} The plot is unchanged.")
         return response
     response = png_response(content if isinstance(content, bytes) else content.encode())
-    if token:
-        response.headers["X-CoPYlot-Notebook"] = token
-    return response
+    return with_notebook_token(response, token)
 
 
 @router.get("/qc/{kind}/coverage-table")
@@ -186,9 +183,17 @@ def qc_pca_features_route(
 
 
 @router.get("/qc/{kind}/options")
-def qc_options_route(kind: AnnotationKind) -> dict[str, object]:
-    annotation = get_annotation(kind)
-    if annotation is None or annotation.metadata.empty:
+def qc_options_route(kind: CompletenessDatasetKind) -> dict[str, object]:
+    if kind == "peptide" or kind == "precursor":
+        peptide = True
+        from app.services.peptide_tools import peptide_annotation_metadata
+        with plot_errors("Failed to load peptide coverage options"):
+            metadata = peptide_annotation_metadata()
+    else:
+        peptide = False
+        annotation = get_annotation(kind)
+        metadata = annotation.metadata if annotation is not None else None
+    if metadata is None or metadata.empty:
         return {
             "conditions": [],
             "samples": [],
@@ -201,16 +206,16 @@ def qc_options_route(kind: AnnotationKind) -> dict[str, object]:
         }
     conditions = [
         str(value)
-        for value in annotation.metadata["condition"].dropna().astype(str).drop_duplicates().tolist()
+        for value in metadata["condition"].dropna().astype(str).drop_duplicates().tolist()
     ]
     samples = [
         str(value)
-        for value in annotation.metadata["sample"].dropna().astype(str).drop_duplicates().tolist()
-    ] if "sample" in annotation.metadata.columns else []
+        for value in metadata["sample"].dropna().astype(str).drop_duplicates().tolist()
+    ] if "sample" in metadata.columns else []
     sample_labels: dict[str, str] = {}
     sample_labels_with_id: dict[str, str] = {}
-    if "sample" in annotation.metadata.columns and "condition" in annotation.metadata.columns:
-        meta = annotation.metadata[["sample", "condition"]].dropna().copy()
+    if "sample" in metadata.columns and "condition" in metadata.columns:
+        meta = metadata[["sample", "condition"]].dropna().copy()
         meta["sample"] = meta["sample"].astype(str)
         meta["condition"] = meta["condition"].astype(str)
         meta = meta.drop_duplicates(subset=["sample"], keep="first")
@@ -221,20 +226,25 @@ def qc_options_route(kind: AnnotationKind) -> dict[str, object]:
             index = int(row.sample_index)
             sample_labels[sample] = _sample_label(sample, condition, index, include_id=False)
             sample_labels_with_id[sample] = _sample_label(sample, condition, index, include_id=True).replace("\n", " ")
+    abundance_identifiers = []
+    if kind in ("protein", "phospho", "phosprot") and annotation is not None:
+        from app.services.stats_tools import _identifier_options
+        abundance_identifiers = [option.model_dump() for option in _identifier_options(kind, annotation.source_data)]
     return {
+        "abundanceIdentifiers": abundance_identifiers,
         "conditions": conditions,
         "samples": samples,
         "sampleLabels": sample_labels,
         "sampleLabelsWithId": sample_labels_with_id,
-        "imputedAvailable": imputed_data_available(kind),
+        "imputedAvailable": False if peptide else imputed_data_available(kind),
         # A `robust_site_median` collapse stores ratios to each site's own
         # median, not abundances. Only the backend knows how the phosphoprotein
         # frame was produced, so it says so here and the page warns under the
         # CV plot, whose numbers are not comparable with the other levels'.
-        "centredPhosprotValues": phosprot_values_are_centred(kind),
+        "centredPhosprotValues": False if peptide else phosprot_values_are_centred(kind),
         # The PCA is the one plot on this page that chooses its matrix, so the
         # ladder is served here rather than worked out in the browser.
-        **data_source_options(kind),
+        **({"availableDataSources": ["data"], "defaultDataSource": "data"} if peptide else data_source_options(kind)),
     }
 
 
@@ -485,6 +495,12 @@ def qc_abundance_route(
     heightCm: float = 10,
     dpi: int = 300,
     advanced: str = "",
+    search: str = "",
+    topHigh: int = Query(0, ge=0),
+    topLow: int = Query(0, ge=0),
+    highlightOutline: bool = True,
+    highlightLabels: bool = False,
+    identifier: FeatureIdentifier = "workflow",
 ) -> Response:
     with plot_errors("Failed to render QC plot"):
         return _qc_paired_plot(
@@ -493,6 +509,8 @@ def qc_abundance_route(
             header=header,
             legend=legend,
             condition=condition,
+            search=search, top_high=topHigh, top_low=topLow,
+            highlight_outline=highlightOutline, highlight_labels=highlightLabels, identifier=identifier,
             width_cm=widthCm,
             height_cm=heightCm,
             dpi=dpi,
@@ -509,6 +527,12 @@ def qc_abundance_interactive_route(
     widthCm: float = 20,
     heightCm: float = 10,
     advanced: str = "",
+    search: str = "",
+    topHigh: int = Query(0, ge=0),
+    topLow: int = Query(0, ge=0),
+    highlightOutline: bool = True,
+    highlightLabels: bool = False,
+    identifier: FeatureIdentifier = "workflow",
 ) -> HTMLResponse:
     with plot_errors("Failed to render interactive abundance plot", optional_dependency=True):
         _note_vsn_linear_qc(kind)
@@ -517,6 +541,8 @@ def qc_abundance_interactive_route(
             from app.services.notebook_provenance import NotebookProvenanceError
             try:
                 html, token = render_abundance(kind, header=header, legend=legend, condition=condition,
+                    search=search, top_high=topHigh, top_low=topLow,
+                    highlight_outline=highlightOutline, highlight_labels=highlightLabels, identifier=identifier,
                     width_cm=widthCm, height_cm=heightCm, advanced=parse_advanced_plot_settings(advanced))
                 return HTMLResponse(content=html, headers={"Cache-Control": "no-store", **({"X-CoPYlot-Notebook": token} if token else {})})
             except NotebookProvenanceError as exc:
@@ -526,6 +552,8 @@ def qc_abundance_interactive_route(
             header=header,
             legend=legend,
             condition=condition,
+            search=search, top_high=topHigh, top_low=topLow,
+            highlight_outline=highlightOutline, highlight_labels=highlightLabels, identifier=identifier,
             width_cm=widthCm,
             height_cm=heightCm,
             advanced=parse_advanced_plot_settings(advanced),

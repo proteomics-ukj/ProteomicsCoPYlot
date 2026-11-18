@@ -1,13 +1,12 @@
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from notebook_replay_support import notebook_code, replay_cells
 from app.api.routes_annotations import generate_annotation
 from app.schemas.annotation import AnnotationGenerateRequest
 from app.schemas.data_tools import IdTranslationRequest
@@ -51,7 +50,12 @@ def test_translation_history_replays_original_file_without_database(translated_i
     if restore:
         state = decode_restore_blob(export_state_blob(portable=True))
         assert str(path) not in json.dumps(state)
-        apply_restore_state(state, {})
+        # A portable state holds the translations, not the table: the original
+        # file is supplied again and the translations are replayed on it.
+        from fastapi import UploadFile
+        from app.services.restore_state import ReplacementInput
+        apply_restore_state(state, {('Data', 'protein'): ReplacementInput(
+            file=UploadFile(file=io.BytesIO(path.read_bytes()), filename=path.name))})
         assert [step.model_dump() for step in get_current_dataset('protein').id_translations] == history
     monkeypatch.setattr(id_translation, 'load_db', lambda: pytest.fail('Historical replay must not query today\'s database'))
     image, token = render_box(kind='protein', protein='UPG1', identifier='genes', conditions=['A', 'B'], dpi=80)
@@ -63,10 +67,9 @@ def test_translation_history_replays_original_file_without_database(translated_i
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    code = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    code = notebook_code(notebook)
     code = code.replace("Path('YOUR_ORIGINAL_DATA_FILE')", "Path('original.tsv')")
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + code],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(code, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
     rebuilt = id_translation.replay_id_translations(original, history)
@@ -135,10 +138,9 @@ def test_translation_and_phosphoprotein_collapse_replay(phosphosites, tmp_path, 
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    code = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    code = notebook_code(notebook)
     code = code.replace("Path('YOUR_ORIGINAL_DATA_FILE')", "Path('original.parquet')")
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + code],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(code, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
 
 

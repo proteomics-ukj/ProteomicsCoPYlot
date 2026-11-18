@@ -7,13 +7,11 @@ because the cluster *numbers* are how the user refers to a group.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.stats import AnovaRequest, EnrichmentRequest
 from app.services import stats_tools

@@ -70,5 +70,7 @@ def test_direct_plot_html_is_sandboxed_but_api_json_is_not():
         }, data={"condition1": "A", "condition2": "B", "condition1Control": "C", "condition2Control": "D"})
         assert response.status_code == 200, response.text
         assert "(A - C) - (B - D)" in response.text
-        assert response.headers['content-security-policy'] == GENERATED_HTML_CSP + '; sandbox allow-scripts allow-downloads'
-        assert 'content-security-policy' not in client.get('/api/health').headers
+        assert response.headers['content-security-policy'] == (
+            GENERATED_HTML_CSP + "; sandbox allow-scripts allow-downloads; frame-ancestors 'self'")
+        # JSON is not sandboxed; it only says who may frame the application.
+        assert client.get('/api/health').headers['content-security-policy'] == "frame-ancestors 'self'"

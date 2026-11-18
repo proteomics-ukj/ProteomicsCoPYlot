@@ -4,6 +4,7 @@ import gzip
 from zipfile import ZipFile
 
 import pandas as pd
+import pytest
 
 from app.api.routes_annotations import generate_annotation, normalize_annotation
 from app.schemas.annotation import AnnotationGenerateRequest, AnnotationNormalizeRequest
@@ -28,8 +29,10 @@ def test_protein_phospho_and_normalization_keep_independent_filter_settings():
     assert not get_annotation('phospho').filter_config.contaminants.enabled
 
 
-def test_peptide_export_replays_filter_from_original_upload(tmp_path):
-    from app.services.notebook_peptide import render_rt
+@pytest.mark.parametrize("plot", ["rt", "modification", "missed_cleavage", "sequence_coverage"])
+def test_peptide_export_keeps_contaminant_rows_from_original_upload(tmp_path, plot):
+    from app.services.notebook_peptide import render_rt, render_modification, render_missed_cleavage
+    from app.services.notebook_sequence import capture_sequence_coverage
     from app.services.notebook_snapshots import snapshots
     from app.services.session_context import get_session_id
     from app.services.notebook_archive import build_notebook_archive
@@ -38,21 +41,29 @@ def test_peptide_export_replays_filter_from_original_upload(tmp_path):
     generate_annotation(AnnotationGenerateRequest(kind='protein', isLog2Transformed=True,
         conditions=[{'name': 'one', 'columns': ['A']}], filter={'contaminants': {'enabled': True}}))
     peptides = pd.DataFrame({'ProteinNames': ['ALBU_HUMAN', 'SAMPLE', 'ALBU_HUMAN;SAMPLE', 'SAMPLE2'],
-        'Predicted.RT': [10., 20., 30., 40.], 'RT': [11., 21., 31., 41.], 'File.Name': ['run'] * 4})
+        'Predicted.RT': [10., 20., 30., 40.], 'RT': [11., 21., 31., 41.], 'File.Name': ['A'] * 4,
+        'Stripped.Sequence': ['DAHK', 'PEPTIDE', 'SEVAHR', 'SAMPLE'],
+        'Modified.Sequence': ['DAHK', 'PEPTIDE', 'SEVAHR', 'SAMPLE'], 'Precursor.Quantity': [1.] * 4})
     path = tmp_path / 'peptides.csv'
     peptides.to_csv(path, index=False)
     save_peptide_path(str(path))
-    _, token = render_rt(method='Scatter Plot', dpi=80)
+    if plot == "sequence_coverage":
+        token = capture_sequence_coverage(species="human", protein="ALBU_HUMAN")["notebookToken"]
+    else:
+        render = {"rt": render_rt, "modification": render_modification,
+                  "missed_cleavage": render_missed_cleavage}[plot]
+        _, token = render(dpi=80)
     recipe = snapshots.get(get_session_id(), token)
     config = json.loads(recipe.resources['processing.json'])
-    assert len(config['contaminant_reference']['records']) == 125
-    assert config['contaminants']['enabled']
-    namespace = {}
-    exec(recipe.source.code, namespace)
-    replayed = namespace['filter_peptide_contaminants'](peptides, config['contaminants'], config['contaminant_reference'])
-    assert replayed.ProteinNames.tolist() == ['SAMPLE', 'ALBU_HUMAN;SAMPLE', 'SAMPLE2']
-    assert 'filter_peptide_contaminants' in recipe.preparation
-    # The downloadable archive includes the exact lookup used for this render.
+    assert 'contaminants' not in config
+    captured = pd.read_parquet(io.BytesIO(recipe.resources['input.parquet']))
+    if plot == "rt":
+        assert captured['RT'].tolist() == peptides['RT'].tolist()
+    elif plot == "sequence_coverage":
+        assert set(captured['Stripped.Sequence']) == {'DAHK', 'SEVAHR'}
+    else:
+        assert len(captured) == len(peptides)
+    assert 'filter_peptide_contaminants' not in recipe.preparation
     _, payload = build_notebook_archive(recipe)
     with ZipFile(io.BytesIO(payload)) as archive:
         assert any(name.endswith('processing.json') for name in archive.namelist())
@@ -68,13 +79,13 @@ def test_contaminant_settings_and_rows_survive_session_restore(tmp_path):
     save_table_dataset(str(path), 'protein', frame, source_path=str(path))
     generate_annotation(AnnotationGenerateRequest(kind='protein', isLog2Transformed=True,
         conditions=[{'name': 'one', 'columns': ['A']}],
-        filter={'contaminants': {'enabled': True, 'categories': [4], 'matchAccessions': False}}))
+        filter={'contaminants': {'enabled': True, 'categories': [4, 6], 'matchAccessions': False}}))
     before = get_annotation('protein').filtered_data.copy()
     payload = json.loads(gzip.decompress(restore_state.export_state_blob()))
     reset_all_annotations()
     reset_all_datasets()
     restore_state.apply_restore_state(payload, {})
     restored = get_annotation('protein')
-    assert restored.filter_config.contaminants.categories == [4]
+    assert restored.filter_config.contaminants.categories == [4, 6]
     assert not restored.filter_config.contaminants.matchAccessions
     pd.testing.assert_frame_equal(restored.filtered_data, before)

@@ -1,12 +1,9 @@
 """Pathway heatmaps replayed from captured matrices and GO membership."""
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
+from app.services.notebook_source import portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_ora import ora_source, GO_ATTRIBUTION
 from app.services.notebook_volcano import volcano_source
 
@@ -49,12 +46,10 @@ def pathway_source():
 
 @lru_cache(maxsize=1)
 def pathway_module():
-    module = ModuleType('_copylot_portable_pathway')
-    sys.modules[module.__name__] = module
-    exec(pathway_source().code, module.__dict__)
-    return module
+    return portable_module("_copylot_portable_pathway", pathway_source)
 
 
+@cached_notebook_render
 def render_pathway(**options):
     from app.services import stats_tools
     from app.services.annotation_store import get_annotation
@@ -66,9 +61,7 @@ def render_pathway(**options):
     from app.services.session_context import get_session_id
 
     revision = runtime_cache_version()
-    bound = inspect.signature(stats_tools.pathway_heatmap_png).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(stats_tools.pathway_heatmap_png, **options)
     kind = settings['kind']
     source, data, metadata, warnings = stats_tools._stats_source(kind, data_source=settings['data_source'])
     annotation, dataset = get_annotation(kind), get_current_dataset(kind)
@@ -88,11 +81,8 @@ def render_pathway(**options):
     matrix, total, color_label = module.prepare_matrix(data, metadata, membership, **preparation)
     figure_settings = {key: settings[key] for key in ('pathway', 'value_type', 'header', 'width_cm', 'height_cm', 'dpi', 'advanced')}
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = module.render_plot(matrix, total, color_label, **figure_settings)
-    finally:
-        module.plot_output_format.reset(format_token)
     recipe = NotebookRecipe(plot_name='Pathway Heatmap', source=pathway_source(),
         original_filename=dataset.filename, settings={'preparation': preparation, 'figure': figure_settings},
         resources={'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),

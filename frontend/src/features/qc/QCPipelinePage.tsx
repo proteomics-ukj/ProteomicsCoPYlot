@@ -16,7 +16,8 @@ import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { compactAdvancedPlotSettings as compactAdvancedSettings, migrateAdvancedSettingsMap } from "../../lib/plotSerialization";
 import { methodDefaultScaling, pcaMethodLabel, SCALING_LABELS, scalingLabel, scalingValue } from "./pcaScaling";
-import { collectColumns, csvDataUrl, rowsToQuotedCsv as rowsToCsv } from "../../lib/tableData";
+import { collectColumns } from "../../lib/tableData";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { buildPlotUrl, getQcPcaFeatures, getQcPlotOptions, getQcTable, isAbortError } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
@@ -66,6 +67,8 @@ type Props = {
 type QcTableRequest = {
   tab: "coverage" | "boxplot" | "cv";
   params?: Record<string, string | number | boolean>;
+  /** A table that is not the one captured with the plot, so it is read without the plot's snapshot. */
+  detached?: boolean;
 };
 
 type QcKind = AnnotationKind | "peptide" | "precursor";
@@ -108,6 +111,8 @@ function QCPipelinePageView({
   const kindFieldId = useId();
   const [renderedNotebook, setRenderedNotebook] = useState<RenderedNotebook | null>(null);
   const [tableSnapshotToken, setTableSnapshotToken] = useState<string | null>(null);
+  // Which coverage table is shown: per sample or per condition. Until chosen it follows the plot type.
+  const [coverageTablePerCondition, setCoverageTablePerCondition] = useState<boolean | null>(null);
   const [kind, setKind] = useWorkflow<QcKind>();
   const persisted = useMemo(() => readQcWorkflowState(kind), [kind]);
   const persistedCoverage = (persisted.coverage as Record<string, unknown>) ?? {};
@@ -490,12 +495,14 @@ function QCPipelinePageView({
     void plotSignal;
     if (!isAnnotationKind(kind)) return null;
     if (activeTab === "coverage") {
+      const perCondition = coverageTablePerCondition ?? coverage.summary;
       const params: Record<string, string | number | boolean> = {
-        summary: coverage.summary,
+        summary: perCondition,
       };
       return {
         tab: "coverage",
         params,
+        detached: perCondition !== coverage.summary,
       };
     }
     if (activeTab === "boxplot") {
@@ -514,7 +521,7 @@ function QCPipelinePageView({
       };
     }
     return null;
-  }, [kind, activeTab, coverage.summary, box.mode, plotSignal]);
+  }, [kind, activeTab, coverage.summary, coverageTablePerCondition, box.mode, plotSignal]);
 
 
   const activeAdvancedSettings = advancedByTab[activeTab] ?? styleTemplate() ?? {};
@@ -797,7 +804,7 @@ function QCPipelinePageView({
     setTableRows([]);
     setTableError(null);
 
-    getQcTable(kind, tableRequest.tab, { ...tableRequest.params, ...(notebookToken ? { snapshot: notebookToken } : {}) }, { signal: controller.signal })
+    getQcTable(kind, tableRequest.tab, { ...tableRequest.params, ...(notebookToken && !tableRequest.detached ? { snapshot: notebookToken } : {}) }, { signal: controller.signal })
       .then((response) => {
         if (!controller.signal.aborted) {
           setTableRows(response.rows ?? []);
@@ -824,7 +831,7 @@ function QCPipelinePageView({
     if (!tableRequest || tableRows.length === 0) return null;
     const columns = collectColumns(tableRows);
     if (columns.length === 0) return null;
-    return csvDataUrl(rowsToCsv(tableRows, columns));
+    return { rows: tableRows, columns };
   }, [tableRequest, tableRows, tableLoading, tableError, notebookToken, tableSnapshotToken]);
 
 
@@ -957,25 +964,34 @@ function QCPipelinePageView({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
             <div className="flex flex-wrap items-center gap-2">
+            {tableRequest.tab === "coverage" ? (
+              <div className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-1 py-1 text-sm text-slate-700" role="group" aria-label="Coverage table">
+                <button type="button" aria-label="Previous coverage table"
+                  onClick={() => setCoverageTablePerCondition(!(tableRequest.params?.summary === true))}
+                  className="rounded-lg px-2 py-1 transition hover:bg-slate-100">‹</button>
+                <span className="min-w-28 text-center font-medium">
+                  {tableRequest.params?.summary === true ? "Per condition" : "Per sample"}
+                </span>
+                <button type="button" aria-label="Next coverage table"
+                  onClick={() => setCoverageTablePerCondition(!(tableRequest.params?.summary === true))}
+                  className="rounded-lg px-2 py-1 transition hover:bg-slate-100">›</button>
+              </div>
+            ) : null}
             {tableCsvUrl ? (
-              <a
-                href={tableCsvUrl}
-                download={`qc_${activeTab}_${kind}_summary.csv`}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-              >
-                {activeTab === "cv" ? "Download summary CSV" : "Download CSV"}
-              </a>
+              <TableDownloadLink table={tableCsvUrl}
+                filename={`qc_${activeTab}_${kind}_${tableRequest.tab === "coverage" && tableRequest.params?.summary === true ? "per_condition" : "summary"}.xlsx`}
+                label={activeTab === "cv" ? "Download summary (.xlsx)" : undefined} />
             ) : null}
             {activeTab === "cv" && tableCsvUrl ? (
-              <a href={buildPlotUrl(`/api/plots/qc/${kind}/feature-cvs.csv`, notebookToken ? { snapshot: notebookToken } : {})}
-                download={`qc_${kind}_feature_cvs.csv`}
+              <a href={buildPlotUrl(`/api/plots/qc/${kind}/feature-cvs.csv`, { format: "xlsx", ...(notebookToken ? { snapshot: notebookToken } : {}) })}
+                download={`qc_${kind}_feature_cvs.xlsx`}
                 className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
-                Download feature CVs (.csv)
+                Download feature CVs (.xlsx)
               </a>
             ) : null}
             {pairedNotebook && plotView ? (
               <NotebookDownload key={plotView.url} plotUrl={plotView.url}
-                rendered={!tableLoading && !tableError && tableSnapshotToken === notebookToken ? renderedNotebook : null} />
+                rendered={!tableLoading && !tableError && !tableRequest.detached && tableSnapshotToken === notebookToken ? renderedNotebook : null} />
             ) : null}
             </div>
           </div>

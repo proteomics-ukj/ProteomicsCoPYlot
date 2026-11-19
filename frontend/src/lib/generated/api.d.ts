@@ -1633,7 +1633,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Qc Feature Cvs Route */
+        /**
+         * Qc Feature Cvs Route
+         * @description The feature CVs as CSV (what the notebook export reproduces) or, for reading, as an Excel file.
+         */
         get: operations["qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get"];
         put?: never;
         post?: never;
@@ -2767,6 +2770,11 @@ export interface components {
              * @default null
              */
             legendFrame?: boolean | null;
+            /**
+             * Legendplacement
+             * @default null
+             */
+            legendPlacement?: ("below" | "right") | null;
             /**
              * Legendtextcolor
              * @default null
@@ -9101,6 +9109,7 @@ export interface operations {
         parameters: {
             query?: {
                 snapshot?: string;
+                format?: "csv" | "xlsx";
             };
             header?: never;
             path: {
@@ -9116,6 +9125,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": unknown;
                     "text/csv": unknown;
                 };
             };

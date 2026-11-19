@@ -49,6 +49,7 @@ export type AdvancedPlotSettings = {
   legendTitle?: string;
   legendTextColor?: string;
   legendFrame?: boolean;
+  legendPlacement?: "below" | "right";
   xTickLabelColor?: string;
   yTickLabelColor?: string;
   referenceLineColor?: string;

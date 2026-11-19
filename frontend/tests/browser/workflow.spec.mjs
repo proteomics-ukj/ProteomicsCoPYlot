@@ -93,7 +93,7 @@ test('completeness plots export their rendered notebook and summary calculations
   const unavailable = page.getByRole('button', { name: 'Export notebook', exact: true });
   await expect(unavailable).toHaveCount(3);
   for (const index of [0, 1, 2]) await expect(unavailable.nth(index)).toBeDisabled();
-  await expect(page.getByRole('link', { name: 'Download CSV', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download table (.xlsx)', exact: true }).first()).toBeVisible();
 });
 
 for (const [plot, title, toggle] of [['boxplot', 'Boxplot', 'Toggle Sample n'], ['lineplot', 'Lineplot', 'Toggle ID'], ['heatmap', 'Heatmap', 'Toggle ID']]) {
@@ -126,7 +126,7 @@ test(`single ${plot} and summary export the same notebook snapshot`, async ({ pa
   await checkbox.setChecked(!(await checkbox.isChecked()));
   await expect(buttons.nth(0)).toBeDisabled();
   await expect(buttons.nth(1)).toBeDisabled();
-  await expect(page.getByRole('link', { name: 'Download CSV', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download table (.xlsx)', exact: true })).toBeVisible();
 });
 }
 
@@ -247,6 +247,29 @@ test('Venn condition sets can require a minimum number of values', async ({ page
   await minimum.press('Enter');
   await table;
   await expect(totalA).toContainText('22');
+});
+
+test('coverage table switches independently and exports an Excel workbook', async ({ page }) => {
+  await annotated(page);
+  await tab(page, 'QC Pipeline').click();
+  const notebooks = page.getByRole('button', { name: 'Export notebook', exact: true });
+  await expect(notebooks.nth(1)).toBeEnabled();
+  await page.getByRole('button', { name: 'Next coverage table', exact: true }).click();
+  await expect(page.getByRole('columnheader', { name: 'Median', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Summary Type', { exact: true })).not.toBeChecked();
+  await expect(notebooks.nth(0)).toBeEnabled();
+  await expect(notebooks.nth(1)).toBeDisabled();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Download table (.xlsx)', exact: true }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe('qc_coverage_phospho_per_condition.xlsx');
+  const workbook = await readFile(await download.path());
+  expect(workbook.subarray(0, 2).toString()).toBe('PK');
+  expect(workbook.toString('utf8')).toContain('>All samples</t>');
+  expect(workbook.toString('utf8')).toContain('<v>23.5</v>');
+  await page.getByRole('button', { name: 'Previous coverage table', exact: true }).click();
+  await expect(page.getByRole('columnheader', { name: 'Identified features (n)', exact: true })).toBeVisible();
+  await expect(notebooks.nth(1)).toBeEnabled();
 });
 
 test('coverage plot and processed table download the same notebook snapshot', async ({ page }) => {
@@ -926,14 +949,16 @@ test('volcano lists the rows it could not test and offers them for download', as
   await expect(section).toBeVisible();
   await expect(section.getByText('fewer than 2 values in A').first()).toBeVisible();
   const pending = page.waitForEvent('download');
-  await section.getByRole('link', { name: 'Download CSV', exact: true }).click();
+  await section.getByRole('link', { name: 'Download table (.xlsx)', exact: true }).click();
   const download = await pending;
-  expect(download.suggestedFilename()).toMatch(/_not_tested\.csv$/);
-  const csv = (await readFile(await download.path())).toString('utf8');
-  expect(csv.split('\n')[0]).toContain('n_A');
-  expect(csv).toContain('K0');
-  expect(csv).toContain('K1');
-  expect(csv).not.toContain('K2,');
+  expect(download.suggestedFilename()).toMatch(/_not_tested\.xlsx$/);
+  const workbook = await readFile(await download.path());
+  expect(workbook.subarray(0, 2).toString()).toBe('PK');
+  const xml = workbook.toString('utf8'); // the workbook stores its XML parts without compression
+  expect(xml).toContain('>n_A</t>');
+  expect(xml).toContain('>K0</t>');
+  expect(xml).toContain('>K1</t>');
+  expect(xml).not.toContain('>K2</t>');
 });
 
 test('scientific assistant can set multiline volcano highlight terms', { tag: '@ai' }, async ({ page }) => {
@@ -994,7 +1019,7 @@ test('assistant changes are logged and the last one can be undone', { tag: '@ai'
   const log = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Changes made by the assistant' }) });
   await expect(log.locator('summary')).toHaveText('Changes made by the assistant (1 recorded; 1 this request)');
   await log.locator('summary').click();
-  await expect(log.getByRole('list', { name: 'Assistant changes' })).toContainText('Highlight terms: empty → G1');
+  await expect(log.getByRole('list', { name: 'Assistant changes' })).toContainText('Highlight terms: empty â†’ G1');
 
   // Changed by hand since: undo refuses and keeps the entry.
   await highlight.fill('G2');
@@ -1442,7 +1467,7 @@ test('canvas plot loading hides old results and failed renders can be retried', 
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Temporary plot failure' }) });
   });
   await volcano.getByRole('combobox', { name: 'P-value mode', exact: true }).selectOption('uncorrected');
-  await expect(volcano.getByRole('status')).toHaveText('Loading plot…');
+  await expect(volcano.getByRole('status')).toHaveText('Loading plotâ€¦');
   await expect(volcano.locator('svg')).toHaveCount(0);
   releaseVolcano();
   await expect(volcano.getByRole('alert')).toContainText('Temporary plot failure');
@@ -1466,7 +1491,7 @@ test('canvas plot loading hides old results and failed renders can be retried', 
       await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
     });
     await tile.getByRole('textbox').fill('K1');
-    await expect(tile.getByRole('status')).toHaveText('Loading plot…');
+    await expect(tile.getByRole('status')).toHaveText('Loading plotâ€¦');
     await expect(tile.locator('img')).toHaveAttribute('aria-busy', 'true');
     await expect(tile.locator('img')).toBeHidden();
     await expect(tile.getByRole('link', { name: 'Download Plot', exact: true })).toHaveCount(0);
@@ -1563,14 +1588,21 @@ test('end-to-end evidence follows completed ORA results and clearing', { tag: '@
   expect(tile.text).toContain(`termId=${actual.terms[0].termId}`);
   expect(Number(tile.text.match(/\|adjPValue=([^|\n]+)/)[1])).toBe(actual.terms[0].adjPValue);
   expect(first.request.view.mode.tileEvidence[0].token).toBe(actual.evidenceToken);
-  const exportLink = page.getByRole('link', { name: 'Download Terms CSV', exact: true });
-  const originalExport = await exportLink.getAttribute('href');
+  const exportLink = page.getByRole('link', { name: 'Download terms (.xlsx)', exact: true });
+  async function downloadedTable() {
+    const pending = page.waitForEvent('download');
+    await exportLink.click();
+    const download = await pending;
+    expect(download.suggestedFilename()).toBe('ora_terms.xlsx');
+    return readFile(await download.path());
+  }
+  const originalExport = await downloadedTable();
   await page.getByPlaceholder('Paste genes separated by comma, space, or newline').fill('TP53');
   await field(canvas, 'Adj p-value cutoff', 'input').fill('0.5');
   await field(canvas, 'Min term size', 'input').fill('10');
   await field(canvas, 'Max term size', 'input').fill('400');
   await field(canvas, 'Top terms', 'input').fill('5');
-  await expect(exportLink).toHaveAttribute('href', originalExport);
+  expect((await downloadedTable()).equals(originalExport)).toBe(true);
   await canvas.getByRole('button', { name: 'Collapse tile', exact: true }).click();
   await expect(exportLink).toBeHidden();
   await tab(page, 'QC Pipeline').click();
@@ -1582,7 +1614,7 @@ test('end-to-end evidence follows completed ORA results and clearing', { tag: '@
   await expect(field(canvas, 'Min term size', 'input')).toHaveValue('10');
   await expect(field(canvas, 'Max term size', 'input')).toHaveValue('400');
   await expect(field(canvas, 'Top terms', 'input')).toHaveValue('5');
-  await expect(exportLink).toHaveAttribute('href', originalExport);
+  expect((await downloadedTable()).equals(originalExport)).toBe(true);
   const edited = await askForRealEvidence(page);
   expect(edited.evidence).toEqual(first.evidence);
   expect(runs).toBe(1);
@@ -1811,7 +1843,7 @@ for (const approved of [false, true]) {
     page.on('dialog', async dialog => {
       confirmations++;
       expect(dialog.type()).toBe('confirm');
-      expect(dialog.message()).toContain('Test type: "unpaired" → "unpaired_welch"');
+      expect(dialog.message()).toContain('Test type: "unpaired" â†’ "unpaired_welch"');
       if (approved) await dialog.accept();
       else await dialog.dismiss();
     });
@@ -2373,7 +2405,7 @@ test('shared plot controls preserve numeric editing, bounds, toggles and multipl
 
 for (const [panel, endpoint, setting, value, parameter] of [
   ['One-way ANOVA', 'anova', 'P-value threshold', '0.01', 'pValueThreshold'],
-  ['Replicate & Variance Projection', 'simulation', 'Variance × factor', '2', 'varianceMultiplier'],
+  ['Replicate & Variance Projection', 'simulation', 'Variance Ã— factor', '2', 'varianceMultiplier'],
   ['Replicate & Variance Projection', 'simulation', 'Replicates per group (0 = observed, 2-100 fixed)', '8', 'sampleSizeOverride'],
 ]) {
   test(`${panel} hides old results until the changed request completes: ${setting}`, async ({ page }) => {

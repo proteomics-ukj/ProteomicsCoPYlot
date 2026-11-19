@@ -140,15 +140,16 @@ def _detection_column(column: str) -> bool:
                      "egtotalquantitysettings", "pepquantity", "egmodifiedsequence",
                      # MaxQuant evidence.txt
                      "sequence", "modifiedsequence", "rawfile", "experiment", "intensity", "charge", "reverse",
-                     # Skyline transition export
-                     "proteinname", "peptidesequence", "peptidemodifiedsequence", "precursorcharge", "area",
-                     "isotopelabeltype"}
+                     # FragPipe combined ion and peptide tables (with "<experiment> Intensity" below)
+                     "peptidesequence"}
             or ("file" in name and "name" in name)
             or ("stripped" in name and "sequence" in name)
             or ("precursor" in name and "id" in name)
             # the quantity columns of a Spectronaut peptide pivot, one per run
             or re.search(r"\.(?:EG\.TotalQuantity \(Settings\)|FG\.Quantity|FG\.MS2Quantity|PEP\.Quantity|PEP\.MS2Quantity)$",
-                         str(column).strip()) is not None)
+                         str(column).strip()) is not None
+            # the quantity columns of a FragPipe combined table, one per experiment
+            or re.search(r"(?<! MaxLFQ) Intensity$", str(column).strip()) is not None)
 
 
 @lru_cache(maxsize=4)
@@ -172,6 +173,10 @@ def get_peptide_frame(*, columns: list[str] | None = None, detection_only: bool 
 
 def _require_column(frame: pd.DataFrame, column: str) -> str:
     if column not in frame.columns:
+        if column == "Predicted.RT":
+            raise ValueError(
+                "Required peptide column 'Predicted.RT' is missing: this report has no predicted retention time, "
+                "which the plot compares with the measured one. FragPipe and MaxQuant reports never contain it.")
         raise ValueError(f"Required peptide column '{column}' is missing.")
     return column
 
@@ -409,6 +414,8 @@ def _sample_rename_map(
         spectronaut = re.match(r"^(.+)\.(?:PG|PEP|EG|FG|PTM)\.[^.]+$", text)
         if spectronaut is not None:
             return spectronaut[1]
+        # FragPipe: "<experiment> MaxLFQ Intensity" beside the bare experiment
+        text = re.sub(r" (?:MaxLFQ Intensity|Intensity|Spectral Count)$", "", text)
         return re.sub(r"^(?:LFQ intensity|Intensity|iBAQ|MS/MS count) ", "", text)
 
     stems: dict[str, list[str]] = {}

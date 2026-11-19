@@ -10,7 +10,7 @@ Proteomics CoPYlot is a React and FastAPI application for proteomics and phospho
 
 ## Capabilities
 
-- Upload wide-format quantitative tables; Spectronaut and DIA-NN column names are recognized automatically, and other exports can be mapped by naming the sample columns during annotation. Spectronaut peptide pivot, long and PTM site reports, MaxQuant `evidence.txt` and Skyline transition exports are read through adapters.
+- Upload wide-format quantitative tables; Spectronaut and DIA-NN column names are recognized automatically, and other exports can be mapped by naming the sample columns during annotation. Spectronaut peptide pivot, long and PTM site reports, MaxQuant `evidence.txt` and FragPipe combined protein, ion and peptide tables are read through adapters.
 - Annotate samples and manage protein, peptide, phosphosite, and phosphoprotein datasets.
 - Run completeness, quality-control, statistical, comparison, peptide, phospho, and single-protein workflows.
 - Generate interactive Plotly and static Matplotlib/Seaborn plots.
@@ -176,17 +176,6 @@ Run the [R example script](examples/example.R) from the checkout. For the shared
 The Python package, the R functions (`notebook_functions.R`, loaded with `source()`; it
 is a script, not an installable R package) and the app support the same core analysis
 workflows. Use the examples above for detailed usage and parameter choices.
-
-Category plots (missing-value counts, peptide modifications and missed cleavages,
-phosphosite counts/coverage/distribution, S/T/Y, retention-time and Pearson scatters,
-Q-Q plots, imputation distributions and multi-protein lines) use the selected Colors
-tab palette in the GUI. Reference lines retain their own colors. Python and R
-notebook functions default to Proteomics CoPYlot Colors and accept
-`plot_colors="copylot"`, `plot_colors="ukj"`, `plot_colors="tab10"`, or an explicit
-color sequence. For Venn plots, use the existing `colors` argument instead.
-For example, `sty_plot(data, plot_colors="ukj")` uses the first three UKJ colors
-for S, T and Y in either language. Explicit individual color overrides still take
-precedence. GUI notebook exports capture the resolved colors for reproducibility.
 
 ### Notebook exports
 

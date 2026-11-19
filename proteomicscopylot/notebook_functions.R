@@ -1902,10 +1902,13 @@ qc_coverage_table <- function(data, metadata, summary = FALSE) {
   detected <- !is.na(data[as.character(meta$sample)])
   counts <- colSums(detected)
   if (summary) {
-    return(do.call(rbind, lapply(conditions, function(condition) {
-      x <- unname(counts[meta$condition == condition])
-      data.frame(condition, mean = round(mean(x), 2), min = min(x), max = max(x), sd = round(sd(x), 2))
-    })))
+    # One row per condition and the same figures over every sample.
+    figures <- function(condition, x) {
+      data.frame(condition, mean = round(mean(x), 2), median = round(median(x), 2), sd = round(sd(x), 2),
+                 min = min(x), max = max(x), stringsAsFactors = FALSE)
+    }
+    rows <- lapply(conditions, function(condition) figures(condition, unname(counts[meta$condition == condition])))
+    return(do.call(rbind, c(rows, list(figures("All samples", unname(counts))))))
   }
   labels <- paste(meta$condition, ave(seq_along(counts), meta$condition, FUN = seq_along), sep = "_")
   quantified <- sum(rowSums(detected) > 0)
@@ -2017,16 +2020,40 @@ peptideCollapse <- .gui_table("peptideCollapse")
   }), conditions)
 }
 
+# Per feature: mean log2 quantity and CV (%) of every condition, then of all
+# samples. Everything is calculated from the linear sample values; of the table
+# only the identifiers are kept, so the columns do not depend on the software
+# that wrote it.
 qc_feature_cvs <- function(frame, meta) {
-  result <- frame[setdiff(names(frame), meta$sample)]
+  identifiers <- c("ProteinNames", "GeneNames", "ProteinAccessions",
+                   "PTM_Collapse_key", "Phosphoprotein", "Protein_group", "Gene_group")
+  result <- frame[intersect(identifiers, names(frame))]
   if (!ncol(result)) result[["Feature row"]] <- seq_len(nrow(frame))
+  data <- .prepare_intensity_data(frame, meta$sample, "linear")
   cvs <- .condition_cvs(frame, meta)
-  for (condition in names(cvs)) {
-    label <- paste(condition, "CV (%)")
-    while (label %in% names(result)) label <- paste(label, "(CV)")
-    result[[label]] <- cvs[[condition]]
+  add <- function(result, label, column) {
+    while (label %in% names(result)) label <- paste(label, "(calculated)")
+    result[[label]] <- column
+    result
   }
-  result
+  mean_log2 <- function(samples) {
+    values <- .numeric_matrix(data, samples)
+    values[!is.finite(values) | values <= 0] <- NA_real_
+    out <- rowMeans(log2(values), na.rm = TRUE)
+    out[!is.finite(out)] <- NA_real_
+    out
+  }
+  for (condition in names(cvs)) {
+    samples <- as.character(meta$sample)[as.character(meta$condition) == condition]
+    result <- add(result, paste(condition, "mean log2"), mean_log2(samples))
+    result <- add(result, paste(condition, "CV (%)"), cvs[[condition]])
+  }
+  all_samples <- as.character(meta$sample)
+  values <- .numeric_matrix(data, all_samples)
+  overall <- apply(values, 1, sd, na.rm = TRUE) / rowMeans(values, na.rm = TRUE) * 100
+  overall[!is.finite(overall)] <- NA_real_
+  result <- add(result, "All samples mean log2", mean_log2(all_samples))
+  add(result, "All samples CV (%)", overall)
 }
 
 cov_plot <- function(data, meta, outliers=FALSE, header=TRUE, legend=TRUE, plot_colors=NULL, width_cm=20, height_cm=10, dpi=100, text=FALSE, text_size=9, data_scale=NULL) {

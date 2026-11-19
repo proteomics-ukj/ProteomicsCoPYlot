@@ -95,25 +95,21 @@ def prepare_coverage_summary_df(data: pd.DataFrame, meta: pd.DataFrame) -> pd.Da
     data_filtered = data.rename(columns=rename_dict)
     annotated_cols = [c for c in meta["new_sample"].tolist() if c in data_filtered.columns]
     if not annotated_cols:
-        return pd.DataFrame(columns=["condition", "mean", "min", "max", "sd"])
+        return pd.DataFrame(columns=["condition", "mean", "median", "sd", "min", "max"])
 
     data_binary = data_filtered[annotated_cols].notna().astype(int)
-    melted = data_binary.melt(var_name="Sample", value_name="Value")
-    data_annotated = melted.merge(meta[["new_sample", "condition"]], left_on="Sample", right_on="new_sample")
-
-    sample_summary = (
-        data_annotated.groupby("Sample", sort=False)
-        .agg(Value=("Value", "sum"), condition=("condition", "first"))
-        .reset_index()
+    # Count by column so samples with no remaining feature rows still have zero coverage.
+    sample_summary = data_binary.sum().rename_axis("Sample").reset_index(name="Value")
+    sample_summary = sample_summary.merge(
+        meta[["new_sample", "condition"]], left_on="Sample", right_on="new_sample"
     )
     condition_summary = (
         sample_summary.groupby("condition", sort=False)
-        .agg(mean=("Value", "mean"), min=("Value", "min"), max=("Value", "max"), sd=("Value", "std"))
+        .agg(mean=("Value", "mean"), median=("Value", "median"), sd=("Value", "std"),
+             min=("Value", "min"), max=("Value", "max"))
         .reset_index()
     )
 
-    numeric_cols = ["mean", "min", "max", "sd"]
-    condition_summary[numeric_cols] = condition_summary[numeric_cols].round(2)
     if condition_order:
         condition_summary["condition"] = pd.Categorical(
             condition_summary["condition"],
@@ -122,6 +118,16 @@ def prepare_coverage_summary_df(data: pd.DataFrame, meta: pd.DataFrame) -> pd.Da
         )
         condition_summary = condition_summary.sort_values("condition").reset_index(drop=True)
         condition_summary["condition"] = condition_summary["condition"].astype(str)
+    # The same figures over every sample, whatever its condition.
+    counts = sample_summary["Value"]
+    overall = pd.DataFrame([{
+        "condition": "All samples", "mean": counts.mean(), "median": counts.median(), "sd": counts.std(),
+        "min": counts.min(), "max": counts.max(),
+    }])
+    condition_summary = pd.concat([condition_summary, overall], ignore_index=True)
+    rounded = ["mean", "median", "sd"]
+    condition_summary[rounded] = condition_summary[rounded].astype(float).round(2)
+    condition_summary[["min", "max"]] = condition_summary[["min", "max"]].astype(int)
     return condition_summary
 
 
@@ -227,18 +233,37 @@ def qc_boxplot_table(kind: AnnotationKind, mode: str = "Mean") -> pd.DataFrame:
 
 
 def qc_feature_cvs(frame: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
+    """Per feature: mean log2 quantity and CV (%) of every condition, then of all samples.
+
+    Everything is calculated here from the linear sample values; of the uploaded
+    table only the identifiers are kept (names, genes, accessions, as far as the
+    table has them), so the columns are the same whichever software wrote it.
+    """
     samples = meta["sample"].tolist()
     frame = frame.reset_index(drop=True)
     values = raw_zero_to_nan(frame[samples], samples)
     cvs = dict(condition_cvs(values, meta))
-    result = frame.drop(columns=samples).copy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log2_values = np.log2(values.where(values > 0))
+    identifiers = ("ProteinNames", "GeneNames", "ProteinAccessions",
+                   "PTM_Collapse_key", "Phosphoprotein", "Protein_group", "Gene_group")
+    result = frame[[column for column in identifiers if column in frame.columns]].copy()
     if result.shape[1] == 0:
         result["Feature row"] = frame.index + 1
-    for condition in meta["condition"].astype(str).unique():
-        label = f"{condition} CV (%)"
+
+    def add(label: str, column) -> None:
         while label in result.columns:
-            label += " (CV)"
-        result[label] = cvs.get(condition, np.nan)
+            label += " (calculated)"
+        result[label] = column
+
+    conditions = meta["condition"].astype(str)
+    for condition in conditions.unique():
+        columns = meta.loc[conditions == condition, "sample"].tolist()
+        add(f"{condition} mean log2", log2_values[columns].mean(axis=1, skipna=True))
+        add(f"{condition} CV (%)", cvs.get(condition, np.nan))
+    add("All samples mean log2", log2_values[samples].mean(axis=1, skipna=True))
+    overall = values[samples].std(axis=1, skipna=True) / values[samples].mean(axis=1, skipna=True) * 100.0
+    add("All samples CV (%)", overall.where(np.isfinite(overall)))
     return result
 
 

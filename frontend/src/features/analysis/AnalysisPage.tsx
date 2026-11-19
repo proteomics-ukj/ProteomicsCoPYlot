@@ -2,7 +2,7 @@ import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 
 import { oraListExportRows } from "../stats/oraExport";
 import NotebookDownload from "../../components/NotebookDownload";
-import { collectColumns, csvDataUrl, rowsToQuotedCsv } from "../../lib/tableData";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import { linkedConditionsParam } from "./linkedConditions";
 import { resizeHandleClass, useResizablePanel } from "../../lib/useResizablePanel";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -1486,7 +1486,7 @@ function OraListTile({
   }
 
   const oraTermRows = completed && result ? oraListExportRows(completed, result) : [];
-  const oraCsvUrl = oraTermRows.length ? csvDataUrl(rowsToQuotedCsv(oraTermRows, collectColumns(oraTermRows))) : null;
+  const oraCsvUrl = oraTermRows.length ? { rows: oraTermRows } : null;
 
   return (
     <div>
@@ -1627,13 +1627,7 @@ function OraListTile({
           </div>
           <div className="flex flex-wrap gap-2">
             {oraCsvUrl ? (
-              <a
-                href={oraCsvUrl}
-                download="ora_terms.csv"
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-              >
-                Download Terms CSV
-              </a>
+              <TableDownloadLink table={oraCsvUrl} filename="ora_terms.xlsx" label="Download terms (.xlsx)" />
             ) : null}
             {result.notebookToken && <NotebookDownload outputLabel="table" plotUrl={result.notebookToken}
               rendered={{ url: result.notebookToken, token: result.notebookToken }} />}

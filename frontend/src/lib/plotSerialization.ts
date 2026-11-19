@@ -67,6 +67,7 @@ const ELEMENT_EXTRA_KEYS = [
   "distributionNoteText",
   "legendTitle",
   "legendTextColor",
+  "legendPlacement",
   "xTickLabelColor",
   "yTickLabelColor",
 ] as const;

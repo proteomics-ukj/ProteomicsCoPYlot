@@ -147,7 +147,7 @@ def _other_level_is_free(kind: Literal["protein", "peptide"], filename: str) -> 
 
 
 def _fill_peptide_level(path: str, filename: str) -> None:
-    """A Skyline export or Spectronaut long report loaded as the protein table is the peptide report too."""
+    """A Spectronaut long report loaded as the protein table is the peptide report too."""
     if not file_holds_protein_and_peptide_level(path) or not _other_level_is_free("peptide", filename):
         return
     stored = save_peptide_path(path)

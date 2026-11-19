@@ -45,7 +45,7 @@ function allowedValues(key: string): string[] | null {
 }
 
 const EVERY_CARD: AdvancedPlotVisibleControls = {
-  textElements: true, tickControls: true, legendControls: true, referenceLineColor: true,
+  textElements: true, tickControls: true, legendControls: true, legendPlacement: true, referenceLineColor: true,
   referenceLineToggle: true, referenceLineLegend: true, fontControls: true, conditionLabels: true, sampleLabels: true,
   conditionColors: true, boxplotStyle: true, boxplotOutliers: true, boxplotPoints: true,
   correlationGradient: true, backgroundControls: true, axisLineControls: true, markerStyle: true,

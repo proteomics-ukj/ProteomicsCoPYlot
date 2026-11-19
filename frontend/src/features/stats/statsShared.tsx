@@ -3,7 +3,7 @@
 import { withPlotDownloadFilename, withPlotDownloadFormat, type PlotDownloadFormat } from "../../lib/plotDownload";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
 
-import { collectColumns, rowsToQuotedCsv } from "../../lib/tableData";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import PaginatedTable from "../../components/PaginatedTable";
 import PlotImage from "../../components/PlotImage";
 import InteractivePlot from "../../components/InteractivePlot";
@@ -102,19 +102,12 @@ export function TableSection({ title, rows, filename, notebook, plotUrl }: {
   title: string; rows: Record<string, unknown>[]; filename: string;
   notebook?: RenderedNotebook | null; plotUrl?: string;
 }) {
-  function downloadCsv(link: HTMLAnchorElement) {
-    const csv = rowsToQuotedCsv(rows, collectColumns(rows));
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    link.href = url;
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  }
-
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
         <div className="flex flex-wrap items-center gap-2">
-          {rows.length ? <a href="#" download={filename} onClick={event => downloadCsv(event.currentTarget)} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">Download CSV</a> : null}
+          {rows.length ? <TableDownloadLink table={{ rows }} filename={filename.replace(/\.csv$/, ".xlsx")} /> : null}
           {plotUrl ? <NotebookDownload plotUrl={plotUrl} rendered={notebook ?? null} /> : null}
         </div>
       </div>

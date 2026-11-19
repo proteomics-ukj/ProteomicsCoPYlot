@@ -1,4 +1,4 @@
-import CsvDownloadLink from "../../components/CsvDownloadLink";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import PlotTableContent from "../../components/PlotTableContent";
 import PlotOptionsContent from "../../components/PlotOptionsContent";
 import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
@@ -11,7 +11,6 @@ import { SizeRow, MultiSelectField } from "../../components/PlotFields";
 import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { collectColumns } from "../../lib/tableData";
-import { csvDataUrl, rowsToCsv } from "../../lib/tableData";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { buildPlotUrl, getSingleProteinOptions, getSingleProteinTable, isAbortError, type SingleProteinCarry } from "../../lib/api";
 import { useCurrentDatasetsSnapshot, useDatasetRevision } from "../../lib/datasetAvailability";
@@ -516,7 +515,7 @@ function SingleProteinPageView({ activeTab, onContextModeChange, advancedPlotOpt
     if (tableRows.length === 0) return null;
     const columns = collectColumns(tableRows);
     if (columns.length === 0) return null;
-    return csvDataUrl(rowsToCsv(tableRows, columns));
+    return { rows: tableRows, columns };
   }, [tableRows]);
   const tableWarnings = useMemo(
     () =>
@@ -658,7 +657,7 @@ function SingleProteinPageView({ activeTab, onContextModeChange, advancedPlotOpt
           <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
           {tableCsvUrl ? (
             <div className="flex flex-wrap items-center gap-2">
-              <CsvDownloadLink href={tableCsvUrl} filename={`single_protein_${activeTab}_${effectiveKind}.csv`} />
+              <TableDownloadLink table={tableCsvUrl} filename={`single_protein_${activeTab}_${effectiveKind}.xlsx`} />
               {plotView ? <NotebookDownload plotUrl={plotView.url}
                 rendered={!tableLoading && !tableError && tableSnapshot === plotToken ? notebook : null} /> : null}
             </div>

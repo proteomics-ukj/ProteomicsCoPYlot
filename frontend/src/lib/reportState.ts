@@ -188,8 +188,9 @@ export function listReportEntries(): ReportEntry[] {
   return merged;
 }
 
-export function countReportEntries(type: ReportEntryType, kind: string): number {
-  return listReportEntries().filter((entry) => entry.type === type && entry.kind === kind).length;
+/** `only` narrows a plot type to one of its views (the single clusters of an ANOVA, say). */
+export function countReportEntries(type: ReportEntryType, kind: string, only?: (entry: ReportEntry) => boolean): number {
+  return listReportEntries().filter((entry) => entry.type === type && entry.kind === kind && (!only || only(entry))).length;
 }
 
 /** The advanced appearance of the plot on screen, as an entry stores it. */
@@ -218,9 +219,9 @@ export function removeMatchingReportEntries(entry: ReportEntry): number {
   return current.length - next.length;
 }
 
-export function deleteAllReportEntries(type: ReportEntryType, kind: string): number {
+export function deleteAllReportEntries(type: ReportEntryType, kind: string, only?: (entry: ReportEntry) => boolean): number {
   const current = listReportEntries();
-  const next = current.filter((entry) => !(entry.type === type && entry.kind === kind));
+  const next = current.filter((entry) => !(entry.type === type && entry.kind === kind && (!only || only(entry))));
   writeJson(ENTRIES_KEY, next);
   return current.length - next.length;
 }

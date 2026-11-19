@@ -79,6 +79,8 @@ class AdvancedPlotSettings(BaseModel):
     legendTitle: str | None = None
     legendTextColor: str | None = None
     legendFrame: bool | None = None
+    # Where a plot that offers the choice puts its legend (the single-protein line plot).
+    legendPlacement: Literal["below", "right"] | None = None
     xTickLabelColor: str | None = None
     yTickLabelColor: str | None = None
     referenceLineColor: str | None = None

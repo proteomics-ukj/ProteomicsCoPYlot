@@ -125,32 +125,19 @@ def rename_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 # Reports of other tools ------------------------------------------------------
 #
-# `adapt_report` brings four exports into the shapes the app reads: a matrix
+# `adapt_report` brings six exports into the shapes the app reads: a matrix
 # (one row per protein or site, one column per run) for the table datasets and
 # a long report (one row per precursor and run) for the peptide dataset. It
 # only reshapes and renames; values are not transformed. Tables it does not
 # recognise pass through unchanged. Decided 2026-11-13 on PRIDE examples
-# (PXD071383, PXD071048, PXD085265, PXD053085, PXD077951), see D34.
+# (PXD071383, PXD071048, PXD085265, PXD077951), see D34; the FragPipe peptide
+# tables were added 2026-11-18 on PXD076585, see D37.
 
 # "[1] GFP DMSO1.PG.Quantity", "255.raw.PTM.Quantity", "[3] run.raw.EG.TotalQuantity (Settings)"
 _SPECTRONAUT_RUN_COLUMN = re.compile(r"^(?P<run>.+)\.(?P<level>PG|PEP|EG|FG|PTM)\.(?P<measure>[^.]+)$")
 # Precursor quantity of a Spectronaut peptide pivot, in order of preference.
 _SPECTRONAUT_PRECURSOR_QUANTITIES = ("EG.TotalQuantity (Settings)", "FG.Quantity", "FG.MS2Quantity",
                                      "PEP.Quantity", "PEP.MS2Quantity")
-_SKYLINE_COLUMNS = {"proteinname", "peptidemodifiedsequence", "precursorcharge", "filename", "area"}
-_UNIPROT_HEADER = re.compile(r"^(?:sp|tr)\|(?P<accession>[^|]+)\|(?P<entry>[^|\s]+)")
-
-
-def _normalized_columns(frame: pd.DataFrame) -> dict[str, str]:
-    found: dict[str, str] = {}
-    for column in frame.columns:
-        found.setdefault(_normalize_colname(column), str(column))
-    return found
-
-
-def is_skyline_report(columns) -> bool:
-    """A Skyline transition export: one row per transition and run."""
-    return _SKYLINE_COLUMNS.issubset({_normalize_colname(column) for column in columns})
 
 
 def is_spectronaut_long_report(columns) -> bool:
@@ -162,13 +149,13 @@ def is_spectronaut_long_report(columns) -> bool:
 
 def holds_protein_and_peptide_level(columns) -> bool:
     """One file the app reads as the protein table and as the peptide report."""
-    return is_skyline_report(columns) or is_spectronaut_long_report(columns)
+    return is_spectronaut_long_report(columns)
 
 
-def file_holds_protein_and_peptide_level(path) -> bool:
-    """Whether the file at `path` is such a report, judged by its header alone."""
-    path = os.fspath(path)
+def _header_columns(path) -> list[str] | None:
+    """The column names of the file at `path`, read from its header alone; None when it cannot be read."""
     try:
+        path = os.fspath(path)
         extension = get_extension(path)
         if extension == "parquet":
             columns = pq.ParquetFile(path).schema_arrow.names
@@ -177,8 +164,14 @@ def file_holds_protein_and_peptide_level(path) -> bool:
         else:
             columns = pd.read_csv(path, sep="," if extension == "csv" else "\t", nrows=0).columns
     except Exception:  # noqa: BLE001 - an unreadable file is reported where it is loaded
-        return False
-    return holds_protein_and_peptide_level(columns)
+        return None
+    return [str(column).strip() for column in columns]
+
+
+def file_holds_protein_and_peptide_level(path) -> bool:
+    """Whether the file at `path` is such a report, judged by its header alone."""
+    columns = _header_columns(path)
+    return columns is not None and holds_protein_and_peptide_level(columns)
 
 
 def _drop_maxquant_decoys(frame: pd.DataFrame) -> pd.DataFrame:
@@ -208,121 +201,6 @@ def _drop_maxquant_decoys(frame: pd.DataFrame) -> pd.DataFrame:
             "(\"+\" in MaxQuant's Only identified by site column) were removed when the file was loaded."
         ]
     return kept
-
-
-def _skyline_precursors(frame: pd.DataFrame) -> pd.DataFrame:
-    """Transition areas summed to one row per precursor and run (light label).
-
-    Cleaned as MSstats' SkylinetoMSstatsFormat does by default: decoy proteins
-    and iRT standards are left out, a truncated peak is not a measurement, and
-    neither is a peak with a Detection Q Value above 0.01. A peak without a
-    q-value is kept. What was left out is stated in `attrs["loading_notes"]`.
-    """
-    names = _normalized_columns(frame)
-    data = frame
-    notes: list[str] = []
-    protein_column = names["proteinname"]
-    decoy = data[protein_column].astype("string").str.contains("DECOY|Decoys", regex=True).fillna(False).to_numpy(dtype=bool)
-    standard = names.get("standardtype")
-    irt = (data[standard].astype("string").str.strip().str.lower().eq("irt").fillna(False).to_numpy(dtype=bool)
-           if standard is not None else np.zeros(len(data), dtype=bool))
-    if decoy.any() or irt.any():
-        notes.append(f"{int((decoy | irt).sum()):,} transition rows of decoy proteins or iRT standards were left out.")
-        data = data.loc[~(decoy | irt)]
-    label = names.get("isotopelabeltype")
-    if label is not None:
-        light = data[label].astype("string").str.strip().str.lower().eq("light").fillna(False)
-        if not light.any():
-            raise ValueError("The Skyline report contains no light-labelled measurements. Export light-labelled transitions for sample abundance.")
-        data = data.loc[light.to_numpy(dtype=bool)]
-    keys = [names["proteinname"], names["peptidemodifiedsequence"], names["precursorcharge"], names["filename"]]
-    stripped = names.get("peptidesequence")
-    area = pd.to_numeric(data[names["area"]], errors="coerce")
-    measured = int(area.gt(0).sum())
-    truncated_column, q_column = names.get("truncated"), names.get("detectionqvalue")
-    if truncated_column is not None:
-        truncated = data[truncated_column].astype("string").str.strip().str.lower().eq("true").fillna(False)
-        if (truncated & area.gt(0)).any():
-            notes.append(f"{int((truncated & area.gt(0)).sum()):,} of {measured:,} measured transition areas are truncated peaks and count as not measured.")
-        area = area.mask(truncated.to_numpy(dtype=bool))
-    if q_column is not None:
-        q_value = pd.to_numeric(data[q_column], errors="coerce")
-        undetected = q_value.gt(0.01)
-        if (undetected & area.gt(0)).any():
-            notes.append(
-                f"{int((undetected & area.gt(0)).sum()):,} of {measured:,} measured transition areas have a Detection Q Value "
-                "above 0.01 and count as not measured (the default of MSstats)."
-            )
-        area = area.mask(undetected.to_numpy(dtype=bool))
-    grouped = (data[keys].assign(**{"Precursor.Quantity": area.to_numpy()})
-               .groupby(keys, sort=False, dropna=False)["Precursor.Quantity"].sum(min_count=1).reset_index())
-    modified = grouped[keys[1]].astype(str)
-    charge = pd.to_numeric(grouped[keys[2]], errors="coerce").astype("Int64").astype("string")
-    long = pd.DataFrame({
-        "File.Name": grouped[keys[3]].astype(str),
-        "Protein Name": grouped[keys[0]].astype(str),
-        "Stripped.Sequence": modified.str.replace(r"\[[^\]]*\]|\([^)]*\)", "", regex=True),
-        "Modified.Sequence": modified,
-        "Precursor.Charge": charge,
-        "Precursor.Id": modified + charge.fillna(""),
-        "Precursor.Quantity": grouped["Precursor.Quantity"],
-    })
-    if stripped is not None:
-        sequences = data[[keys[1], stripped]].drop_duplicates(keys[1]).set_index(keys[1])[stripped].astype(str)
-        long["Stripped.Sequence"] = modified.map(sequences).fillna(long["Stripped.Sequence"])
-    if notes:
-        long.attrs["loading_notes"] = notes
-    return long
-
-
-def _uniprot_names(protein_names: pd.Series) -> pd.DataFrame:
-    """ProteinNames and ProteinAccessions from "sp|P12345|NAME_HUMAN"; other names stay as they are."""
-    parts = protein_names.astype(str).str.extract(_UNIPROT_HEADER)
-    return pd.DataFrame({
-        "ProteinNames": parts["entry"].fillna(protein_names.astype(str)).to_numpy(),
-        "ProteinAccessions": parts["accession"].fillna(protein_names.astype(str)).to_numpy(),
-    })
-
-
-def _skyline_report(frame: pd.DataFrame, peptide: bool) -> pd.DataFrame:
-    """Skyline's transition export as the peptide report or the protein matrix.
-
-    A precursor's quantity is the sum of its transition areas in a run; a
-    protein's quantity is the sum of its precursors, which is Skyline's own
-    "total area" protein abundance. An area of 0 is a transition that was not
-    measured; so is a truncated peak or one with a Detection Q Value above 0.01
-    (see `_skyline_precursors`).
-    """
-    long = _skyline_precursors(frame)
-    notes = long.attrs.get("loading_notes")
-    names = _uniprot_names(long["Protein Name"])
-    if peptide:
-        long.insert(1, "ProteinNames", names["ProteinNames"])
-        long.insert(2, "ProteinAccessions", names["ProteinAccessions"])
-        long = long.drop(columns="Protein Name")
-        if notes:
-            long.attrs["loading_notes"] = notes
-        return long
-    runs = list(dict.fromkeys(long["File.Name"]))
-    quantity = long["Precursor.Quantity"].where(long["Precursor.Quantity"] > 0)
-    matrix = (long.assign(**{"Precursor.Quantity": quantity})
-              .pivot_table(index="Protein Name", columns="File.Name", values="Precursor.Quantity",
-                           aggfunc=lambda values: values.sum(min_count=1), sort=False, dropna=False)
-              .reindex(columns=runs))
-    matrix.columns.name = None
-    # A protein without a detected peak in any run was not observed in this experiment.
-    undetected = matrix.isna().all(axis=1).to_numpy(dtype=bool)
-    if undetected.any():
-        notes = [*(notes or []), f"{int(undetected.sum()):,} proteins without a detected peak in any run are not listed."]
-        matrix = matrix.loc[~undetected]
-    matrix = matrix.reset_index()
-    names = _uniprot_names(matrix["Protein Name"])
-    matrix.insert(0, "ProteinNames", names["ProteinNames"])
-    matrix.insert(1, "ProteinAccessions", names["ProteinAccessions"])
-    matrix = matrix.drop(columns="Protein Name")
-    if notes:
-        matrix.attrs["loading_notes"] = notes
-    return matrix
 
 
 def _spectronaut_sequences(frame: pd.DataFrame) -> pd.DataFrame:
@@ -384,6 +262,127 @@ def _spectronaut_peptide_pivot(frame: pd.DataFrame) -> pd.DataFrame:
         parts.append(part)
     if not parts:
         return frame
+    return pd.concat(parts, ignore_index=True)
+
+
+# "Control_1 Intensity", "Control_1 MaxLFQ Intensity", "Control_1 Match Type", "Control_1 Apex Retention Time"
+_FRAGPIPE_RUN_COLUMN = re.compile(
+    r"^(?P<run>.+?) (?P<measure>MaxLFQ Intensity|Intensity|Match Type|Apex Retention Time|Spectral Count|Localization)$")
+# Mass tags of FragPipe's "Modified Sequence" ("C[57.0215]", "n[42.0106]") and
+# the names the modification plot counts.
+_FRAGPIPE_MODIFICATIONS = {"57.02": "Carbamidomethyl", "15.99": "Oxidation", "42.01": "Acetyl", "79.97": "Phospho"}
+
+
+def is_fragpipe_peptide_table(columns) -> bool:
+    """FragPipe combined_ion.tsv, combined_modified_peptide.tsv or combined_peptide.tsv (IonQuant)."""
+    names = [str(column).strip() for column in columns]
+    if "Peptide Sequence" not in names or {"Spectrum", "Spectrum File", "File.Name", "Run"} & set(names):
+        return False
+    return any(match is not None and match["measure"] == "Intensity" for match in map(_FRAGPIPE_RUN_COLUMN.match, names))
+
+
+def _fragpipe_protein_names(frame: pd.DataFrame) -> pd.Series | None:
+    """The entry name ("PRDX6_HUMAN") of FragPipe's "Protein" header ("sp|P30041|PRDX6_HUMAN").
+
+    A contaminant keeps its whole header ("contam_sp|P00761|TRYP_PIG"): the
+    contaminant filter reads the marker and both identifiers from it. Rows
+    without an entry name (a FASTA that is not in UniProt format) keep the
+    header too.
+    """
+    if not {"Protein", "Entry Name"}.issubset(frame.columns):
+        return None
+    header = frame["Protein"].astype("string").str.strip()
+    entry = frame["Entry Name"].astype("string").str.strip()
+    return entry.where(entry.notna() & entry.ne("") & ~header.fillna("").str.startswith("contam_"), header)
+
+
+def _fragpipe_protein_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """FragPipe combined_protein.tsv with the protein group as ProteinNames and ProteinAccessions.
+
+    The group is the row's protein followed by its "Indistinguishable
+    Proteins", separated by semicolons like the groups of other tools, so the
+    contaminant filter judges every member. Members are named like the lead
+    protein (see `_fragpipe_protein_names`). Isoforms keep their accession
+    ("P05408-2") and share the entry name, as in the other tools' tables.
+    Nothing else changes.
+    """
+    names = _fragpipe_protein_names(frame)
+    if names is None or "ProteinNames" in frame.columns or "ProteinAccessions" in frame.columns:
+        return frame
+
+    def members(value):
+        if value is None or pd.isna(value) or not str(value).strip():
+            return [], []
+        entry_names, accessions = [], []
+        for header in (part.strip() for part in str(value).split(",")):
+            parts = header.removeprefix("contam_").split(" ", 1)[0].split("|")
+            uniprot = len(parts) == 3 and parts[0] in {"sp", "tr"}
+            entry_names.append(parts[2] if uniprot and not header.startswith("contam_") else header)
+            accessions.append(parts[1] if uniprot else header)
+        return entry_names, accessions
+
+    others = (frame["Indistinguishable Proteins"].map(members) if "Indistinguishable Proteins" in frame.columns
+              else pd.Series([([], [])] * len(frame), index=frame.index))
+    accession = frame["Protein ID"].astype("string").str.strip()
+    adapted = frame.copy()
+    adapted.insert(0, "ProteinAccessions", [";".join([str(lead), *other[1]]) if not pd.isna(lead) else lead
+                                            for lead, other in zip(accession, others)])
+    # Isoforms share an entry name; a name is listed once per group, as in Spectronaut's PG.ProteinNames.
+    adapted.insert(0, "ProteinNames", [";".join(dict.fromkeys([str(lead), *other[0]])) if not pd.isna(lead) else lead
+                                       for lead, other in zip(names, others)])
+    return adapted
+
+
+def _fragpipe_peptide_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """A FragPipe combined ion, modified-peptide or peptide table as a long report.
+
+    One row per table row and run with an intensity above 0 (IonQuant writes 0
+    where it has no quantity); the run is the experiment name of the column
+    ("Control_1"), which is also the stem of the protein table's
+    "Control_1 MaxLFQ Intensity". The quantity is the "Intensity" column, in
+    all three tables, including values transferred by match between runs; the
+    match type comes along as Match.Type. The apex retention time (seconds in
+    the ion table) is given in minutes. FragPipe has no predicted retention
+    time, so the retention-time plot says that the report lacks it. Besides
+    "MS/MS" and "MBR" a newer IonQuant writes "MBC": an ion quantified
+    without a spectrum of its own in a run where the same modified peptide
+    was identified at another charge (all 6,235 such values of PXD082879).
+    It is a quantity like the others. The protein is the one FragPipe
+    assigned the peptide to, named by its entry name.
+    """
+    names = {column: str(column).strip() for column in frame.columns}
+    per_run: dict[str, dict[str, object]] = {}
+    for column, name in names.items():
+        match = _FRAGPIPE_RUN_COLUMN.match(name)
+        if match is not None:
+            per_run.setdefault(match["run"], {})[match["measure"]] = column
+    per_run = {run: columns for run, columns in per_run.items() if "Intensity" in columns}
+    run_columns = {column for columns in per_run.values() for column in columns.values()}
+    identifiers = frame[[column for column in frame.columns if column not in run_columns]].rename(columns=names)
+    identifiers = identifiers.rename(columns={"Peptide Sequence": "Stripped.Sequence", "Charge": "Precursor.Charge"}).copy()
+    protein_names = _fragpipe_protein_names(identifiers)
+    if protein_names is not None:
+        identifiers.insert(0, "ProteinNames", protein_names)
+    if "Modified Sequence" in identifiers.columns:
+        def named(tag):
+            return "[" + _FRAGPIPE_MODIFICATIONS.get(f"{float(tag[1]):.2f}", tag[1]) + "]"
+        identifiers["Modified.Sequence"] = identifiers["Modified Sequence"].astype("string").str.replace(
+            r"\[(\d+(?:\.\d+)?)\]", named, regex=True)
+        if "Precursor.Charge" in identifiers.columns:
+            charge = pd.to_numeric(identifiers["Precursor.Charge"], errors="coerce").astype("Int64").astype("string").fillna("")
+            identifiers["Precursor.Id"] = identifiers["Modified.Sequence"].astype("string") + charge
+    parts = []
+    for run, columns in per_run.items():
+        values = pd.to_numeric(frame[columns["Intensity"]], errors="coerce")
+        measured = (values.notna() & values.gt(0)).to_numpy(dtype=bool)
+        part = identifiers.loc[measured].copy()
+        part.insert(0, "File.Name", run)
+        part["Precursor.Quantity"] = values.to_numpy()[measured]
+        if "Apex Retention Time" in columns:
+            part["RT"] = pd.to_numeric(frame.loc[measured, columns["Apex Retention Time"]], errors="coerce").to_numpy() / 60.0
+        if "Match Type" in columns:
+            part["Match.Type"] = frame.loc[measured, columns["Match Type"]].to_numpy()
+        parts.append(part)
     return pd.concat(parts, ignore_index=True)
 
 
@@ -476,12 +475,12 @@ def _spectronaut_site_report(frame: pd.DataFrame) -> pd.DataFrame:
 def adapt_report(frame: pd.DataFrame, peptide: bool = False) -> pd.DataFrame:
     """Reshape the reports of other tools the app has an adapter for (see above)."""
     columns = [str(column).strip() for column in frame.columns]
-    if is_skyline_report(columns):
-        return _skyline_report(frame, peptide)
     frame = _drop_maxquant_decoys(frame)
     if peptide:
         if {"Sequence", "Modified sequence", "Raw file"}.issubset(columns):
             return _maxquant_evidence(frame)
+        if is_fragpipe_peptide_table(columns):
+            return _fragpipe_peptide_table(frame)
         frame = _spectronaut_peptide_pivot(frame)
         if any(column.startswith(("EG.", "PEP.")) for column in columns):
             frame = _spectronaut_precursor_quantity(_spectronaut_sequences(frame))
@@ -490,6 +489,8 @@ def adapt_report(frame: pd.DataFrame, peptide: bool = False) -> pd.DataFrame:
         return _spectronaut_site_report(frame)
     if is_spectronaut_long_report(columns):
         return _spectronaut_protein_matrix(frame)
+    if {"Protein", "Protein ID", "Entry Name"}.issubset(columns) and any(column.endswith(" Intensity") for column in columns):
+        return _fragpipe_protein_table(frame.rename(columns=lambda column: str(column).strip()))
     return frame
 
 

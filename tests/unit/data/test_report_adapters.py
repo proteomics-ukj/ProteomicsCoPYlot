@@ -1,9 +1,10 @@
 """Reports of other tools the reader reshapes (D34, 2026-11-13).
 
 Small tables with the column layouts of the PRIDE examples the adapters were
-built on: a Skyline transition export (PXD053085), Spectronaut's peptide pivot
-(PXD071383), long report (PXD077951) and PTM site report (PXD071048), and
-MaxQuant's proteinGroups.txt and evidence.txt (PXD085265).
+built on: Spectronaut's peptide pivot (PXD071383), long report (PXD077951) and
+PTM site report (PXD071048), MaxQuant's proteinGroups.txt and evidence.txt
+(PXD085265), and FragPipe's combined protein, ion and peptide tables
+(PXD076585; D37, 2026-11-18).
 """
 from __future__ import annotations
 
@@ -20,105 +21,7 @@ def _read(frame: pd.DataFrame, *, peptide: bool = False, name: str = "report.tsv
     return read_dataframe(name, io.BytesIO(frame.to_csv(sep="\t", index=False).encode()), peptide=peptide)
 
 
-# --- Skyline -------------------------------------------------------------------
-
-def _skyline() -> pd.DataFrame:
-    rows = []
-    for protein, peptide, modified, charge in [
-        ("sp|P11111|ONE_HUMAN", "PEPTIDEK", "PEPTIDEK", 2),
-        ("sp|P11111|ONE_HUMAN", "MAGICR", "M[+16]AGICR", 3),
-        ("sp|P22222|TWO_HUMAN", "SAMPLER", "SAMPLER", 2),
-    ]:
-        for run, scale in [("a_1.wiff", 1.0), ("b_1.wiff", 2.0)]:
-            for fragment, area in [("y3", 100.0), ("y4", 50.0)]:
-                rows.append({"Protein Name": protein, "Peptide Sequence": peptide, "Peptide Modified Sequence": modified,
-                             "Precursor Charge": charge, "Precursor Mz": 500.5, "Fragment Ion": fragment, "Product Charge": 1,
-                             "Product Mz": 400.2, "Isotope Label Type": "light", "File Name": run, "Area": area * scale,
-                             "Truncated": False, "Detection Q Value": 0.01})
-    frame = pd.DataFrame(rows)
-    # One protein is not measured in the second run, and a heavy standard is not a measurement of the sample.
-    frame.loc[(frame["Protein Name"] == "sp|P22222|TWO_HUMAN") & (frame["File Name"] == "b_1.wiff"), "Area"] = 0
-    heavy = frame.iloc[[0]].assign(**{"Isotope Label Type": "heavy", "Area": 9999.0})
-    return pd.concat([frame, heavy], ignore_index=True)
-
-
-def test_a_skyline_export_is_the_protein_matrix_when_loaded_as_a_table():
-    matrix = _read(_skyline(), name="skyline.tsv")
-    assert matrix.columns.tolist() == ["ProteinNames", "ProteinAccessions", "a_1.wiff", "b_1.wiff"]
-    one, two = matrix.set_index("ProteinNames").loc[["ONE_HUMAN", "TWO_HUMAN"]].to_dict("records")
-    assert (one["a_1.wiff"], one["b_1.wiff"]) == (300.0, 600.0)  # both precursors, all light transitions
-    assert two["a_1.wiff"] == 150.0 and np.isnan(two["b_1.wiff"])  # zero areas are not a measurement
-    assert matrix["ProteinAccessions"].tolist() == ["P11111", "P22222"]
-
-
-def test_the_same_export_is_the_peptide_report_when_loaded_as_one():
-    long = _read(_skyline(), peptide=True, name="skyline.tsv")
-    assert {"File.Name", "ProteinNames", "Stripped.Sequence", "Modified.Sequence", "Precursor.Id", "Precursor.Quantity"} <= set(long.columns)
-    assert len(long) == 6  # three precursors in two runs
-    oxidised = long[long["Modified.Sequence"] == "M[+16]AGICR"]
-    assert oxidised["Stripped.Sequence"].unique().tolist() == ["MAGICR"]
-    assert oxidised["Precursor.Id"].unique().tolist() == ["M[+16]AGICR3"]
-    first = long[(long["Modified.Sequence"] == "PEPTIDEK") & (long["File.Name"] == "a_1.wiff")]
-    assert first["Precursor.Quantity"].tolist() == [150.0]  # the heavy row is left out
-
-
-def _skyline_with_undetected_peaks() -> pd.DataFrame:
-    frame = _skyline()
-    one_b = (frame["Protein Name"] == "sp|P11111|ONE_HUMAN") & (frame["File Name"] == "b_1.wiff") & (frame["Isotope Label Type"] == "light")
-    # In run b the first precursor is not detected (q above 0.01) and one transition of the second is truncated.
-    frame.loc[one_b & (frame["Peptide Sequence"] == "PEPTIDEK"), "Detection Q Value"] = 0.2
-    frame.loc[one_b & (frame["Peptide Sequence"] == "MAGICR") & (frame["Fragment Ion"] == "y4"), "Truncated"] = True
-    # A peak without a q-value is kept; decoy proteins and iRT standards are not sample proteins.
-    frame.loc[(frame["Protein Name"] == "sp|P22222|TWO_HUMAN") & (frame["File Name"] == "a_1.wiff"), "Detection Q Value"] = np.nan
-    frame["Standard Type"] = ""
-    decoy = frame.iloc[[1]].assign(**{"Protein Name": "Decoys"})
-    irt = frame.iloc[[1]].assign(**{"Protein Name": "Biognosys|iRT-Kit", "Standard Type": "iRT"})
-    # A protein whose peaks were detected in no run is not listed.
-    absent = frame.iloc[[0, 1, 4, 5]].assign(**{"Protein Name": "sp|P33333|THREE_HUMAN", "Detection Q Value": 0.9})
-    return pd.concat([frame, decoy, irt, absent], ignore_index=True)
-
-
-def test_skyline_peaks_that_were_not_detected_are_not_measurements():
-    """The defaults of MSstats' SkylinetoMSstatsFormat: q above 0.01, truncated peaks, decoys and iRT are left out."""
-    matrix = _read(_skyline_with_undetected_peaks(), name="skyline.tsv")
-    assert matrix["ProteinNames"].tolist() == ["ONE_HUMAN", "TWO_HUMAN"]
-    one, two = matrix.set_index("ProteinNames").loc[["ONE_HUMAN", "TWO_HUMAN"]].to_dict("records")
-    assert one["a_1.wiff"] == 300.0
-    assert one["b_1.wiff"] == 200.0  # only the y3 transition of the second precursor: 100 * 2
-    assert two["a_1.wiff"] == 150.0  # no q-value: kept
-    notes = matrix.attrs["loading_notes"]
-    assert any(note.startswith("2 transition rows of decoy proteins or iRT standards") for note in notes)
-    assert any(note.startswith("1 of 14 measured transition areas are truncated") for note in notes)
-    assert any(note.startswith("6 of 14 measured transition areas have a Detection Q Value above 0.01") for note in notes)
-    assert notes[-1] == "1 proteins without a detected peak in any run are not listed."
-
-    long = _read(_skyline_with_undetected_peaks(), peptide=True, name="skyline.tsv")
-    undetected = long[(long["ProteinNames"] == "ONE_HUMAN") & (long["Modified.Sequence"] == "PEPTIDEK") & (long["File.Name"] == "b_1.wiff")]
-    assert undetected["Precursor.Quantity"].isna().all()
-    assert long.attrs["loading_notes"] == notes[:-1]
-
-
-def test_the_annotation_states_what_a_skyline_import_left_out():
-    from app.services.annotation_processor import _table_shape_warnings
-    warnings = _table_shape_warnings(_read(_skyline_with_undetected_peaks(), name="skyline.tsv"))
-    assert any("Detection Q Value above 0.01" in warning for warning in warnings)
-
-
 # --- Spectronaut peptide pivot and long report ----------------------------------
-
-@pytest.mark.parametrize("peptide", [False, True])
-@pytest.mark.parametrize("label", ["heavy", "", None])
-def test_skyline_without_light_measurements_is_rejected(peptide, label):
-    frame = _skyline().assign(**{"Isotope Label Type": label})
-    with pytest.raises(ValueError, match="no light-labelled measurements"):
-        _read(frame, peptide=peptide)
-
-
-def test_skyline_without_a_label_column_still_loads():
-    frame = _skyline()
-    frame = frame.loc[frame["Isotope Label Type"] == "light"].drop(columns="Isotope Label Type")
-    assert _read(frame).set_index("ProteinNames").loc["ONE_HUMAN", "a_1.wiff"] == 300.0
-
 
 def _spectronaut_pivot() -> pd.DataFrame:
     return pd.DataFrame({
@@ -173,7 +76,6 @@ def test_and_the_peptide_report_as_one():
 
 
 def test_which_reports_hold_both_levels():
-    assert holds_protein_and_peptide_level(_skyline().columns)
     assert holds_protein_and_peptide_level(_spectronaut_long().columns)
     assert not holds_protein_and_peptide_level(_spectronaut_pivot().columns)
     assert not holds_protein_and_peptide_level(["Protein.Group", "Run", "Precursor.Id", "Precursor.Quantity"])
@@ -212,15 +114,10 @@ def test_spectronaut_without_phosphorylation_sites_is_rejected(title, long_repor
         _read(frame)
 
 
-@pytest.mark.parametrize("report_type", ["skyline", "spectronaut"])
-def test_portable_notebook_reader_rejects_the_same_unsupported_inputs(tmp_path, report_type):
+def test_portable_notebook_reader_rejects_the_same_unsupported_inputs(tmp_path):
     from app.services.notebook_preprocessing import preprocessing_source
 
-    frame, message = (
-        (_skyline().assign(**{"Isotope Label Type": "heavy"}), "no light-labelled measurements")
-        if report_type == "skyline" else
-        (_site_pivot().assign(**{"PTM.ModificationTitle": "Oxidation (M)"}), "no phosphorylation sites")
-    )
+    frame, message = _site_pivot().assign(**{"PTM.ModificationTitle": "Oxidation (M)"}), "no phosphorylation sites"
     path = tmp_path / "report.tsv"
     frame.to_csv(path, sep="\t", index=False)
     namespace = {}
@@ -296,6 +193,95 @@ def test_evidence_txt_reads_as_a_peptide_report():
     assert long["ProteinNames"].tolist() == ["P1", "P1"]
 
 
+# --- FragPipe ----------------------------------------------------------------------
+
+def _fragpipe_ions() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Peptide Sequence": ["PEPTIDEK", "MAGICR", "SAMPLER"],
+        "Modified Sequence": ["PEPTIDEK", "n[42.0106]M[15.9949]AGIC[57.0215]R", "S[79.9663]AM[31.9898]PLER"],
+        "Charge": [2, 3, 2],
+        "Protein": ["sp|P1|ONE_HUMAN", "sp|P1|ONE_HUMAN", "contam_sp|P00761|TRYP_PIG"],
+        "Protein ID": ["P1", "P1", "P00761"], "Entry Name": ["ONE_HUMAN", "ONE_HUMAN", "TRYP_PIG"], "Gene": ["G1", "G1", np.nan],
+        "Mapped Proteins": [np.nan, "sp|P9|NINE_HUMAN", np.nan],
+        "ctrl_1 Spectral Count": [2, 1, 0], "treat_1 Spectral Count": [1, 0, 3],
+        "ctrl_1 Apex Retention Time": [600.0, 660.0, np.nan], "treat_1 Apex Retention Time": [606.0, np.nan, 720.0],
+        "ctrl_1 Intensity": [1000.0, 2000.0, 0.0], "treat_1 Intensity": [1100.0, 0.0, 3100.0],
+        "ctrl_1 Match Type": ["MS/MS", "MBR", "unmatched"], "treat_1 Match Type": ["MS/MS", "unmatched", "MS/MS"],
+    })
+
+
+def test_a_fragpipe_ion_table_becomes_a_long_report():
+    long = _read(_fragpipe_ions(), peptide=True, name="combined_ion.tsv")
+    assert long["File.Name"].tolist() == ["ctrl_1", "ctrl_1", "treat_1", "treat_1"]  # a quantity of 0 is no row
+    assert long["Stripped.Sequence"].tolist() == ["PEPTIDEK", "MAGICR", "PEPTIDEK", "SAMPLER"]
+    assert long["Precursor.Quantity"].tolist() == [1000, 2000, 1100, 3100]
+    assert long["RT"].tolist() == [10.0, 11.0, 10.1, 12.0]  # seconds in the table, minutes here
+    assert long["Match.Type"].tolist() == ["MS/MS", "MBR", "MS/MS", "MS/MS"]  # match between runs is kept and named
+    # the masses the modification plot counts get their names, any other mass stays as written
+    assert long["Modified.Sequence"].tolist()[1] == "n[Acetyl]M[Oxidation]AGIC[Carbamidomethyl]R"
+    assert long["Modified.Sequence"].tolist()[3] == "S[Phospho]AM[31.9898]PLER"
+    assert long["Precursor.Id"].tolist()[:2] == ["PEPTIDEK2", "n[Acetyl]M[Oxidation]AGIC[Carbamidomethyl]R3"]
+    assert long["ProteinNames"].tolist() == ["ONE_HUMAN", "ONE_HUMAN", "ONE_HUMAN", "contam_sp|P00761|TRYP_PIG"]
+    assert long["ProteinAccessions"].tolist()[0] == "P1" and long["GeneNames"].tolist()[0] == "G1"
+    assert not [column for column in long.columns if "Spectral Count" in column or column.startswith(("ctrl_1 ", "treat_1 "))]
+
+
+def test_the_peptide_table_uses_intensity_not_maxlfq_and_has_no_precursor():
+    table = _fragpipe_ions().drop(columns=["Modified Sequence", "Charge", "ctrl_1 Apex Retention Time", "treat_1 Apex Retention Time"])
+    table["ctrl_1 MaxLFQ Intensity"], table["treat_1 MaxLFQ Intensity"] = [7.0, 0.0, 0.0], [8.0, 0.0, 9.0]
+    long = _read(table, peptide=True, name="combined_peptide.tsv")
+    assert long["Precursor.Quantity"].tolist() == [1000, 2000, 1100, 3100]
+    assert not {"Modified.Sequence", "Precursor.Id", "RT"} & set(long.columns)
+    assert not [column for column in long.columns if "MaxLFQ" in column]
+
+
+def test_the_fragpipe_columns_survive_the_detection_only_reading():
+    from app.services.peptide_tools import _detection_column
+
+    kept = [column for column in _fragpipe_ions().assign(**{"ctrl_1 MaxLFQ Intensity": 1.0}).columns if _detection_column(column)]
+    assert kept == ["Peptide Sequence", "Modified Sequence", "Charge", "ctrl_1 Intensity", "treat_1 Intensity"]
+    long = _read(_fragpipe_ions()[kept], peptide=True)
+    assert {"File.Name", "Stripped.Sequence", "Precursor.Id", "Precursor.Quantity"}.issubset(long.columns) and len(long) == 4
+
+
+def _fragpipe_proteins() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Protein": ["sp|P1|ONE_HUMAN", "contam_sp|P00761|TRYP_PIG", "custom_entry", "contam_sp|P02769|ALBU_BOVIN", "contam_sp|P04264|K2C1_HUMAN"],
+        "Protein ID": ["P1", "P00761", "custom_entry", "P02769", "P04264"],
+        "Entry Name": ["ONE_HUMAN", "TRYP_PIG", np.nan, "ALBU_BOVIN", "K2C1_HUMAN"], "Gene": ["G1", np.nan, np.nan, "ALB", "KRT1"],
+        "ctrl_1 Spectral Count": [3, 2, 1, 1, 1], "ctrl_1 Intensity": [10.0, 20.0, 30.0, 1.0, 1.0],
+        "ctrl_1 MaxLFQ Intensity": [11.0, 0.0, 31.0, 1.0, 1.0],
+        "Indistinguishable Proteins": ["sp|P2|TWO_HUMAN, tr|A0A9|A0A9_HUMAN, sp|P1-2|ONE_HUMAN", np.nan, np.nan, "sp|P02768|ALBU_HUMAN",
+                                       "contam_sp|P35908|K22E_HUMAN"],
+    })
+
+
+def test_a_fragpipe_protein_table_is_named_by_its_group_and_keeps_the_contaminant_marker():
+    from proteomicscopylot._core import upstream_contaminant_mask
+
+    read = _read(_fragpipe_proteins(), name="combined_protein.tsv")
+    assert read["ProteinNames"].tolist() == [
+        "ONE_HUMAN;TWO_HUMAN;A0A9_HUMAN", "contam_sp|P00761|TRYP_PIG", "custom_entry",
+        "contam_sp|P02769|ALBU_BOVIN;ALBU_HUMAN", "contam_sp|P04264|K2C1_HUMAN;contam_sp|P35908|K22E_HUMAN"]
+    # an isoform shares its entry name (listed once) and keeps its own accession
+    assert read["ProteinAccessions"].tolist() == ["P1;P2;A0A9;P1-2", "P00761", "custom_entry", "P02769;P02768", "P04264;P35908"]
+    assert read["Protein"].tolist()[0] == "sp|P1|ONE_HUMAN" and read["Protein ID"].tolist()[0] == "P1"
+    assert read["ctrl_1 MaxLFQ Intensity"].tolist() == [11.0, 0.0, 31.0, 1.0, 1.0] and len(read) == 5
+    # a group is a contaminant only when every member is: bovine albumin grouped with the human one stays
+    assert upstream_contaminant_mask(read).tolist() == [False, True, False, False, True]
+    assert "ProteinNames" not in adapt_report(_fragpipe_proteins(), peptide=True).columns  # not a peptide table: left alone
+
+
+def test_the_rt_plot_says_that_a_fragpipe_report_has_no_predicted_retention_time(api):
+    client, _ = api
+    _upload(client, "/api/datasets/peptide-file", _fragpipe_ions().assign(**{"ctrl_1 Match Type": ["MS/MS", "MBC", "unmatched"]}),
+            "combined_ion.tsv")
+    response = client.get("/api/plots/peptide/rt.png")
+    assert response.status_code == 400 and "no predicted retention time" in response.json()["detail"]
+    from app.services.peptide_tools import get_peptide_frame
+    assert get_peptide_frame()["Match.Type"].tolist() == ["MS/MS", "MBC", "MS/MS", "MS/MS"]
+
+
 # --- what is left alone -----------------------------------------------------------
 
 @pytest.mark.parametrize("peptide", [False, True])
@@ -313,6 +299,7 @@ def test_tables_without_an_adapter_pass_through(peptide):
     (["[1] ctrl 1.raw.PG.Quantity", "[2] treat 1.raw.PG.Quantity"], ["[1] ctrl 1.raw", "[2] treat 1.raw"]),
     (["LFQ intensity ctrl_1", "LFQ intensity treat_1"], ["ctrl_1", "treat_1"]),
     (["ctrl_1.PG.Quantity", "treat_1.PG.Quantity"], ["ctrl_1", "treat_1"]),
+    (["KD_Rad_1 MaxLFQ Intensity", "KD_1 MaxLFQ Intensity"], ["KD_Rad_1", "KD_1"]),  # FragPipe
 ])
 def test_peptide_runs_are_matched_to_the_protein_samples_of_the_same_report(samples, runs):
     from app.services.peptide_tools import _sample_rename_map
@@ -353,12 +340,12 @@ def _upload(client, url: str, frame: pd.DataFrame, name: str, **form):
     return response.json()
 
 
-def test_a_skyline_export_loaded_as_the_protein_table_fills_the_peptide_report(api):
+def test_a_long_report_loaded_as_the_protein_table_fills_the_peptide_report(api):
     client, loaded = api
-    preview = _upload(client, "/api/datasets/upload", _skyline(), "skyline.tsv", kind="protein")
-    assert preview["rows"] == 2 and loaded("peptide") == "skyline.tsv"
+    preview = _upload(client, "/api/datasets/upload", _spectronaut_long(), "long.tsv", kind="protein")
+    assert preview["rows"] == 2 and loaded("peptide") == "long.tsv"
     overview = client.get("/api/peptide/overview").json()
-    assert overview["rows"] == 6 and overview["availableSamples"] == ["a_1.wiff", "b_1.wiff"]
+    assert overview["rows"] == 6 and overview["availableSamples"] == ["ctrl_1", "treat_1"]
 
 
 def test_loaded_as_the_peptide_report_it_fills_the_protein_table(api):
@@ -372,8 +359,8 @@ def test_loaded_as_the_peptide_report_it_fills_the_protein_table(api):
 def test_another_protein_table_is_not_replaced(api):
     client, loaded = api
     _upload(client, "/api/datasets/upload", _protein_groups(), "proteinGroups.txt", kind="protein")
-    _upload(client, "/api/datasets/peptide-file", _skyline(), "skyline.tsv")
-    assert loaded("protein") == "proteinGroups.txt" and loaded("peptide") == "skyline.tsv"
+    _upload(client, "/api/datasets/peptide-file", _spectronaut_long(), "long.tsv")
+    assert loaded("protein") == "proteinGroups.txt" and loaded("peptide") == "long.tsv"
 
 
 def test_a_site_report_fills_nothing_else(api):
@@ -385,7 +372,7 @@ def test_a_site_report_fills_nothing_else(api):
 def test_loading_it_again_as_the_other_level_keeps_what_is_there(api):
     client, loaded = api
     from app.services.dataset_store import get_current_dataset
-    _upload(client, "/api/datasets/upload", _skyline(), "skyline.tsv", kind="protein")
+    _upload(client, "/api/datasets/upload", _spectronaut_long(), "long.tsv", kind="protein")
     protein = get_current_dataset("protein")
-    _upload(client, "/api/datasets/peptide-file", _skyline(), "skyline.tsv")
-    assert get_current_dataset("protein") is protein and loaded("peptide") == "skyline.tsv"
+    _upload(client, "/api/datasets/peptide-file", _spectronaut_long(), "long.tsv")
+    assert get_current_dataset("protein") is protein and loaded("peptide") == "long.tsv"

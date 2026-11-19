@@ -61,7 +61,9 @@ def test_complete_report_replays_every_plot_and_table(report_data, tmp_path, int
     assert _active.get() is None and report_recipe_sink.get() is None
     recipe = snapshots.get(get_session_id(), result.notebookToken)
     sections = recipe.provenance['sections']
-    assert len(sections) == 11  # Mapping + eight QC figures + two volcanoes, with paired tables.
+    # Mapping + eight QC figures + two volcanoes, with paired tables, and the coverage table
+    # the plot type does not pair (the report carries both coverage tables since 2026-11-18).
+    assert len(sections) == 12
     assert recipe.provenance['originalFiles'] == {'protein': 'example.csv'}
     assert sum(section['provenance'].get('plot') == 'volcano' for section in sections) == 2
     _assert_replay(result, {'protein': report_data}, tmp_path)
@@ -152,7 +154,8 @@ def test_mixed_report_with_imputed_statistics_replays_all_levels(report_data, tm
     assert recipe.uses_imputed_input
     assert set(recipe.provenance['originalFiles']) == {'protein', 'phospho', 'peptide'}
     sections = recipe.provenance['sections']
-    assert len(sections) == 26  # Shared mapping and 25 figures, including the new STY plot.
+    # Shared mapping and 25 figures, including the new STY plot, and the second coverage table of two levels.
+    assert len(sections) == 28
     assert any(section["provenance"].get("plot") == "phosphosite_sty" for section in sections)
     # The PCA follows its tab, which opens on the most processed matrix, so it
     # uses the imputed protein matrix as the volcano does.

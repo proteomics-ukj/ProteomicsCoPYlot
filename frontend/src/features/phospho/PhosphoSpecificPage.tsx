@@ -1,5 +1,5 @@
 import { paletteColorOverride } from "../../lib/conditionColorSets";
-import CsvDownloadLink from "../../components/CsvDownloadLink";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import PlotTableContent from "../../components/PlotTableContent";
 import PlotOptionsContent from "../../components/PlotOptionsContent";
 import { usePhosphoOptionsLoader } from "./usePhosphoOptions";
@@ -13,7 +13,6 @@ import { SizeRow } from "../../components/PlotFields";
 import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { collectColumns } from "../../lib/tableData";
-import { csvDataUrl, rowsToCsv } from "../../lib/tableData";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TEST_TYPE_LABELS, useTestTypeOptions, availableTestType, PAIRED_TEST_TYPES } from "../../lib/statisticalTests";
 import type { StatsTestType } from "../../lib/types";
@@ -513,7 +512,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
     if (tableRows.length === 0) return null;
     const columns = collectColumns(tableRows);
     if (columns.length === 0) return null;
-    return csvDataUrl(rowsToCsv(tableRows, columns));
+    return { rows: tableRows, columns };
   }, [tableRows]);
 
 
@@ -585,7 +584,7 @@ export default function PhosphoSpecificPage({ activeTab, onContextModeChange, ad
           <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
           {hasPhosphoDataset && tableCsvUrl ? (
             <div className="flex flex-wrap items-center gap-2">
-            <CsvDownloadLink href={tableCsvUrl} filename={`phospho_${activeTab}.csv`} />
+            <TableDownloadLink table={tableCsvUrl} filename={`phospho_${activeTab}.xlsx`} />
             {notebookSupported && plotView ? <NotebookDownload plotUrl={plotView.url}
               rendered={!tableLoading && !tableError && tableSnapshot === plotToken ? notebook : null} /> : null}
             </div>

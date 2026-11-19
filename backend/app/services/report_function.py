@@ -1876,12 +1876,16 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                     warnings=warnings,
                 )
                 + _safe_table_html(
-                    renderer=lambda: report_table(qc_coverage_table,
-                        kind="protein",
-                        summary=_to_bool(protein_coverage.get("summary"), False),
-                    ),
+                    renderer=lambda: report_table(qc_coverage_table, kind="protein", summary=False),
                     title="Coverage Table (per sample)",
                     fallback_title="Protein Coverage Table",
+                    entity_plural=entity_labels_for_kind("protein")[1],
+                    warnings=warnings,
+                )
+                + _safe_table_html(
+                    renderer=lambda: report_table(qc_coverage_table, kind="protein", summary=True),
+                    title="Coverage Table (per condition)",
+                    fallback_title="Protein Coverage Table (per condition)",
                     entity_plural=entity_labels_for_kind("protein")[1],
                     warnings=warnings,
                 )
@@ -1956,12 +1960,16 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                     warnings=warnings,
                 )
                 + _safe_table_html(
-                    renderer=lambda: report_table(qc_coverage_table,
-                        kind="phospho",
-                        summary=_to_bool(phospho_coverage.get("summary"), False),
-                    ),
+                    renderer=lambda: report_table(qc_coverage_table, kind="phospho", summary=False),
                     title="Coverage Table (per sample)",
                     fallback_title="Phospho Coverage Table",
+                    entity_plural=entity_labels_for_kind("phospho")[1],
+                    warnings=warnings,
+                )
+                + _safe_table_html(
+                    renderer=lambda: report_table(qc_coverage_table, kind="phospho", summary=True),
+                    title="Coverage Table (per condition)",
+                    fallback_title="Phospho Coverage Table (per condition)",
                     entity_plural=entity_labels_for_kind("phospho")[1],
                     warnings=warnings,
                 )

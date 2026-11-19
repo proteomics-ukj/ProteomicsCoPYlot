@@ -73,10 +73,15 @@ def test_feature_cv_download_matches_rendered_and_live_data(coverage_data):
     from app.api.plots_qc import qc_feature_cvs_route
 
     _, token = render_qc("protein", plot="cv", dpi=90)
+    # Linear values: P1 A (1, 2) B (4, 16); P2 A (4) B (8, 32); P3 B (64).
     expected = pd.DataFrame({
         "ProteinNames": ["P1", "P2", "P3"],
+        "A mean log2": [0.5, 2.0, np.nan],
         "A CV (%)": [100 * np.sqrt(0.5) / 1.5, np.nan, np.nan],
+        "B mean log2": [3.0, 4.0, 6.0],
         "B CV (%)": [100 * np.sqrt(72) / 10, 100 * np.sqrt(288) / 20, np.nan],
+        "All samples mean log2": [1.75, 10 / 3, 6.0],
+        "All samples CV (%)": [100 * np.std([1, 2, 4, 16], ddof=1) / 5.75, 100 * np.std([4, 8, 32], ddof=1) / (44 / 3), np.nan],
     })
     for snapshot in ("", token):
         response = qc_feature_cvs_route("protein", snapshot)

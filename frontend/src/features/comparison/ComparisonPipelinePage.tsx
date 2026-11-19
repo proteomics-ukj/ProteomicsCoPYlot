@@ -1,5 +1,5 @@
 import { paletteColorOverride } from "../../lib/conditionColorSets";
-import CsvDownloadLink from "../../components/CsvDownloadLink";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import PlotTableContent from "../../components/PlotTableContent";
 import PlotOptionsContent from "../../components/PlotOptionsContent";
 import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
@@ -14,7 +14,6 @@ import { withoutStaticSize } from "../../lib/plotRenderType";
 import { restorePlotDimensionCm, restorePlotDpi, iframeHeightForPlot } from "../../lib/plotLimits";
 import { AssistantSelect } from "../../components/AssistantFields";
 import { collectColumns } from "../../lib/tableData";
-import { csvDataUrl, rowsToCsv } from "../../lib/tableData";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildPlotUrl, getComparisonOptions, getComparisonTable, isAbortError } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
@@ -472,7 +471,7 @@ function ComparisonPipelinePageView({ activeTab, onContextModeChange, advancedPl
     if (tableRows.length === 0) return null;
     const columns = collectColumns(tableRows);
     if (columns.length === 0) return null;
-    return csvDataUrl(rowsToCsv(tableRows, columns));
+    return { rows: tableRows, columns };
   }, [tableRows]);
 
   const modePool = activeTab === "pearson"
@@ -585,7 +584,7 @@ function ComparisonPipelinePageView({ activeTab, onContextModeChange, advancedPl
             <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
             {tableCsvUrl ? (
               <div className="flex items-center gap-2">
-              <CsvDownloadLink href={tableCsvUrl} filename={`comparison_${activeTab}_${kind}.csv`} />
+              <TableDownloadLink table={tableCsvUrl} filename={`comparison_${activeTab}_${kind}.xlsx`} />
               {plotView ? <NotebookDownload plotUrl={plotView.url}
                 rendered={!tableLoading && !tableError && tableSnapshot === plotToken ? notebook : null} /> : null}
               </div>

@@ -76,7 +76,7 @@ export function advancedVisibleControls(
       // reads none of the marker keys, and its x axis is the sample list from
       // the annotation, which no condition rename passes through -- the
       // renaming there is the boxplot's, not this plot's.
-      return { conditionLabels: false, sampleLabels: false, conditionColors: false };
+      return { conditionLabels: false, sampleLabels: false, conditionColors: false, legendPlacement: true };
     case "comparison:pearson":
       return {
         markerStyle: true,

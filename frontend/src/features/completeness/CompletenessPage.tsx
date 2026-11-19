@@ -1,5 +1,5 @@
 import { paletteColorOverride } from "../../lib/conditionColorSets";
-import CsvDownloadLink from "../../components/CsvDownloadLink";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 import { styleTemplate } from "../../lib/plotStyles";
 import { useAppearanceModeSync, useAppearanceRenderDelay, useTabStyleStore } from "../../lib/useTabPlotAppearance";
@@ -15,7 +15,7 @@ import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { compactAdvancedPlotSettings as compactAdvancedSettings, migrateAdvancedSettingsMap } from "../../lib/plotSerialization";
 import SummaryCard from "../../components/SummaryCard";
-import { collectColumns, csvDataUrl, rowsToQuotedCsv as rowsToCsv } from "../../lib/tableData";
+import { collectColumns } from "../../lib/tableData";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { fetchPlot } from "../../lib/fetchPlot";
 import { buildPlotUrl, getCompletenessTables, getQcPlotOptions, isAbortError } from "../../lib/api";
@@ -335,19 +335,19 @@ function CompletenessPageView({ activeTab, onContextModeChange, notebook, onNote
   const sampleCsvUrl = useMemo(() => {
     if (!tableData || tableData.sampleSummary.length === 0) return null;
     const columns = collectColumns(tableData.sampleSummary);
-    return csvDataUrl(rowsToCsv(tableData.sampleSummary, columns));
+    return { rows: tableData.sampleSummary, columns };
   }, [tableData]);
 
   const featureCsvUrl = useMemo(() => {
     if (!tableData || tableData.featureSummary.length === 0) return null;
     const columns = collectColumns(tableData.featureSummary);
-    return csvDataUrl(rowsToCsv(tableData.featureSummary, columns));
+    return { rows: tableData.featureSummary, columns };
   }, [tableData]);
 
   const outlierCsvUrl = useMemo(() => {
     if (!tableData || tableData.outliers.length === 0) return null;
     const rows = tableData.outliers.map((sample) => ({ Sample: sample }));
-    return csvDataUrl(rowsToCsv(rows, ["Sample"]));
+    return { rows, columns: ["Sample"] };
   }, [tableData]);
 
   return (
@@ -465,7 +465,7 @@ function CompletenessPageView({ activeTab, onContextModeChange, notebook, onNote
                   <h4 className="text-base font-semibold text-slate-900">Sample-level Missing Values</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {sampleCsvUrl ? (
-                    <CsvDownloadLink href={sampleCsvUrl} filename={`completeness_sample_summary_${kind}.csv`} />
+                    <TableDownloadLink table={sampleCsvUrl} filename={`completeness_sample_summary_${kind}.xlsx`} />
                   ) : null}
                   <NotebookDownload plotUrl={replayUrl} rendered={tableNotebook} />
                   </div>
@@ -478,7 +478,7 @@ function CompletenessPageView({ activeTab, onContextModeChange, notebook, onNote
                   <h4 className="text-base font-semibold text-slate-900">Outliers by Missing Value %</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {outlierCsvUrl ? (
-                    <CsvDownloadLink href={outlierCsvUrl} filename={`completeness_outliers_${kind}.csv`} />
+                    <TableDownloadLink table={outlierCsvUrl} filename={`completeness_outliers_${kind}.xlsx`} />
                   ) : null}
                   <NotebookDownload plotUrl={replayUrl} rendered={tableNotebook} />
                   </div>
@@ -500,7 +500,7 @@ function CompletenessPageView({ activeTab, onContextModeChange, notebook, onNote
                   <h4 className="text-base font-semibold text-slate-900">Feature-level Missing Value Distribution</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {featureCsvUrl ? (
-                    <CsvDownloadLink href={featureCsvUrl} filename={`completeness_feature_summary_${kind}.csv`} />
+                    <TableDownloadLink table={featureCsvUrl} filename={`completeness_feature_summary_${kind}.xlsx`} />
                   ) : null}
                   <NotebookDownload plotUrl={replayUrl} rendered={tableNotebook} />
                   </div>

@@ -921,19 +921,37 @@ def single_protein_lineplot_plot(
         # Up to 40 characters per entry; kept inline so the notebook export
         # (which lifts this function) needs no extra helper.
         labels = [label if len(label) <= 40 else label[:37].rstrip() + "..." for label in labels]
-        columns = max(1, min(3, len(labels)))
-        rows = -(-len(labels) // columns)
-        ax.legend(
-            handles, labels,
-            title="Feature", loc="lower center", ncol=columns, fontsize=8, title_fontsize=8, frameon=False,
-            bbox_to_anchor=advanced_anchor(ax, advanced, 0.5, 0.0), bbox_transform=fig.transFigure,
-        )
-        apply_advanced_axes(ax, advanced)
-        # Reserve the legend's height (one line per row plus the title) so
-        # tight_layout keeps the sample labels above it.
         font_scale = advanced_number(advanced, "legendFontSize", 8) / 8
-        reserved = min(0.5, (0.16 * rows + 0.3) * font_scale / _cm_to_inch(height_cm)) if ax.get_legend() else 0
-        fig.tight_layout(rect=[0, reserved, 1, 1])
+        if advanced_text(advanced, "legendPlacement") == "right":
+            # Chosen in the advanced options: one column at the right edge of
+            # the figure; the axes get the width the drawn legend leaves.
+            ax.legend(
+                handles, labels,
+                title="Feature", loc="center right", ncol=1, fontsize=8, title_fontsize=8, frameon=False,
+                bbox_to_anchor=advanced_anchor(ax, advanced, 0.99, 0.5), bbox_transform=fig.transFigure,
+            )
+            apply_advanced_axes(ax, advanced)
+            reserved = 0.0
+            if ax.get_legend():
+                fig.canvas.draw()
+                extent = ax.get_legend().get_window_extent(fig.canvas.get_renderer())
+                reserved = min(0.6, extent.width / fig.bbox.width + 0.02)
+                # The legend has its own strip; the layout fits the axes into the rest.
+                ax.get_legend().set_in_layout(False)
+            fig.tight_layout(rect=[0, 0, 1 - reserved, 1])
+        else:
+            columns = max(1, min(3, len(labels)))
+            rows = -(-len(labels) // columns)
+            ax.legend(
+                handles, labels,
+                title="Feature", loc="lower center", ncol=columns, fontsize=8, title_fontsize=8, frameon=False,
+                bbox_to_anchor=advanced_anchor(ax, advanced, 0.5, 0.0), bbox_transform=fig.transFigure,
+            )
+            apply_advanced_axes(ax, advanced)
+            # Reserve the legend's height (one line per row plus the title) so
+            # tight_layout keeps the sample labels above it.
+            reserved = min(0.5, (0.16 * rows + 0.3) * font_scale / _cm_to_inch(height_cm)) if ax.get_legend() else 0
+            fig.tight_layout(rect=[0, reserved, 1, 1])
     else:
         apply_advanced_axes(ax, advanced)
         fig.tight_layout()

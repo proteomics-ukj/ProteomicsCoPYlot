@@ -406,6 +406,69 @@ def _anova_block(entry: SummaryPlotEntry, index: int, warnings: list[str], ancho
     return "".join(parts)
 
 
+def _anova_cluster_figure(entry: SummaryPlotEntry, warnings: list[str]) -> str:
+    """One cluster of a clustered ANOVA, listed under that ANOVA: its heading and figure only."""
+    payload, cluster = _anova_request(entry)
+    what = f"{entry.kind.capitalize()} ANOVA (Cluster {cluster} of {payload.nClusters})"
+    figure = _figure(
+        entry, warnings, what, anova_png, args=(payload,), selected_cluster=cluster, advanced=_advanced(entry),
+    )
+    return f"<h4>Cluster {cluster} of {payload.nClusters}</h4>{figure}" if figure else ""
+
+
+def _anova_section(
+    entries: list[SummaryPlotEntry], kind: str, warnings: list[str]
+) -> tuple[str, dict[tuple, str]]:
+    """The ANOVA part and, per clustering, the anchor an ORA of its clusters links to.
+
+    Each ANOVA (plain or clustered) is one analysis. A single cluster belongs to
+    the clustered ANOVA with the same clustering and is drawn under it; only a
+    cluster whose ANOVA is not in the report forms an analysis of its own.
+    """
+    report = _report()
+    parts: list[str] = []
+    targets: dict[tuple, str] = {}
+    def single_cluster(entry: SummaryPlotEntry) -> bool:
+        try:
+            return _anova_request(entry)[1] is not None
+        except Exception:
+            return False  # reported when the entry is drawn
+
+    analyses = [entry for entry in entries if not single_cluster(entry)]
+    clusters = [entry for entry in entries if single_cluster(entry)]
+
+    def attempt(build, *args) -> str:
+        try:
+            return build(*args)
+        except Exception as exc:
+            report._report_failure(warnings, f"{kind.capitalize()} ANOVA", exc)
+            return ""
+
+    for entry in [*analyses, None]:
+        if entry is None:
+            # Clusters whose clustered ANOVA was not added.
+            pending, clusters = clusters, []
+            for cluster in pending:
+                anchor = f"e-{kind}-anova-{len(parts) + 1}"
+                block = attempt(_anova_block, cluster, len(parts) + 1, warnings, anchor)
+                if block:
+                    parts.append(block)
+                    targets.setdefault(anova_cluster_selection(cluster.request), anchor)
+            break
+        anchor = f"e-{kind}-anova-{len(parts) + 1}"
+        block = attempt(_anova_block, entry, len(parts) + 1, warnings, anchor)
+        if not block:
+            continue
+        if _text(entry.request, "source") == "anova_cluster":
+            selection = anova_cluster_selection(entry.request)
+            targets.setdefault(selection, anchor)
+            own = [cluster for cluster in clusters if anova_cluster_selection(cluster.request) == selection]
+            clusters = [cluster for cluster in clusters if cluster not in own]
+            block += "".join(attempt(_anova_cluster_figure, cluster, warnings) for cluster in own)
+        parts.append(block)
+    return "".join(parts), targets
+
+
 # --------------------------------------------------------------------------- ORA
 
 
@@ -525,20 +588,7 @@ def optional_sections(
     report = _report()
     volcano, volcano_targets = _volcano_section(context, kind, warnings)
 
-    anova_parts: list[str] = []
-    anova_targets: dict[tuple, str] = {}
-    for position, entry in enumerate(_entries(context, kind, "anova"), start=1):
-        anchor = f"e-{kind}-anova-{position}"
-        try:
-            block = _anova_block(entry, len(anova_parts) + 1, warnings, anchor)
-        except Exception as exc:
-            report._report_failure(warnings, f"{kind.capitalize()} ANOVA", exc)
-            continue
-        if not block:
-            continue
-        anova_parts.append(block)
-        if _text(entry.request, "source") == "anova_cluster":
-            anova_targets.setdefault(anova_cluster_selection(entry.request), anchor)
+    anova, anova_targets = _anova_section(_entries(context, kind, "anova"), kind, warnings)
 
     def ora_block(entry: SummaryPlotEntry, index: int, entry_warnings: list[str]) -> str:
         return _ora_block(entry, index, entry_warnings, volcano_targets, anova_targets)
@@ -547,7 +597,7 @@ def optional_sections(
         "Pearson": _blocks(_entries(context, kind, "pearson"), warnings, _pearson_block, "Pearson Correlation"),
         "Venn": _blocks(_entries(context, kind, "venn"), warnings, _venn_block, "Venn Diagram"),
         "Volcano": volcano,
-        "Anova": "".join(anova_parts),
+        "Anova": anova,
         "Ora": _blocks(_entries(context, kind, "ora"), warnings, ora_block, "ORA"),
         "Single": (
             _blocks(_entries(context, kind, "single_box"), warnings, _single_block, "Boxplot")

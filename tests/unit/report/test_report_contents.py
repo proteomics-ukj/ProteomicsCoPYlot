@@ -142,6 +142,24 @@ def test_a_plot_that_cannot_be_drawn_is_left_out_with_one_warning(figures) -> No
     assert "Could not render" not in result.html
 
 
+def test_a_cluster_is_listed_under_its_clustered_anova(figures) -> None:
+    clustered = {"source": "anova_cluster", "dataSource": "data", "pValueThreshold": 1.0, "nClusters": 2,
+                 "clusterMethod": "average"}
+    markup = _build([
+        _entry("anova", {**clustered, "selectedCluster": 1}),  # added first, still drawn under its ANOVA
+        _entry("anova", {"source": "anova", "dataSource": "data", "pValueThreshold": 0.05}),
+        _entry("anova", {**clustered, "selectedCluster": "none"}),
+        _entry("anova", {**clustered, "nClusters": 3, "selectedCluster": 2}),  # its clustered ANOVA is not in the report
+    ]).html
+    headings = [html_module.unescape(text) for text in re.findall(r"<h[34][^>]*>([^<]*)</h[34]>", markup)
+                if ("ANOVA" in text or "Cluster" in text) and text != "Cluster Sizes"]
+    assert headings == [
+        "Analysis 1: One-way ANOVA", "Analysis 2: One-way ANOVA, clusters", "Cluster 1 of 2", "Analysis 3: Cluster 2 of 3",
+    ]
+    drawn = [(args[0].nClusters, options["selected_cluster"]) for name, args, options in figures if name == "anova_png"]
+    assert drawn == [(4, None), (2, None), (2, 1), (3, 2)]
+
+
 def test_an_ora_links_to_its_volcano_only_when_that_is_in_the_report(figures) -> None:
     ora = {**VOLCANO, "source": "volcano", "direction": "up", "adjPValueCutoff": 0.05, "topN": 5,
            "minTermSize": 20, "maxTermSize": 300, "backgroundMode": "experiment", "organism": "human"}

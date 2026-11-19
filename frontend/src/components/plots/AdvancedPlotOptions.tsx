@@ -9,6 +9,8 @@ export type AdvancedPlotVisibleControls = {
   textElements?: boolean;
   tickControls?: boolean;
   legendControls?: boolean;
+  // The "Position" choice (below or right of the plot): the single-protein line plot.
+  legendPlacement?: boolean;
   // Any plot that draws a threshold, a fit or a guide over its data.
   referenceLineColor?: boolean;
   // The "Show" box in the Reference line card. False where the plot switches
@@ -653,6 +655,20 @@ export default function AdvancedPlotOptions({
                 />
                 Draw a frame
               </label>
+              {visibleControls.legendPlacement === true ? (
+                <label className="block">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Position</span>
+                  <AssistantSelect data-assistant-permission="view"
+                    aria-label="Legend position"
+                    value={value.legendPlacement ?? "below"}
+                    onChange={(event) => patch({ legendPlacement: event.target.value === "right" ? "right" : "below" })}
+                    className={inputClass}
+                  >
+                    <option value="below">Below the plot</option>
+                    <option value="right">Right of the plot</option>
+                  </AssistantSelect>
+                </label>
+              ) : null}
               <label className="block">
                 <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Offset x / y (px)</span>
                 <div className="mt-1 grid grid-cols-2 gap-2">

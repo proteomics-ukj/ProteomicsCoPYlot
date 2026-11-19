@@ -46,7 +46,7 @@ def test_values_that_look_like_another_scale_get_a_hint(kind, expected):
 
 
 def test_whole_numbers_are_not_called_count_data():
-    """MaxQuant LFQ intensities and summed Skyline areas are whole numbers (2026-11-13)."""
+    """MaxQuant LFQ intensities are whole numbers (2026-11-13)."""
     assert log2_scale_hint(_matrix("counts"), SAMPLES) is None
     rng = np.random.default_rng(5)
     lfq = pd.DataFrame(np.round(np.power(2.0, rng.normal(24, 2, (500, len(SAMPLES))))), columns=SAMPLES)

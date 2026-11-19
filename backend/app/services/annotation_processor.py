@@ -79,7 +79,7 @@ def log2_scale_hint(data: pd.DataFrame, sample_columns: list[str]) -> str | None
     them sit in a narrow positive range. One pattern is worth a word: a median
     below 12 with no negative values (log2 intensities from mass spectrometry
     usually lie around 15-30; log10 or ln intensities lie lower). Whole numbers
-    are not remarked on: MaxQuant LFQ intensities and summed Skyline areas are
+    are not remarked on: MaxQuant LFQ intensities are
     whole numbers too (the note called them count data, 2026-11-13). Centred data
     and log2 ratios have negative values and are left alone, and so are columns
     whose names all say log2. The checkbox itself is not changed.

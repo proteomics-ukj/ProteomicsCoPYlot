@@ -4,6 +4,7 @@
 
 - Normalization fitted on filtered or fully observed features
 - Optional Cambridge cRAP contaminant filtering
+- FragPipe: combined protein table named by entry name; combined ion, modified-peptide and peptide tables read as the peptide report
 - Paired and unpaired moderated t-tests with limma
 - Optional correction of phosphosite fold changes for protein abundance
 - GO enrichment using the leading gene per quantified group and all distinct genes in explicit lists

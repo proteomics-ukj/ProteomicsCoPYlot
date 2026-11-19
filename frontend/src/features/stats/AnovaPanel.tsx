@@ -265,9 +265,16 @@ function AnovaPanelView({
         })
       : null;
 
-  function buildReportEntries(): ReportEntry[] {
+  // The report takes the ANOVA (or its clustered heatmap) and, separately, single
+  // clusters of the clustered one; a cluster is listed under its ANOVA there.
+  function isClusterEntry(entry: ReportEntry): boolean {
+    return !["", "none", "null", "undefined"].includes(String(entry.request.selectedCluster ?? "none").trim().toLowerCase());
+  }
+
+  function buildReportEntries(cluster: boolean): ReportEntry[] {
     if (!canRun || (kind !== "protein" && kind !== "phospho")) return [];
     const clustered = sourceMode === "anova_cluster";
+    if (cluster && (!clustered || displayedSelectedCluster === "none")) return [];
     return [{
       type: "anova",
       kind,
@@ -282,7 +289,7 @@ function AnovaPanelView({
         showRowLabels: clustered && showRowLabels,
         nClusters: Math.max(1, Math.round(nClusters)),
         clusterMethod,
-        selectedCluster: clustered ? displayedSelectedCluster : "none",
+        selectedCluster: cluster ? displayedSelectedCluster : "none",
         postHoc,
         postHocCondition1: postHoc === "tukey" && postHocPairValid ? postHocCondition1 : null,
         postHocCondition2: postHoc === "tukey" && postHocPairValid ? postHocCondition2 : null,
@@ -379,9 +386,22 @@ function AnovaPanelView({
           kindLabel={kindOptions.find((option) => option.value === kind)?.label ?? kind}
           title="ANOVA"
           noun="ANOVA plot"
-          buildEntries={buildReportEntries}
+          buildEntries={() => buildReportEntries(false)}
           invalidMessage="At least two conditions with replicate samples are required before adding this ANOVA plot."
+          only={(entry) => !isClusterEntry(entry)}
         />
+        {sourceMode === "anova_cluster" ? (
+          <ReportEntryControl
+            type="anova"
+            kind={kind}
+            kindLabel={kindOptions.find((option) => option.value === kind)?.label ?? kind}
+            title="Cluster"
+            noun="ANOVA cluster plot"
+            buildEntries={() => buildReportEntries(true)}
+            invalidMessage="Select a cluster under Cluster before adding it."
+            only={isClusterEntry}
+          />
+        ) : null}
         <Notice error={error} warnings={removeSourceUsageWarnings(options?.warnings)} />
       </SectionCard>
 

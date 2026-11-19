@@ -666,6 +666,22 @@
             "default": null,
             "title": "Legendframe"
           },
+          "legendPlacement": {
+            "anyOf": [
+              {
+                "enum": [
+                  "below",
+                  "right"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legendplacement"
+          },
           "legendTextColor": {
             "anyOf": [
               {
@@ -14659,6 +14675,7 @@
     },
     "/api/plots/qc/{kind}/feature-cvs.csv": {
       "get": {
+        "description": "The feature CVs as CSV (what the notebook export reproduces) or, for reading, as an Excel file.",
         "operationId": "qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get",
         "parameters": [
           {
@@ -14684,11 +14701,26 @@
               "title": "Snapshot",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "csv",
+              "enum": [
+                "csv",
+                "xlsx"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {},
               "text/csv": {}
             },
             "description": "Successful Response"

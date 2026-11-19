@@ -7,7 +7,7 @@ One of the routers `routes_plots` combines; see that module for what is shared.
 
 
 import io
-from typing import Any, Callable, cast
+from typing import Any, Callable, Literal, cast
 
 import pandas as pd
 
@@ -354,8 +354,11 @@ def qc_cv_table_route(kind: AnnotationKind, snapshot: str = "") -> dict[str, lis
         return table_rows(qc_cv_table(kind=kind))
 
 
-@router.get("/qc/{kind}/feature-cvs.csv", response_class=Response, responses={200: {"content": {"text/csv": {}}}})
-def qc_feature_cvs_route(kind: AnnotationKind, snapshot: str = "") -> Response:
+@router.get("/qc/{kind}/feature-cvs.csv", response_class=Response, responses={200: {"content": {
+    "text/csv": {}, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {},
+}}})
+def qc_feature_cvs_route(kind: AnnotationKind, snapshot: str = "", format: Literal["csv", "xlsx"] = "csv") -> Response:
+    """The feature CVs as CSV (what the notebook export reproduces) or, for reading, as an Excel file."""
     recipe = table_snapshot(kind, "cv", snapshot) if snapshot else None
     with plot_errors("Failed to export feature CVs"):
         if recipe is None:
@@ -364,7 +367,20 @@ def qc_feature_cvs_route(kind: AnnotationKind, snapshot: str = "") -> Response:
         else:
             frame = pd.read_parquet(io.BytesIO(recipe.resources["input.parquet"]))
             meta = pd.read_parquet(io.BytesIO(recipe.resources["metadata.parquet"]))
-        return Response(qc_feature_cvs(frame, meta).to_csv(index=False), media_type="text/csv",
+        table = qc_feature_cvs(frame, meta)
+        if format == "xlsx":
+            workbook = io.BytesIO()
+            with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+                table.to_excel(writer, index=False, sheet_name="Feature CVs")
+                # Uploaded identifiers and condition labels are data, never Excel formulas.
+                for row in writer.sheets["Feature CVs"].iter_rows():
+                    for cell in row:
+                        if cell.data_type == "f":
+                            cell.data_type = "s"
+            return Response(workbook.getvalue(),
+                            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            headers={"Content-Disposition": f'attachment; filename="qc_{kind}_feature_cvs.xlsx"'})
+        return Response(table.to_csv(index=False), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="qc_{kind}_feature_cvs.csv"'})
 
 

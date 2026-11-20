@@ -121,6 +121,20 @@ moved and why.
   shows what it would do if you want to match the house style in new code.
 - Frontend: ESLint and TypeScript, both gating in CI.
 
+### Notebook function readability
+
+Keep Python and R notebook functions simple and straightforward to read, with
+direct public calls such as `function(data, meta, optional_arguments...)`.
+Prefer a locally understandable function body over small reductions in repeated
+code. Do not extract private helpers merely to save lines when doing so adds
+indirection, long forwarding argument lists, or extra dependencies for someone
+reading or copying a function into a notebook.
+
+Existing helpers are not automatically candidates for removal: assess their
+purpose and compatibility individually. Preserve public signatures, defaults,
+scientific behavior, and the intentional separation between the GUI backend,
+Python notebook library, and R notebook library.
+
 ### Type checking
 
 `mypy` is configured leniently and runs in CI. It is being adopted module by

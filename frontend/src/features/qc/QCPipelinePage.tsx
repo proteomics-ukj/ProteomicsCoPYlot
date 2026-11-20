@@ -1,6 +1,9 @@
-import { registerStyleStore, styleTemplate, withStyle } from "../../lib/plotStyles";
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
+import { styleTemplate } from "../../lib/plotStyles";
+import { useAppearanceModeSync, useAppearanceRenderDelay, useTabStyleStore } from "../../lib/useTabPlotAppearance";
 import { AssistantAppearanceMount, AssistantSelect } from "../../components/AssistantFields";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
+import { HighlightControls } from "../../components/HighlightTermsField";
 import OptionsLayout from "../../components/OptionsLayout";
 import { MATPLOTLIB_CONTROLS, PLOTLY_DEFAULT_TEMPLATE_CONTROLS } from "../../lib/plotControlDefaults";
 import { restorePlotDimensionCm, restorePlotDpi, iframeHeightForPlot } from "../../lib/plotLimits";
@@ -13,9 +16,10 @@ import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { compactAdvancedPlotSettings as compactAdvancedSettings, migrateAdvancedSettingsMap } from "../../lib/plotSerialization";
 import { methodDefaultScaling, pcaMethodLabel, SCALING_LABELS, scalingLabel, scalingValue } from "./pcaScaling";
-import { collectColumns, csvDataUrl, rowsToQuotedCsv as rowsToCsv } from "../../lib/tableData";
+import { collectColumns } from "../../lib/tableData";
+import TableDownloadLink from "../../components/TableDownloadLink";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { buildPlotUrl, getPeptideQuantityOptions, getQcPcaFeatures, getQcPlotOptions, getQcTable, isAbortError } from "../../lib/api";
+import { buildPlotUrl, getQcPcaFeatures, getQcPlotOptions, getQcTable, isAbortError } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
 import {
   coercePlotDownloadFormat,
@@ -24,9 +28,8 @@ import {
   withPlotDownloadFormat,
 } from "../../lib/plotDownload";
 import { saveQcReportSettings } from "../../lib/reportState";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readQcWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import { getAdvancedPlotMode } from "../../lib/appSettings";
-import { IS_VIEWER_MODE } from "../../lib/appMode";
 import AdvancedPlotOptions, {
   type AdvancedPlotControlDefaults,
   type AdvancedPlotVisibleControls,
@@ -64,6 +67,8 @@ type Props = {
 type QcTableRequest = {
   tab: "coverage" | "boxplot" | "cv";
   params?: Record<string, string | number | boolean>;
+  /** A table that is not the one captured with the plot, so it is read without the plot's snapshot. */
+  detached?: boolean;
 };
 
 type QcKind = AnnotationKind | "peptide" | "precursor";
@@ -94,7 +99,7 @@ function withAdvancedParams(
   return { ...params, advanced: advanced ?? "" };
 }
 
-export default function QCPipelinePage({
+function QCPipelinePageView({
   activeTab,
   onWorkflowScopeChange,
   onBoxplotContextModeChange,
@@ -106,10 +111,10 @@ export default function QCPipelinePage({
   const kindFieldId = useId();
   const [renderedNotebook, setRenderedNotebook] = useState<RenderedNotebook | null>(null);
   const [tableSnapshotToken, setTableSnapshotToken] = useState<string | null>(null);
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("qc.pipeline.v1", {}),
-    []
-  );
+  // Which coverage table is shown: per sample or per condition. Until chosen it follows the plot type.
+  const [coverageTablePerCondition, setCoverageTablePerCondition] = useState<boolean | null>(null);
+  const [kind, setKind] = useWorkflow<QcKind>();
+  const persisted = useMemo(() => readQcWorkflowState(kind), [kind]);
   const persistedCoverage = (persisted.coverage as Record<string, unknown>) ?? {};
   const persistedHist = (persisted.hist as Record<string, unknown>) ?? {};
   const persistedBox = (persisted.box as Record<string, unknown>) ?? {};
@@ -119,19 +124,13 @@ export default function QCPipelinePage({
   const persistedCorrelation = (persisted.correlation as Record<string, unknown>) ?? {};
   // Versioned: settings saved before v2 carry the frame and grid defaults the
   // panel used to add to every first edit, and would now apply for good.
-  const persistedAdvanced: AdvancedPlotState = migrateAdvancedSettingsMap(IS_VIEWER_MODE
-    ? readPersistedUiState<AdvancedPlotState>("qc.advanced.v2", {})
-    : (persisted.advancedV2 as AdvancedPlotState) ?? {});
-  const [kind, setKind] = useState<QcKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    if (value === "protein" || value === "phospho" || value === "phosprot" || value === "peptide" || value === "precursor") return value;
-    return "protein";
-  });
+  const persistedAdvanced = migrateAdvancedSettingsMap((persisted.advancedV2 as AdvancedPlotState) ?? {});
   const { datasets, availableKinds, kindOptions, loading: datasetsLoading } = useCurrentDatasetsSnapshot();
   const [qcOptionsReadyKind, setQcOptionsReadyKind] = useState<QcKind | null>(null);
   const pcaContextPending = datasetsLoading || (isAnnotationKind(kind) && availableKinds.includes(kind) && qcOptionsReadyKind !== kind);
   // Rebuilds plot and table requests when the phosphosite localization cutoff changes.
   const plotSignal = useAdvancedPlotSignal();
+  const [abundanceIdentifiers, setAbundanceIdentifiers] = useState([{ key: "workflow", label: "Protein Names" }]);
   const [conditionOptions, setConditionOptions] = useState<string[]>([]);
   const [sampleOptions, setSampleOptions] = useState<string[]>([]);
   const [sampleDisplayLabels, setSampleDisplayLabels] = useState<Record<string, string>>({});
@@ -147,9 +146,6 @@ export default function QCPipelinePage({
   // The CV of a ratio to a site's own median is not the CV of an abundance, so
   // that one combination gets a warning under the plot.
   const [centredPhosprotValues, setCentredPhosprotValues] = useState(false);
-  const [peptideQuantityColumns, setPeptideQuantityColumns] = useState<string[]>([]);
-  const [peptideQuantityRequiresSelection, setPeptideQuantityRequiresSelection] = useState(false);
-  const [peptideQuantityError, setPeptideQuantityError] = useState<string | null>(null);
   const [tableRows, setTableRows] = useState<Record<string, unknown>[]>([]);
   const [tableLoading, setTableLoading] = useState(false);
   const [tableError, setTableError] = useState<string | null>(null);
@@ -161,14 +157,13 @@ export default function QCPipelinePage({
   const [advancedRenderByTab, setAdvancedRenderByTab] = useState<AdvancedPlotState>(() => persistedAdvanced);
 
   const [coverage, setCoverage] = useState({
-    quantityColumn: String(persistedCoverage.quantityColumn ?? ""),
     includeId: Boolean(persistedCoverage.includeId ?? false),
     header: true,
     legend: true,
     summary: Boolean(persistedCoverage.summary ?? false),
     text: Boolean(persistedCoverage.text ?? false),
     textSize: Number(persistedCoverage.textSize ?? 9),
-    randomSeed: Number(persistedCoverage.randomSeed ?? 187),
+    randomSeed: Number(persistedCoverage.randomSeed ?? 1),
     // The line at the number of features quantified in any sample. Its own
     // switch, because turning it off also gives the bars the full height.
     referenceLine: persistedCoverage.referenceLine !== false,
@@ -229,12 +224,18 @@ export default function QCPipelinePage({
     tsneLearningRate: Number(persistedPca.tsneLearningRate ?? 200),
     dbscanEpsFactor: Number(persistedPca.dbscanEpsFactor ?? 0.5),
     dbscanMinSamples: Number(persistedPca.dbscanMinSamples ?? 2),
-    randomState: Number(persistedPca.randomState ?? 42),
+    randomState: Number(persistedPca.randomState ?? 1),
     widthCm: restorePlotDimensionCm(persistedPca.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedPca.heightCm, 10),
     dpi: restorePlotDpi(persistedPca.dpi, 300),
   });
   const [abundance, setAbundance] = useState({
+    identifier: String(persistedAbundance.identifier ?? "workflow"),
+    search: String(persistedAbundance.search ?? ""),
+    topHigh: Math.max(0, Math.round(Number(persistedAbundance.topHigh) || 0)),
+    topLow: Math.max(0, Math.round(Number(persistedAbundance.topLow) || 0)),
+    highlightOutline: persistedAbundance.highlightOutline !== false,
+    highlightLabels: Boolean(persistedAbundance.highlightLabels ?? false),
     type: String(persistedAbundance.type ?? "Normal"),
     header: true,
     legend: true,
@@ -253,7 +254,7 @@ export default function QCPipelinePage({
   });
 
   useEffect(() => {
-    const nextState: Record<string, unknown> = {
+    const nextState: Record<string, unknown> & { kind: string } = {
       kind,
       downloadFormat,
       coverage,
@@ -264,32 +265,13 @@ export default function QCPipelinePage({
       abundance,
       correlation,
     };
-    if (!IS_VIEWER_MODE) {
-      nextState.advancedV2 = advancedByTab;
-    } else {
-      writePersistedUiState("qc.advanced.v2", advancedByTab);
-    }
-    writePersistedUiState("qc.pipeline.v1", nextState);
+    nextState.advancedV2 = advancedByTab;
+    writeWorkflowState("qc.pipeline.v1", nextState);
   }, [kind, downloadFormat, coverage, hist, box, cv, pca, abundance, correlation, advancedByTab]);
 
-  useEffect(() => {
-    const refresh = () => setAdvancedModeEnabled(getAdvancedPlotMode());
-    window.addEventListener("focus", refresh);
-    window.addEventListener("storage", refresh);
-    window.addEventListener("copylot:advancedPlotModeChanged", refresh);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("copylot:advancedPlotModeChanged", refresh);
-    };
-  }, []);
+  useAppearanceModeSync(setAdvancedModeEnabled);
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setAdvancedRenderByTab(advancedByTab);
-    }, 350);
-    return () => window.clearTimeout(timeout);
-  }, [advancedByTab]);
+  useAppearanceRenderDelay(advancedByTab, setAdvancedRenderByTab);
 
   useEffect(() => {
     if (!isAnnotationKind(kind) || !availableKinds.includes(kind)) return;
@@ -306,7 +288,7 @@ export default function QCPipelinePage({
 
   useEffect(() => {
     if ((kind === "peptide" || kind === "precursor") && datasets?.peptide) {
-      saveQcReportSettings("peptide", { coverage });
+      saveQcReportSettings(kind, { coverage });
     }
   }, [kind, datasets?.peptide, coverage]);
 
@@ -316,8 +298,8 @@ export default function QCPipelinePage({
 
   useEffect(() => {
     onCoverageContextModeChange?.(activeTab === "coverage"
-      ? { level: kind === "precursor" ? "precursor" : "peptide", quantityColumn: coverage.quantityColumn } : null);
-  }, [activeTab, kind, coverage.quantityColumn, onCoverageContextModeChange]);
+      ? { level: kind === "precursor" ? "precursor" : "peptide" } : null);
+  }, [activeTab, kind, onCoverageContextModeChange]);
 
   const activeKindOptions = useMemo<Array<{ value: QcKind; label: string }>>(() => {
     if (activeTab !== "coverage") return kindOptions;
@@ -337,40 +319,8 @@ export default function QCPipelinePage({
     if (!activeKindOptions.some((option) => option.value === kind)) {
       setKind(activeKindOptions[0].value);
     }
-  }, [activeKindOptions, kind]);
+  }, [activeKindOptions, kind, setKind]);
 
-  useEffect(() => {
-    if ((kind !== "peptide" && kind !== "precursor") || !datasets?.peptide) {
-      setPeptideQuantityColumns([]);
-      setPeptideQuantityRequiresSelection(false);
-      setPeptideQuantityError(null);
-      return;
-    }
-    const controller = new AbortController();
-    getPeptideQuantityOptions({ signal: controller.signal })
-      .then((payload) => {
-        setPeptideQuantityColumns(payload.columns);
-        setPeptideQuantityRequiresSelection(payload.requiresSelection);
-        setPeptideQuantityError(
-          payload.columns.length === 0
-            ? "No supported peptide abundance column was found in this dataset."
-            : null
-        );
-        setCoverage((current) => {
-          if (current.quantityColumn && payload.columns.includes(current.quantityColumn)) return current;
-          return { ...current, quantityColumn: payload.defaultColumn ?? "" };
-        });
-      })
-      .catch((error) => {
-        if (isAbortError(error)) return;
-        setPeptideQuantityColumns([]);
-        setPeptideQuantityRequiresSelection(false);
-        setPeptideQuantityError(
-          error instanceof Error ? error.message : "Failed to load peptide abundance columns"
-        );
-      });
-    return () => controller.abort();
-  }, [kind, datasets?.peptide]);
 
   useEffect(() => {
     if (!onWorkflowScopeChange) return;
@@ -477,7 +427,7 @@ export default function QCPipelinePage({
   ]);
 
   useEffect(() => {
-    if (!isAnnotationKind(kind) || !availableKinds.includes(kind)) {
+    if (isAnnotationKind(kind) ? !availableKinds.includes(kind) : !datasets?.peptide) {
       setConditionOptions([]);
       setSampleOptions([]);
       setSampleDisplayLabels({});
@@ -493,10 +443,14 @@ export default function QCPipelinePage({
         setQcOptionsReadyKind(kind);
         const unique = Array.from(new Set(payload.conditions.map((value) => value.trim()).filter(Boolean)));
         setConditionOptions(unique);
+        const identifiers = payload.abundanceIdentifiers ?? [{ key: "workflow", label: "Workflow Names" }];
+        setAbundanceIdentifiers(identifiers);
+        setAbundance(current => identifiers.some(option => option.key === current.identifier) ? current : { ...current, identifier: "workflow" });
         const samples = Array.from(new Set((payload.samples ?? []).map((value) => value.trim()).filter(Boolean)));
         setSampleOptions(samples);
         setSampleDisplayLabels(payload.sampleLabels ?? {});
         setSampleDisplayLabelsWithId(payload.sampleLabelsWithId ?? {});
+        if (!isAnnotationKind(kind)) return;
         setDataSourceChoices({
           availableDataSources: payload.availableDataSources ?? ["data"],
           defaultDataSource: payload.defaultDataSource ?? "data",
@@ -526,9 +480,10 @@ export default function QCPipelinePage({
     return () => {
       controller.abort();
     };
-  }, [kind, availableKinds]);
+  }, [kind, availableKinds, datasets?.peptide]);
 
   useEffect(() => {
+    if (!conditionOptions.length) return;
     setAbundance((prev) => {
       if (prev.condition === "All Conditions") return prev;
       if (conditionOptions.includes(prev.condition)) return prev;
@@ -540,12 +495,14 @@ export default function QCPipelinePage({
     void plotSignal;
     if (!isAnnotationKind(kind)) return null;
     if (activeTab === "coverage") {
+      const perCondition = coverageTablePerCondition ?? coverage.summary;
       const params: Record<string, string | number | boolean> = {
-        summary: coverage.summary,
+        summary: perCondition,
       };
       return {
         tab: "coverage",
         params,
+        detached: perCondition !== coverage.summary,
       };
     }
     if (activeTab === "boxplot") {
@@ -564,21 +521,12 @@ export default function QCPipelinePage({
       };
     }
     return null;
-  }, [kind, activeTab, coverage.summary, box.mode, plotSignal]);
+  }, [kind, activeTab, coverage.summary, coverageTablePerCondition, box.mode, plotSignal]);
 
 
   const activeAdvancedSettings = advancedByTab[activeTab] ?? styleTemplate() ?? {};
   // Named styles and "this style on every plot" (lib/plotStyles.ts) reach these settings here.
-  const styleStoreState = useRef({ tab: activeTab, byTab: advancedByTab });
-  useEffect(() => { styleStoreState.current = { tab: activeTab, byTab: advancedByTab }; }, [activeTab, advancedByTab]);
-  useEffect(() => registerStyleStore("qc", {
-    active: () => styleStoreState.current.byTab[styleStoreState.current.tab] ?? styleTemplate() ?? {},
-    setActive: (settings) => setAdvancedByTab((prev) => ({ ...prev, [styleStoreState.current.tab]: settings })),
-    setAll: (style) => {
-      setAdvancedByTab((prev) => Object.fromEntries(Object.entries(prev).map(([tab, value]) => [tab, withStyle(value, style)])));
-      return Object.keys(styleStoreState.current.byTab).length;
-    },
-  }), []);
+  useTabStyleStore("qc." + kind, activeTab, advancedByTab, setAdvancedByTab);
   const activeAdvancedRenderSettings = useMemo(
     () => advancedRenderByTab[activeTab] ?? styleTemplate() ?? {},
     [activeTab, advancedRenderByTab]
@@ -698,6 +646,7 @@ export default function QCPipelinePage({
       return {
         ...base,
         legendControls: Boolean(abundance.legend),
+        abundanceHighlights: true,
         conditionLabels: true,
         conditionColors: true,
         markerStyle: true,
@@ -744,7 +693,6 @@ export default function QCPipelinePage({
     void plotSignal;
     if (!activeKindOptions.some((option) => option.value === kind)) return null;
     if (activeTab === "coverage") {
-      if ((kind === "peptide" || kind === "precursor") && (!coverage.quantityColumn || peptideQuantityError)) return null;
       return {
         mode: "image" as const,
         url: buildPlotUrl(`/api/plots/qc/${kind}/coverage.png`, withAdvancedParams(coverage, activeAdvancedParam)),
@@ -806,7 +754,6 @@ export default function QCPipelinePage({
     correlation,
     activeKindOptions,
     activeAdvancedParam,
-    peptideQuantityError,
     plotSignal,
   ]);
 
@@ -821,7 +768,7 @@ export default function QCPipelinePage({
 
   // The interactive plots are drawn at the renderer's own size (10 cm high)
   // and then fill the frame; the static figure's height is not theirs.
-  const interactiveHeightPx = cmToIframeHeight(10);
+  const interactiveHeightPx = iframeHeightForPlot(10, { fallbackCm: 10, minPx: 760, paddingPx: 220 });
 
   const activePlotTitle = useMemo(() => {
     if (activeTab === "pca") {
@@ -857,7 +804,7 @@ export default function QCPipelinePage({
     setTableRows([]);
     setTableError(null);
 
-    getQcTable(kind, tableRequest.tab, { ...tableRequest.params, ...(notebookToken ? { snapshot: notebookToken } : {}) }, { signal: controller.signal })
+    getQcTable(kind, tableRequest.tab, { ...tableRequest.params, ...(notebookToken && !tableRequest.detached ? { snapshot: notebookToken } : {}) }, { signal: controller.signal })
       .then((response) => {
         if (!controller.signal.aborted) {
           setTableRows(response.rows ?? []);
@@ -884,7 +831,7 @@ export default function QCPipelinePage({
     if (!tableRequest || tableRows.length === 0) return null;
     const columns = collectColumns(tableRows);
     if (columns.length === 0) return null;
-    return csvDataUrl(rowsToCsv(tableRows, columns));
+    return { rows: tableRows, columns };
   }, [tableRequest, tableRows, tableLoading, tableError, notebookToken, tableSnapshotToken]);
 
 
@@ -892,7 +839,8 @@ export default function QCPipelinePage({
     <div className="space-y-6" data-assistant-pending={activeTab === "pca" && pcaContextPending ? "true" : undefined}>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">QC Pipeline</h2>
-        <div className="mt-4 max-w-xs">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
+          <div>
             <label htmlFor={kindFieldId} className="mb-2 block text-sm font-medium text-slate-700">Dataset level</label>
             <AssistantSelect
             id={kindFieldId}
@@ -912,7 +860,8 @@ export default function QCPipelinePage({
             )}
           </AssistantSelect>
         </div>
-        <LocalizationCutoffField kind={kind} className="mt-4 max-w-xs" />
+          <LocalizationCutoffField kind={kind} />
+        </div>
       </section>
 
       {activeKindOptions.length === 0 ? (
@@ -925,11 +874,6 @@ export default function QCPipelinePage({
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-900">Options</h3>
         <div className="mt-4">{renderOptions()}</div>
-        {(kind === "peptide" || kind === "precursor") && peptideQuantityError ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {peptideQuantityError}
-          </div>
-        ) : null}
       </section>
       ) : null}
 
@@ -1020,18 +964,34 @@ export default function QCPipelinePage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-slate-900">Summary Table</h3>
             <div className="flex flex-wrap items-center gap-2">
+            {tableRequest.tab === "coverage" ? (
+              <div className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-1 py-1 text-sm text-slate-700" role="group" aria-label="Coverage table">
+                <button type="button" aria-label="Previous coverage table"
+                  onClick={() => setCoverageTablePerCondition(!(tableRequest.params?.summary === true))}
+                  className="rounded-lg px-2 py-1 transition hover:bg-slate-100">‹</button>
+                <span className="min-w-28 text-center font-medium">
+                  {tableRequest.params?.summary === true ? "Per condition" : "Per sample"}
+                </span>
+                <button type="button" aria-label="Next coverage table"
+                  onClick={() => setCoverageTablePerCondition(!(tableRequest.params?.summary === true))}
+                  className="rounded-lg px-2 py-1 transition hover:bg-slate-100">›</button>
+              </div>
+            ) : null}
             {tableCsvUrl ? (
-              <a
-                href={tableCsvUrl}
-                download={`qc_${activeTab}_${kind}_summary.csv`}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-              >
-                Download CSV
+              <TableDownloadLink table={tableCsvUrl}
+                filename={`qc_${activeTab}_${kind}_${tableRequest.tab === "coverage" && tableRequest.params?.summary === true ? "per_condition" : "summary"}.xlsx`}
+                label={activeTab === "cv" ? "Download summary (.xlsx)" : undefined} />
+            ) : null}
+            {activeTab === "cv" && tableCsvUrl ? (
+              <a href={buildPlotUrl(`/api/plots/qc/${kind}/feature-cvs.csv`, { format: "xlsx", ...(notebookToken ? { snapshot: notebookToken } : {}) })}
+                download={`qc_${kind}_feature_cvs.xlsx`}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50">
+                Download feature CVs (.xlsx)
               </a>
             ) : null}
             {pairedNotebook && plotView ? (
               <NotebookDownload key={plotView.url} plotUrl={plotView.url}
-                rendered={!tableLoading && !tableError && tableSnapshotToken === notebookToken ? renderedNotebook : null} />
+                rendered={!tableLoading && !tableError && !tableRequest.detached && tableSnapshotToken === notebookToken ? renderedNotebook : null} />
             ) : null}
             </div>
           </div>
@@ -1064,18 +1024,6 @@ export default function QCPipelinePage({
             <CheckboxField assistant={false} key="reference-line" label="Total Line" checked={coverage.referenceLine} onChange={(v) => setCoverage({ ...coverage, referenceLine: v })} />,
           ]}
           fields={[
-            ...((kind === "peptide" || kind === "precursor")
-              ? [
-                  <SelectField
-                    key="quantity-column"
-                    label="Abundance Column"
-                    value={coverage.quantityColumn}
-                    onChange={(value) => setCoverage({ ...coverage, quantityColumn: value })}
-                    options={peptideQuantityColumns}
-                    placeholder={peptideQuantityRequiresSelection ? "Select abundance column" : undefined}
-                  />,
-                ]
-              : []),
             ...(coverage.summary
               ? [
                   <NumberField assistant={false}
@@ -1104,8 +1052,6 @@ export default function QCPipelinePage({
     if (activeTab === "histogram") {
       return (
         <OptionsLayout order="toggles-fields-size"
-          toggles={[
-          ]}
           size={
             <SizeRow
               dpi={hist.dpi}
@@ -1157,8 +1103,6 @@ export default function QCPipelinePage({
           toggles={[
             <CheckboxField assistant={false} key="outliers" label="Toggle Outliers" checked={cv.outliers} onChange={(v) => setCv({ ...cv, outliers: v })} />,
             <CheckboxField assistant={false} key="text" label="Toggle Text" checked={cv.text} onChange={(v) => setCv({ ...cv, text: v })} />,
-          ]}
-          fields={[
           ]}
           size={
             <SizeRow
@@ -1384,39 +1328,32 @@ export default function QCPipelinePage({
     }
 
     if (activeTab === "abundance") {
-      const abundanceConditions = ["All Conditions", ...conditionOptions];
-      return (
-        <OptionsLayout order="toggles-fields-size"
-          toggles={[
-          ]}
-          fields={[
-            <SelectField
-              key="type"
-              label="Type"
-              value={abundance.type}
-              onChange={(value) => setAbundance({ ...abundance, type: value })}
-              options={["Normal", "Interactive"]}
-            />,
-            <SelectField
-              key="condition"
-              label="Condition"
-              value={abundance.condition}
-              onChange={(value) => setAbundance({ ...abundance, condition: value || "All Conditions" })}
-              options={abundanceConditions}
-            />,
-          ]}
-          size={
-            abundance.type === "Interactive" ? null : <SizeRow
-              dpi={abundance.dpi}
-              heightCm={abundance.heightCm}
-              widthCm={abundance.widthCm}
-              onDpiChange={(v) => setAbundance({ ...abundance, dpi: v })}
-              onHeightChange={(v) => setAbundance({ ...abundance, heightCm: v })}
-              onWidthChange={(v) => setAbundance({ ...abundance, widthCm: v })}
-            />
-          }
-        />
-      );
+      return <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SelectField label="Type" value={abundance.type}
+            onChange={(type) => setAbundance({ ...abundance, type })}
+            options={["Normal", "Interactive"]} />
+          <SelectField label="Label column" value={abundance.identifier}
+            onChange={(identifier) => setAbundance({ ...abundance, identifier })}
+            options={abundanceIdentifiers.map(item => ({ value: item.key, label: item.label }))} />
+          <SelectField label="Condition" value={abundance.condition}
+            onChange={(condition) => setAbundance({ ...abundance, condition })}
+            options={["All Conditions", ...conditionOptions]} />
+        </div>
+        <HighlightControls terms={abundance.search} onTerms={(search) => setAbundance({ ...abundance, search })}
+          topFirst={abundance.topHigh} topSecond={abundance.topLow}
+          firstLabel="Highlight top N highest abundance" secondLabel="Highlight top N lowest abundance"
+          onFirst={(topHigh) => setAbundance({ ...abundance, topHigh })}
+          onSecond={(topLow) => setAbundance({ ...abundance, topLow })}
+          outline={abundance.highlightOutline} onOutline={(highlightOutline) => setAbundance({ ...abundance, highlightOutline })}
+          labels={abundance.highlightLabels} onLabels={(highlightLabels) => setAbundance({ ...abundance, highlightLabels })}
+          interactive={abundance.type === "Interactive"} />
+        {abundance.type === "Interactive" ? null : <SizeRow
+          dpi={abundance.dpi} heightCm={abundance.heightCm} widthCm={abundance.widthCm}
+          onDpiChange={(dpi) => setAbundance({ ...abundance, dpi })}
+          onHeightChange={(heightCm) => setAbundance({ ...abundance, heightCm })}
+          onWidthChange={(widthCm) => setAbundance({ ...abundance, widthCm })} />}
+      </div>;
     }
 
     return (
@@ -1572,6 +1509,4 @@ function tabTitle(tab: QcTab): string {
   }
 }
 
-function cmToIframeHeight(heightCm: number): number {
-  return iframeHeightForPlot(heightCm, { fallbackCm: 10, minPx: 760, paddingPx: 220 });
-}
+export default withWorkflowSettings("qc.pipeline.v1", QCPipelinePageView);

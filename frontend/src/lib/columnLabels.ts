@@ -9,7 +9,7 @@
  */
 
 // COLUMN_LABELS_START
-export const COLUMN_LABELS: Record<string, string> = {
+const COLUMN_LABELS: Record<string, string> = {
   "mean": "Mean",
   "median": "Median",
   "min": "Min",
@@ -94,7 +94,7 @@ export const COLUMN_LABELS: Record<string, string> = {
 // COLUMN_LABELS_END
 
 /** Plot coordinates carried in table rows; shown in the plot and the CSV, not as columns. */
-export const HIDDEN_TABLE_COLUMNS: readonly string[] = ["x", "y", "color_val"];
+const HIDDEN_TABLE_COLUMNS: readonly string[] = ["x", "y", "color_val"];
 
 const PREFIX_LABELS: ReadonlyArray<readonly [string, string]> = [
   ["n_imputed__", "Imputed values"],

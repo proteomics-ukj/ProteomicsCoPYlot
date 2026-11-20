@@ -15,11 +15,9 @@ and the species would be wrong.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.stats import EnrichmentRequest, ListEnrichmentRequest
 from app.services.stats_tools import (

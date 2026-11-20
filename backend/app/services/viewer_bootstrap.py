@@ -24,7 +24,7 @@ from app.schemas.annotation import (
 from pydantic import ValidationError as PydanticValidationError
 
 from app.schemas.data_tools import ImputationRunRequest
-from app.services.annotation_processor import compute_annotation, compute_annotation_from_metadata
+from app.services.annotation_processor import annotation_filter_kwargs, compute_annotation, compute_annotation_from_metadata
 from app.services.annotation_store import save_annotation
 from app.services.dataset_reader import read_dataframe
 from app.services.dataset_store import save_peptide_path, save_table_dataset, set_active_package
@@ -374,13 +374,7 @@ def _bootstrap_annotation(
                 data=source_frame,
                 metadata=metadata,
                 is_log2_transformed=is_log2_transformed,
-                min_present=filter_config.minPresent,
-                filter_mode=filter_config.mode,
-                filter_method=filter_config.method,
-                min_percentage=filter_config.minPercentage,
-                normalization=filter_config.normalization,
-                normalization_fit=filter_config.normalizationFit,
-                contaminants=filter_config.contaminants.model_dump(),
+                **annotation_filter_kwargs(filter_config),
             )
             metadata_source = metadata_source_with_metadata
         else:
@@ -388,13 +382,7 @@ def _bootstrap_annotation(
                 data=source_frame,
                 conditions=[],
                 is_log2_transformed=is_log2_transformed,
-                min_present=filter_config.minPresent,
-                filter_mode=filter_config.mode,
-                filter_method=filter_config.method,
-                min_percentage=filter_config.minPercentage,
-                normalization=filter_config.normalization,
-                normalization_fit=filter_config.normalizationFit,
-                contaminants=filter_config.contaminants.model_dump(),
+                **annotation_filter_kwargs(filter_config),
             )
             metadata_source = "auto" if computed.auto_detected else "manual"
 

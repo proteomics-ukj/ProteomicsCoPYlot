@@ -1,12 +1,4 @@
-"""What the highlight terms draw, and how the ring is styled (2026-10-21).
-
-Highlight terms used to mean one thing: a ring with a fixed "Highlighted"
-legend entry. Now the ring and a text label (placed like the top hits, static
-figure only) are each optional, the ring follows the general marker size until
-set on its own, and its legend entry can be switched off or renamed. The top-N
-labels are untouched; a gene that is both a top hit and highlighted is
-labelled once.
-"""
+"""Top-N and typed terms share selection; rings follow dots and labels avoid legends."""
 from __future__ import annotations
 
 import json
@@ -61,16 +53,16 @@ def test_labels_are_optional_and_union_with_the_top_hits(volcano_frame) -> None:
         plt.close(fig)
 
 
-def test_ring_size_follows_the_general_marker_size_until_set(volcano_frame) -> None:
+def test_ring_size_follows_the_dot_and_width_does_not_change_diameter(volcano_frame) -> None:
     def ring_size(advanced):
         fig, plt = _render(volcano_frame, highlight_terms=["P0001"], advanced=advanced)
         try:
             return float(np.asarray(_ring(fig.axes[0])[0].get_sizes())[0])
         finally:
             plt.close(fig)
-    default, general, own = ring_size(None), ring_size({"markerSize": 20}), ring_size({"markerSize": 20, "volcanoHighlightSize": 14})
-    assert general > default and own < general
-    assert np.isclose(general, stats_tools.marker_area(24.0)) and np.isclose(own, stats_tools.marker_area(14.0))
+    default, general, own = ring_size(None), ring_size({"markerSize": 20}), ring_size({"markerSize": 20, "volcanoHighlightWidth": 3})
+    assert general > default and own == general
+    assert np.isclose(general, stats_tools.marker_area(20.0)) and np.isclose(own, stats_tools.marker_area(20.0))
 
 
 def test_legend_entry_can_be_renamed_or_dropped(volcano_frame) -> None:
@@ -125,3 +117,52 @@ def test_every_volcano_route_takes_the_switches_the_panel_sends() -> None:
         names = {p["name"] for p in paths[f"/api/plots/stats/{{kind}}/{route}"]["get"]["parameters"]}
         assert "highlightOutline" in names, route
         assert ("highlightLabels" in names) is static, route
+
+
+def test_top_hits_and_custom_terms_share_outline_and_label_switches(volcano_frame):
+    top = stats_tools._volcano_top_hits(volcano_frame, label_column="ProteinNames", up=2, down=2)
+    expected = set(top.index) | set(volcano_frame.index[volcano_frame.ProteinNames == "P0100"])
+    for outline in (True, False):
+        for labels in (True, False):
+            fig, plt = _render(volcano_frame, label_top_up=2, label_top_down=2, highlight_terms=["P0100"],
+                              highlight_outline=outline, highlight_labels=labels)
+            try:
+                assert sum(len(ring.get_offsets()) for ring in _ring(fig.axes[0])) == (len(expected) if outline else 0)
+                assert bool(_texts(fig)) == labels
+                legend_box = fig.axes[0].get_legend().get_window_extent(fig.canvas.get_renderer())
+                assert all(not text.get_window_extent(fig.canvas.get_renderer()).overlaps(legend_box) for text in fig.axes[0].texts)
+            finally:
+                plt.close(fig)
+        interactive = stats_tools._volcano_figure(volcano_frame, label_column="ProteinNames", condition1="A", condition2="B",
+            p_value_threshold=.05, log2fc_threshold=1, use_uncorrected=False, highlight_terms=["P0100"],
+            label_top_up=2, label_top_down=2, highlight_outline=outline, advanced={"markerSize": 13, "volcanoHighlightWidth": 2.5})
+        selected = [trace for trace in interactive.data if "Highlighted" in trace.name and trace.legendgroup != "_copylot_highlight_legend"]
+        assert sum(len(trace.x) for trace in selected) == (len(expected) if outline else 0)
+        assert all(trace.marker.size == 13 and trace.marker.line.width == 2.5 for trace in selected)
+
+
+def test_mouse_highlight_normalization_preserves_sites():
+    assert stats_tools._normalize_highlight_token("GFRP_MOUSE") == stats_tools._normalize_highlight_token("GFRP")
+    assert stats_tools._normalize_highlight_token("GFRP_MOUSE~S1") != stats_tools._normalize_highlight_token("GFRP")
+
+
+def test_volcano_labels_stay_within_both_axes_and_one_interactive_legend_key(volcano_frame):
+    fig, plt = _render(volcano_frame, label_top_up=20, label_top_down=20, highlight_labels=True)
+    try:
+        fig.canvas.draw()
+        ax = fig.axes[0]
+        assert ax.texts
+        for text in ax.texts:
+            box = text.get_window_extent(fig.canvas.get_renderer())
+            assert ax.bbox.contains(box.x0, box.y0) and ax.bbox.contains(box.x1, box.y1)
+    finally:
+        plt.close(fig)
+    figure = stats_tools._volcano_figure(volcano_frame, label_column="ProteinNames", condition1="A", condition2="B",
+        p_value_threshold=.05, log2fc_threshold=1, use_uncorrected=False, highlight_terms=["P0100"],
+        label_top_up=2, label_top_down=2)
+    assert [trace.name for trace in figure.data if trace.showlegend and "Highlighted" in trace.name] == ["Highlighted"]
+    for trace in figure.data:
+        if trace.name.endswith("(Highlighted)"):
+            assert trace.showlegend is False
+            assert trace.legendgroup in {"Upregulated", "Downregulated", "Not significant"}
+            assert any(base.name == trace.legendgroup and base.showlegend for base in figure.data)

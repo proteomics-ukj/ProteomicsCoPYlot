@@ -1,5 +1,4 @@
 import importlib
-from pathlib import Path
 import re
 import shutil
 import sys
@@ -7,7 +6,7 @@ import sys
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 @pytest.fixture
@@ -39,6 +38,7 @@ CASES = [
 ] + [
     ('pca', 'pca_source', (interactive, method)) for interactive in [False, True] for method in ['pca', 'umap', 't-sne']
 ] + [
+    ('imputation', 'imputation_source', ()), ('ora', 'gene_list_source', ()),
     ('comparison', 'comparison_source', ('pearson', False)),
     ('comparison', 'comparison_source', ('pearson', True)),
     ('comparison', 'comparison_source', ('venn', False)),
@@ -53,7 +53,7 @@ CASES = [
     ('anova', 'anova_source'), ('pathway', 'pathway_source'), ('sequence', 'sequence_source'),
     ('ksea', 'table_source'), ('interactive', 'abundance_source'),
     ('peptide', 'coverage_source'), ('peptide', 'missed_cleavage_source'),
-    ('peptide', 'modification_source'), ('peptide', 'rt_source'), ('peptide', 'interactive_rt_source'),
+    ('peptide', 'modification_source'), ('peptide', 'rt_source'),
     ('phospho', 'count_source'), ('phospho', 'coverage_source')]]
 
 

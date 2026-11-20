@@ -39,12 +39,11 @@ from app.services.stats_tools import (
     anova_png,
     ora_plot_png,
     pathway_heatmap_png,
-    simulation_html,
     volcano_html,
     volcano_png,
 )
 from app.services.json_records import json_records
-from app.api.plot_responses import plot_errors, png_response
+from app.api.plot_responses import with_notebook_token, plot_errors, png_response
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -125,11 +124,13 @@ def stats_volcano_route(
     kind: AnnotationKind,
     query: Annotated[VolcanoQuery, Depends()],
     highlightOutline: bool = True,
+    labelTopUp: int = 0,
+    labelTopDown: int = 0,
     advanced: str = "",
 ) -> HTMLResponse:
     with plot_errors("Failed to render volcano plot"):
         return _volcano_notebook_html(query.request(kind), advanced=parse_advanced_plot_settings(advanced),
-                                      highlight_outline=highlightOutline)
+                                      highlight_outline=highlightOutline, label_top_up=labelTopUp, label_top_down=labelTopDown)
 
 
 @router.get("/stats/{kind}/volcano-control.html", response_class=HTMLResponse)
@@ -137,11 +138,13 @@ def stats_volcano_control_route(
     kind: AnnotationKind,
     query: Annotated[VolcanoControlQuery, Depends()],
     highlightOutline: bool = True,
+    labelTopUp: int = 0,
+    labelTopDown: int = 0,
     advanced: str = "",
 ) -> HTMLResponse:
     with plot_errors("Failed to render control volcano plot"):
         return _volcano_notebook_html(query.request(kind), advanced=parse_advanced_plot_settings(advanced),
-                                      highlight_outline=highlightOutline)
+                                      highlight_outline=highlightOutline, label_top_up=labelTopUp, label_top_down=labelTopDown)
 
 
 @router.get("/stats/{kind}/volcano.png")
@@ -208,9 +211,7 @@ def _volcano_notebook_html(payload, **options) -> HTMLResponse:
         note_notebook_unavailable(exc)
         return HTMLResponse(content=volcano_html(payload, **options))
     response = HTMLResponse(content=content)
-    if token:
-        response.headers["X-CoPYlot-Notebook"] = token
-    return response
+    return with_notebook_token(response, token)
 
 
 def _volcano_notebook_png(payload, **options) -> Response:
@@ -224,9 +225,7 @@ def _volcano_notebook_png(payload, **options) -> Response:
         response.headers["X-CoPYlot-Notice"] = quote(f"Notebook export unavailable: {exc} The plot is unchanged.")
         return response
     response = png_response(content)
-    if token:
-        response.headers["X-CoPYlot-Notebook"] = token
-    return response
+    return with_notebook_token(response, token)
 
 
 @router.get("/stats/{kind}/volcano-table")
@@ -298,9 +297,7 @@ def stats_anova_route(
             response.headers["X-CoPYlot-Notice"] = quote(f"Notebook export unavailable: {exc} The plot is unchanged.")
             return response
         response = png_response(content)
-        if token:
-            response.headers["X-CoPYlot-Notebook"] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/stats/{kind}/anova-tables", response_model=AnovaResultResponse)
@@ -390,9 +387,7 @@ def stats_ora_route(
             response.headers['X-CoPYlot-Notice'] = quote(f'Notebook export unavailable: {exc} The plot is unchanged.')
             return response
         response = Response() if tableOnly else png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get('/stats/{kind}/ora/{direction}/tables', response_model=EnrichmentResultResponse)
@@ -459,9 +454,7 @@ def stats_pathway_heatmap_route(
             response.headers['X-CoPYlot-Notice'] = quote(f'Notebook export unavailable: {exc} The plot is unchanged.')
             return response
         response = png_response(content)
-        if token:
-            response.headers['X-CoPYlot-Notebook'] = token
-        return response
+        return with_notebook_token(response, token)
 
 
 @router.get("/stats/{kind}/simulation.html", response_class=HTMLResponse)
@@ -496,4 +489,13 @@ def stats_simulation_route(
             sampleSizeOverride=sampleSizeOverride,
             proteinCorrection=proteinCorrection,
         ))
-        return HTMLResponse(content=simulation_html(payload, advanced=parse_advanced_plot_settings(advanced)))
+        from app.services.notebook_projection import render_projection
+        from app.services.notebook_provenance import NotebookProvenanceError
+
+        try:
+            content, token = render_projection(payload, advanced=parse_advanced_plot_settings(advanced))
+        except NotebookProvenanceError as exc:
+            note_notebook_unavailable(exc)
+            from app.services.stats_tools import simulation_html
+            return HTMLResponse(content=simulation_html(payload, advanced=parse_advanced_plot_settings(advanced)))
+        return with_notebook_token(HTMLResponse(content=content), token)

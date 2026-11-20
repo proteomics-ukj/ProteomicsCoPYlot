@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 
 @pytest.mark.parametrize("workflow", ["tests.yml", "cross-implementation.yml"])

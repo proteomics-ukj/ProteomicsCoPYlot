@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import logging
 
-import io
 from datetime import datetime
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.schemas.restore import RestoreExportRequest, RestoreImportResponse, RestoreMissingFile
@@ -50,7 +49,7 @@ def _reset_on_browser_load_enabled() -> bool:
 
 
 @router.post("/export")
-def export_restore_state(payload: RestoreExportRequest) -> StreamingResponse:
+def export_restore_state(payload: RestoreExportRequest) -> Response:
     try:
         blob = export_state_blob(ui_state=payload.uiState, portable=payload.portable)
     except RestoreStateError as exc:
@@ -67,8 +66,8 @@ def export_restore_state(payload: RestoreExportRequest) -> StreamingResponse:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     label = "portable_state" if payload.portable else "state"
     filename = f"copylot_{label}_{timestamp}.copylotstate"
-    return StreamingResponse(
-        io.BytesIO(blob),
+    return Response(
+        content=blob,
         media_type="application/octet-stream",
         headers={"Content-Disposition": attachment_disposition(filename)},
     )
@@ -84,8 +83,8 @@ async def import_restore_state(
     allow_local_paths = local_path_access_allowed(request)
     try:
         upload_limit = restore_upload_max_bytes()
-        blob = await stateFile.read(upload_limit + 1)
-        if len(blob) > upload_limit:
+        blob = await stateFile.read() if upload_limit is None else await stateFile.read(upload_limit + 1)
+        if upload_limit is not None and len(blob) > upload_limit:
             raise RestoreStateError("Restore file exceeds the configured upload limit.")
         state = await run_in_threadpool(decode_restore_blob, blob)
         replacement_map = await run_in_threadpool(

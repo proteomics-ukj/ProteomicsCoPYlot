@@ -11,7 +11,6 @@ app says so on the page. Rows constant throughout are still dropped as untestabl
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -19,7 +18,7 @@ import pytest
 
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 SAMPLES = ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"]
 
@@ -87,18 +86,16 @@ def test_r_matches_python(tmp_path):
 def test_the_web_app_flags_them_and_says_so():
     from fastapi.testclient import TestClient
 
+    from annotation_support import save_log2_protein_annotation
     from app.main import app
-    from app.schemas.annotation import AnnotationFilterConfig
-    from app.services.annotation_store import reset_all_annotations, save_annotation
+    from app.services.annotation_store import reset_all_annotations
     from app.services.dataset_store import reset_all_datasets, save_table_dataset
 
     frame, meta = _data()
     reset_all_datasets()
     reset_all_annotations()
     save_table_dataset("anova.tsv", "protein", frame)
-    save_annotation(kind="protein", source_data=frame, log2_data=frame, filtered_data=frame, metadata=meta,
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(frame, meta)
     try:
         with TestClient(app) as client:
             response = client.post("/api/stats/anova/run", json={"kind": "protein", "postHoc": "tukey"})

@@ -1,4 +1,4 @@
-"""Notebook memory budgets, scaled to physical/container RAM and configurable."""
+"""Soft notebook cache targets, scaled to RAM; never limits on an individual export."""
 import os
 
 from app.services.upload_limits import _memory_capacity_bytes

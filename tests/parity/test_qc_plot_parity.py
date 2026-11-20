@@ -2,7 +2,6 @@
 
 import json
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
@@ -10,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from app.services import peptide_tools
 from app.services.functions import raw_zero_to_nan

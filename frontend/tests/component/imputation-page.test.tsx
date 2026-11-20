@@ -64,6 +64,24 @@ beforeEach(() => {
 });
 
 describe("the imputation page", () => {
+  it("shows a filtering warning instead of requesting plots when annotation is missing", async () => {
+    serve(null);
+    vi.mocked(api.getCurrentAnnotation).mockRejectedValue(new Error("No annotation stored"));
+    render(<ImputationPage />);
+    await screen.findByText("Apply filtering in Data > Annotation before viewing imputation plots or imputing values.");
+    expect(screen.queryAllByRole("img")).toHaveLength(0);
+    expect((screen.getByRole("button", { name: "Impute Data Values" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(api.runImputation).not.toHaveBeenCalled();
+  });
+
+  it("does not render imputation plots when filtering retained no rows", async () => {
+    serve(null);
+    vi.mocked(api.getCurrentAnnotation).mockResolvedValue({ filteredRows: 0, imputation: null } as Awaited<ReturnType<typeof api.getCurrentAnnotation>>);
+    render(<ImputationPage />);
+    await screen.findByText("No rows remain after filtering. Adjust the filter in Data > Annotation before imputing values.");
+    expect(screen.queryAllByRole("img")).toHaveLength(0);
+  });
+
   it("draws the preview before anything is applied, and says nothing is stored", async () => {
     await mount(null);
     const urls = plotUrls();

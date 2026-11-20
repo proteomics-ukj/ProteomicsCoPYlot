@@ -48,7 +48,7 @@ backend/.venv/bin/python -m pip install -r backend/requirements-dev.txt
   and commit both lockfiles together. This records hashes without changing versions.
   For macOS release dispatches, select a `source_commit` containing the hash lock;
   historical commits without it cannot use the hash-enforcing installation step.
-- `backend/requirements.lock` is the exact Python 3.13 development and reference-test set. It contains the runtime set plus test and packaging tools.
+- `backend/requirements.lock` is the exact Python 3.13 development and reference-test set. It contains the runtime set plus test and packaging tools. Security CI audits both this lock and `backend/requirements-runtime.lock`.
 - `backend/requirements.txt` and `backend/requirements-dev.txt` retain bounded ranges for supported-version compatibility testing, including Python 3.11–3.12.
 
 Install an exact local reference environment with:
@@ -156,8 +156,10 @@ COPYLOT_ALLOWED_HOSTS=proteomics.institute.example
 ```
 
 **Large datasets.** Analysis runs in memory, so available RAM can limit dataset
-size even when an upload is accepted. Upload, restore and notebook-export limits
-are configurable in [Environment variables](ENVIRONMENT.md). Match your reverse
+size even when an upload is accepted. Notebook exports have no fixed size cap;
+their cache targets control eviction of older snapshots, not export eligibility.
+Available RAM still constrains generation. Upload and restore limits and notebook
+cache targets are configurable in [Environment variables](ENVIRONMENT.md). Match your reverse
 proxy's request limit to the upload limit, allowing for multipart overhead.
 
 ## Frontend modes
@@ -242,8 +244,7 @@ Get-AuthenticodeSignature .\dist\*.exe | Format-Table Path, Status, StatusMessag
 The **Build macOS release** workflow builds standard and AI analysis applications
 for Apple Silicon (`arm64`, macOS 14 runner) and Intel (`x86_64`, macOS 15 runner).
 After merging the workflow, open **Actions > Build macOS release > Run workflow**.
-The default source commit matches the existing `v1.0.0-beta.1` Windows/Linux
-builds. For a later release, enter its full merged `main` commit SHA.
+Enter the full merged `main` commit SHA used for the Windows and Linux builds of this release.
 
 Each job checks the bundle hashes, source revision, startup, frontend, version
 and AI mode before uploading an artifact. Download all four artifacts within
@@ -259,18 +260,35 @@ editions.
 
 ## Python package
 
+The pip package contains notebook-facing analysis functions, bundled example data,
+and reference tables. Install the browser application separately from GitHub Releases.
+Python 3.11 or newer is required; Python 3.11–3.13 are tested.
+
+After Beta 2 is published to PyPI, select it explicitly:
+
+```bash
+python -m pip install "proteomicscopylot[bio]==1.0.0b2"
+```
+
+An unpinned install normally selects a stable release. The explicit version above
+selects Beta 2 without changing prerelease selection for unrelated packages.
+Omit `[bio]` if FASTA parsing is not needed.
+
+To open the notebook included in the wheel, follow [Run the Python tutorial](../README.md#notebook-package).
+
 Install the notebook-facing package from a checkout of this repository:
 
 ```bash
 python -m pip install ".[bio]"
 ```
 
-Add `-e` for an editable development install. The `bio` extra adds Biopython for
-FASTA parsing (sequence coverage). Install the packages the R functions use from an
+For development, install it editable instead (`python -m pip install -e ".[bio]"`) so changes
+to `proteomicscopylot/` take effect without reinstalling. The `bio` extra adds Biopython for
+FASTA parsing (sequence coverage). Install the optional packages the R functions use from an
 R session:
 
 ```r
-install.packages(c("arrow", "hexbin", "plotly", "readxl", "scatterplot3d", "VennDiagram"))
+install.packages(c("arrow", "hexbin", "plotly", "readxl", "reticulate", "scatterplot3d", "VennDiagram"))
 # VSN normalization and the moderated t-tests (optional) come from Bioconductor:
 install.packages("BiocManager"); BiocManager::install(c("vsn", "limma"))
 ```
@@ -306,6 +324,24 @@ reported as warnings and should be reduced when their owning components are chan
 
 ## Viewer portal
 
+The checked-in `viewer_config.json` points to the canonical HEK293 example data in `proteomicscopylot/example_data/`. Local overrides and credentials belong under ignored `local/` files.
+
+Viewer portal credential template:
+
+```json
+{
+  "credentials": [
+    {
+      "password_pbkdf2_sha256": "GENERATED_VALUE",
+      "project": "HEK293",
+      "label": "HEK293 example"
+    }
+  ]
+}
+```
+
+Do not commit real passwords or private project inputs.
+
 For password-to-project routing, set:
 
 - `COPYLOT_VIEWER_MODE=1`
@@ -331,7 +367,7 @@ ports and a temporary locally trusted TLS certificate. It checks the hardened an
 container, R/VSN, authentication, isolation and portable save/restore, then removes its test
 container and temporary files. It does not validate the live nginx host or viewer deployment.
 
-Create the ignored local credential files before starting either Compose stack:
+Create the ignored local credential files before starting either Compose stack: Keep the resulting `*.local.json` files private.
 
 ```bash
 mkdir -p local
@@ -354,6 +390,7 @@ deployment re-hashes once and the weak forms are gone.
 
 Access-link and QR secrets are reusable bearer credentials. Put them only in named URL
 fragments such as `#tool=SECRET` or `#qr=SECRET`; query-string credentials are ignored.
+Query strings can expose credentials through proxy logs and referrers.
 Links made for older versions with `?tool=` or `?qr=` must be rewritten, and any token
 previously exposed in a query string should be rotated.
 
@@ -387,8 +424,9 @@ Regular save states retain absolute dataset paths so they can reopen data on the
 App-created temporary files are released when their last dataset is replaced or its session
 is discarded. Shared datasets, active file readers, and restore rollback snapshots retain
 their files. Original files opened by local path are not deleted. A regular save state that
-references a released upload will ask for that original file again; derived tables remain
-embedded in the save state. Startup cleanup removes crash leftovers older than seven days
+references a released upload will ask for that original file again. A save state stores what
+cannot be recomputed: the values imputation drew, not the imputed matrix, and a translated or
+collapsed table only when rebuilding it from its source would not give the same table. Startup cleanup removes crash leftovers older than seven days
 (configurable with `COPYLOT_TEMP_FILE_MAX_AGE_SECONDS`).
 Before sharing a state file or moving it to another system, use **Save Portable State**. Portable
 states omit those paths and prompt the user to supply the referenced dataset files during restore.

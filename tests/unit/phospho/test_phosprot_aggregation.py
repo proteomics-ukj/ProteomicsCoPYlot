@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.annotation import PhosprotAggregateRequest
 from app.services.phosprot_tools import transform_phosprot

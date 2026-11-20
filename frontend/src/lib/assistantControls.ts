@@ -1,7 +1,7 @@
 import { createContext, useContext, useId, useLayoutEffect, useRef, type ChangeEvent, type FocusEvent } from "react";
 import { flushSync } from "react-dom";
 
-export type ControlValue = string | boolean | string[];
+type ControlValue = string | boolean | string[];
 export type AssistantControl = {
   appearance?: boolean;
   optionLabels?: Record<string, string>;
@@ -18,7 +18,7 @@ const buttons = new Map<string, { read: () => AssistantControl | null; activate:
 export const AssistantControlScope = createContext(false);
 
 /** One control the assistant changed: what it was, and what it became. */
-export type AssistantChange = {
+type AssistantChange = {
   id: number; at: string; module: string; target: string; label: string; before: ControlValue; after: ControlValue;
   /** The chat request (one sent message) this change belongs to. */
   request: number;
@@ -213,7 +213,7 @@ export function useAssistantControl<T extends Element>(onChange: ((event: Change
 // transformed, and the session-wide phosphosite localization cutoff -- are never
 // offered to the assistant and never set by it, at any level, with or without
 // approval. The backend enforces the same rule (assistant_safety.py).
-export const PIPELINE_CONTROL = /\b(?:contaminant\w*|contaminants_\w*|matchAccessions|also match exact protein accessions when available|laboratory proteins|dust\/contact proteins|molecular weight markers\/standard proteins|sigma-aldrich universal protein standard|common viral contaminants|normali[sz]\w*|imput\w*|filter\w*|transform\w*|localization probability|valid values?)\b/i;
+const PIPELINE_CONTROL = /\b(?:contaminant\w*|contaminants_\w*|matchAccessions|also match exact protein accessions when available|laboratory proteins|dust\/contact proteins|molecular weight markers\/standard proteins|sigma-aldrich universal protein standard|common viral contaminants|normali[sz]\w*|imput\w*|filter\w*|transform\w*|localization probability|valid values?)\b/i;
 
 export function isPipelineControl(label: string): boolean {
   return PIPELINE_CONTROL.test(label);
@@ -425,7 +425,13 @@ export function applyAssistantControls(actions: AssistantAction[], onApplied: (r
     validate(control, action.value);
     flushSync(() => binding.apply(action.value));
     flushSync(() => controls.get(action.target)?.commit());
-    const actual = controls.get(action.target)?.read();
+    // A field that rebuilds its page when it changes (Dataset level remounts the plot's
+    // fields) is registered again under a new id: the same field is read there, so a
+    // change that happened is not reported as refused.
+    const field = action.target.replace(/ \[[^\]]*\]$/, "");
+    const rebuilt = controls.has(action.target) ? [] : [...controls.entries()]
+      .filter(([id]) => id.replace(/ \[[^\]]*\]$/, "") === field);
+    const actual = controls.get(action.target)?.read() ?? (rebuilt.length === 1 ? rebuilt[0][1].read() : undefined);
     if (actual && JSON.stringify(actual.value) !== JSON.stringify(control.value)) {
       recordAssistantChange({ target: action.target, label: control.label, before: control.value, after: actual.value });
       const receipt = `Set ${control.label} to ${JSON.stringify(actual.value)}.`;

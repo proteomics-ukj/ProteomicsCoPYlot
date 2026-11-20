@@ -11,6 +11,7 @@ from app.services.plot_export import (
     fit_figure_to_labels as _fit_figure_to_labels,
 )
 
+import re
 import hashlib
 import logging
 from functools import lru_cache
@@ -287,7 +288,19 @@ def protein_correction_options(kind: AnnotationKind) -> ProteinCorrectionOptions
         return ProteinCorrectionOptions()
     phospho, protein = data_source_availability("phospho"), data_source_availability("protein")
     shared = [source for source in DATA_SOURCES if phospho.get(source) and protein.get(source)]
-    return ProteinCorrectionOptions(available=bool(shared), dataSources=shared)
+    if not shared:
+        return ProteinCorrectionOptions()
+    # The correction matches sites to proteins by accession only (never by
+    # protein name), so a protein table without an accession column -- a
+    # Spectronaut PG report exported without PG.ProteinAccessions, say -- cannot
+    # be corrected against; do not offer what would fail at run time.
+    from app.services.annotation_store import get_annotation
+
+    annotation = get_annotation("protein")
+    log2 = getattr(annotation, "log2_data", None)
+    if not isinstance(log2, pd.DataFrame) or "ProteinAccessions" not in log2.columns:
+        return ProteinCorrectionOptions()
+    return ProteinCorrectionOptions(available=True, dataSources=shared)
 
 
 def _clean_feature_name(value: object) -> str:
@@ -312,8 +325,7 @@ def _gene_tokens(value: object) -> list[str]:
 
 def _normalize_highlight_token(value: object) -> str:
     token = str(value or "").strip().lower()
-    if token.endswith("_human"):
-        token = token[: -len("_human")]
+    token = re.sub(r"_(human|mouse)$", "", token)
     return token.strip()
 
 
@@ -351,6 +363,100 @@ def _volcano_untested_rows(
                    for reason, count in zip(reasons, out["n_pairs"])]
     out["reason"] = reasons
     return out
+
+
+def _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control):
+    if condition1 == condition2:
+        raise ValueError("Please select two different conditions.")
+    cols1 = metadata.loc[metadata["condition"] == condition1, "sample"].astype(str).tolist()
+    cols2 = metadata.loc[metadata["condition"] == condition2, "sample"].astype(str).tolist()
+    if not cols1 or not cols2:
+        raise ValueError("Selected conditions do not have any annotated samples.")
+    if paired:
+        cols1, cols2 = paired_sample_columns(metadata, condition1, condition2)
+    has_control1 = bool(condition1_control)
+    has_control2 = bool(condition2_control)
+    if has_control1 != has_control2:
+        raise ValueError("Control-corrected volcano analysis requires both control conditions.")
+    if has_control1 and has_control2:
+        control_conditions = [
+            str(condition1).strip(),
+            str(condition1_control).strip(),
+            str(condition2).strip(),
+            str(condition2_control).strip(),
+        ]
+        if len(set(control_conditions)) != len(control_conditions):
+            raise ValueError(
+                "Control-corrected volcano analysis requires four distinct conditions; "
+                "an experimental condition cannot be used as its own control."
+            )
+        ctrl1_cols = metadata.loc[metadata["condition"] == condition1_control, "sample"].astype(str).tolist()
+        ctrl2_cols = metadata.loc[metadata["condition"] == condition2_control, "sample"].astype(str).tolist()
+        if not ctrl1_cols or not ctrl2_cols:
+            raise ValueError("Selected control conditions do not have any annotated samples.")
+    else:
+        ctrl1_cols = []
+        ctrl2_cols = []
+
+    count_groups = {condition1: cols1, condition2: cols2}
+    if ctrl1_cols and ctrl2_cols:
+        count_groups[str(condition1_control)] = ctrl1_cols
+        count_groups[str(condition2_control)] = ctrl2_cols
+    return count_groups
+
+
+def _volcano_feature_frame(frame, label_column, groups):
+    selected_columns = [label_column, *(c for cols in groups.values() for c in cols)]
+    for extra in (
+        "GeneNames",
+        "Gene_group",
+        "ProteinNames",
+        "ProteinAccessions",
+        "PTM_Collapse_key",
+        "UPD_seq",
+        "Protein_group",
+        "Phosphoprotein",
+        "site_num",
+        "PTM_Collapse_keys",
+    ):
+        if extra in frame.columns and extra not in selected_columns:
+            selected_columns.append(extra)
+
+    return frame[[col for col in selected_columns if col in frame.columns]].copy()
+
+
+
+def _volcano_eligibility(df, groups, condition1, condition2, paired, condition1_control, condition2_control):
+    arr_x = df[groups[condition1]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    arr_y = df[groups[condition2]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+
+    control_arrays: list[np.ndarray] = []
+    if condition1_control and condition2_control:
+        arr_ctrl1 = df[groups[condition1_control]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+        arr_ctrl2 = df[groups[condition2_control]].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+        arr_x = arr_x - np.nanmean(arr_ctrl1, axis=1)[:, None]
+        arr_y = arr_y - np.nanmean(arr_ctrl2, axis=1)[:, None]
+        control_arrays = [arr_ctrl1, arr_ctrl2]
+
+    n1 = np.sum(~np.isnan(arr_x), axis=1)
+    n2 = np.sum(~np.isnan(arr_y), axis=1)
+    valid_mask = (n1 >= 2) & (n2 >= 2)
+    for control in control_arrays:
+        # A control variance cannot be estimated from a single value, and it is
+        # now part of the test statistic, so controls need replicates too.
+        valid_mask &= np.sum(np.isfinite(control), axis=1) >= 2
+    pair_counts = np.sum(np.isfinite(arr_x) & np.isfinite(arr_y), axis=1) if paired else None
+    if pair_counts is not None:
+        valid_mask &= pair_counts >= 2
+    return arr_x, arr_y, control_arrays, n1, n2, valid_mask, pair_counts
+
+
+def volcano_untested_table(data, metadata, condition1, condition2, *, kind="protein", identifier="workflow",
+                          paired=False, condition1_control=None, condition2_control=None):
+    groups = _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control)
+    df = _volcano_feature_frame(data, _resolve_label_column(kind, identifier, data), groups)
+    *_, valid, pairs = _volcano_eligibility(df, groups, condition1, condition2, paired, condition1_control, condition2_control)
+    return _volcano_untested_rows(df, groups, valid, pairs)
 
 
 def _volcano_dataframe(
@@ -397,97 +503,62 @@ def _volcano_dataframe(
         warnings = []
     else:
         raise ValueError("Volcano frame and metadata overrides must be provided together.")
-    label_column = _resolve_label_column(kind, identifier, frame)
-
-    cols1 = metadata.loc[metadata["condition"] == condition1, "sample"].astype(str).tolist()
-    cols2 = metadata.loc[metadata["condition"] == condition2, "sample"].astype(str).tolist()
-    if not cols1 or not cols2:
-        raise ValueError("Selected conditions do not have any annotated samples.")
     test_type = effective_test_type(
         test_type, with_controls=bool(condition1_control) and bool(condition2_control)
     )
     paired, variance = resolve_test_type(test_type)
-    if paired:
-        cols1, cols2 = paired_sample_columns(metadata, condition1, condition2)
-        note = unpaired_samples_note(metadata, condition1, condition2)
-        if note:
-            warnings = [*warnings, note]
+    groups = _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control)
+    mask = _imputation_mask(kind, source_used, frame, [c for cols in groups.values() for c in cols])
+    if protein_correction and kind == "phospho" and protein_stats is None:
+        protein_stats = protein_comparison_stats(
+            condition1=condition1, condition2=condition2, test_type=test_type, data_source=data_source,
+            condition1_control=condition1_control, condition2_control=condition2_control,
+        )
+    label, table, notices = _tested_volcano_table(
+        frame, metadata, mask, groups, kind=kind, identifier=identifier, condition1=condition1,
+        condition2=condition2, condition1_control=condition1_control, condition2_control=condition2_control,
+        paired=paired, variance=variance, p_value_threshold=p_value_threshold, log2fc_threshold=log2fc_threshold,
+        use_uncorrected=use_uncorrected, untested_out=untested_out, protein_correction=protein_correction,
+        protein_stats=protein_stats,
+    )
+    return source_used, label, table, [*warnings, *notices]
 
-    selected_columns = [label_column, *cols1, *cols2]
-    has_control1 = bool(condition1_control)
-    has_control2 = bool(condition2_control)
-    if has_control1 != has_control2:
-        raise ValueError("Control-corrected volcano analysis requires both control conditions.")
-    if has_control1 and has_control2:
-        control_conditions = [
-            str(condition1).strip(),
-            str(condition1_control).strip(),
-            str(condition2).strip(),
-            str(condition2_control).strip(),
-        ]
-        if len(set(control_conditions)) != len(control_conditions):
-            raise ValueError(
-                "Control-corrected volcano analysis requires four distinct conditions; "
-                "an experimental condition cannot be used as its own control."
-            )
-        ctrl1_cols = metadata.loc[metadata["condition"] == condition1_control, "sample"].astype(str).tolist()
-        ctrl2_cols = metadata.loc[metadata["condition"] == condition2_control, "sample"].astype(str).tolist()
-        if not ctrl1_cols or not ctrl2_cols:
-            raise ValueError("Selected control conditions do not have any annotated samples.")
-        selected_columns.extend([*ctrl1_cols, *ctrl2_cols])
-    else:
-        ctrl1_cols = []
-        ctrl2_cols = []
 
-    for extra in (
-        "GeneNames",
-        "Gene_group",
-        "ProteinNames",
-        "ProteinAccessions",
-        "PTM_Collapse_key",
-        "UPD_seq",
-        "Protein_group",
-        "Phosphoprotein",
-        "site_num",
-        "PTM_Collapse_keys",
-    ):
-        if extra in frame.columns and extra not in selected_columns:
-            selected_columns.append(extra)
+def calculate_table(data, metadata, imputation_mask=None, *, kind, condition1, condition2, identifier,
+                    p_value_threshold, log2fc_threshold, test_type, use_uncorrected, data_source="data",
+                    condition1_control=None, condition2_control=None, untested_out=None,
+                    protein_correction=False, protein_stats=None):
+    test_type = effective_test_type(
+        test_type, with_controls=bool(condition1_control) and bool(condition2_control)
+    )
+    paired, variance = resolve_test_type(test_type)
+    groups = _volcano_groups(metadata, condition1, condition2, paired, condition1_control, condition2_control)
+    label, table, warnings = _tested_volcano_table(
+        data, metadata, imputation_mask, groups, kind=kind, identifier=identifier, condition1=condition1,
+        condition2=condition2, condition1_control=condition1_control, condition2_control=condition2_control,
+        paired=paired, variance=variance, p_value_threshold=p_value_threshold, log2fc_threshold=log2fc_threshold,
+        use_uncorrected=use_uncorrected, untested_out=untested_out, protein_correction=protein_correction,
+        protein_stats=protein_stats,
+    )
+    return data_source, label, table, warnings
 
-    df = frame[[col for col in selected_columns if col in frame.columns]].copy()
-    count_groups = {condition1: cols1, condition2: cols2}
-    if ctrl1_cols and ctrl2_cols:
-        count_groups[str(condition1_control)] = ctrl1_cols
-        count_groups[str(condition2_control)] = ctrl2_cols
-    # The full frame, not df: phosphoprotein tables keep site_observed__ there.
-    mask = _imputation_mask(kind, source_used, frame.loc[df.index], [c for cols in count_groups.values() for c in cols])
+
+def _tested_volcano_table(frame, metadata, mask, count_groups, *, kind, identifier, condition1, condition2,
+                         condition1_control, condition2_control, paired, variance, p_value_threshold,
+                         log2fc_threshold, use_uncorrected, untested_out, protein_correction, protein_stats):
+    label_column = _resolve_label_column(kind, identifier, frame)
+    df = _volcano_feature_frame(frame, label_column, count_groups)
+    note = unpaired_samples_note(metadata, condition1, condition2) if paired else None
+    warnings = [note] if note else []
     imputed_columns: list[str] = []
     if mask is not None:
         counts = imputed_value_counts(mask, count_groups)
         imputed_columns = counts.columns.tolist()
         for column in imputed_columns:
             df[column] = counts[column].to_numpy()
-    arr_x = df[cols1].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-    arr_y = df[cols2].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-
-    control_arrays: list[np.ndarray] = []
-    if ctrl1_cols and ctrl2_cols:
-        arr_ctrl1 = df[ctrl1_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-        arr_ctrl2 = df[ctrl2_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-        arr_x = arr_x - np.nanmean(arr_ctrl1, axis=1)[:, None]
-        arr_y = arr_y - np.nanmean(arr_ctrl2, axis=1)[:, None]
-        control_arrays = [arr_ctrl1, arr_ctrl2]
-
-    n1_real = np.sum(~np.isnan(arr_x), axis=1)
-    n2_real = np.sum(~np.isnan(arr_y), axis=1)
-    valid_mask = (n1_real >= 2) & (n2_real >= 2)
-    for control in control_arrays:
-        # A control variance cannot be estimated from a single value, and it is
-        # now part of the test statistic, so controls need replicates too.
-        valid_mask &= np.sum(np.isfinite(control), axis=1) >= 2
-    pair_counts = np.sum(np.isfinite(arr_x) & np.isfinite(arr_y), axis=1) if paired else None
-    if pair_counts is not None:
-        valid_mask &= pair_counts >= 2
+    arr_x, arr_y, control_arrays, n1_real, n2_real, valid_mask, pair_counts = _volcano_eligibility(
+        df, count_groups, condition1, condition2, paired, condition1_control, condition2_control
+    )
     untested = int((~valid_mask).sum())
     if untested:
         # These rows leave the test silently otherwise, and they are often the
@@ -572,10 +643,7 @@ def _volcano_dataframe(
         if se is None:
             raise ValueError("Protein correction needs a standard error for every site; this test gives none.")
         if protein_stats is None:
-            protein_stats = protein_comparison_stats(
-                condition1=condition1, condition2=condition2, test_type=test_type, data_source=data_source,
-                condition1_control=condition1_control, condition2_control=condition2_control,
-            )
+            raise ValueError("Protein correction needs the protein comparison table (protein_stats).")
         corrected = _apply_protein_correction(df, log2fc, se, dof, pvals, protein_stats)
         log2fc, pvals, protein_matched, protein_ambiguous, protein_log2fc, protein_pvals, se, dof = corrected
         unmatched = int((~protein_matched & ~protein_ambiguous).sum())
@@ -637,7 +705,7 @@ def _volcano_dataframe(
         result["n_pairs"] = n_diff.astype(int)
     # Imputation counts go last, after the statistics they qualify.
     result = result[[c for c in result.columns if c not in imputed_columns] + imputed_columns]
-    return source_used, label_column, result, warnings
+    return label_column, result, warnings
 
 
 def protein_comparison_stats(
@@ -890,15 +958,8 @@ def _volcano_marker_style(
             "color": advanced_text(advanced, color_key) or palette[significance],
             "shape": resolve_marker_shape(advanced_text(advanced, "markerShape")),
         }
-    # The ring follows the general marker size until it is set on its own
-    # (setting the general size in the panel clears it, as for the classes);
-    # the default ring is a little larger than the default dot so it shows.
-    general_size = advanced_optional_number(advanced, "markerSize")
     style["_highlight"] = {
-        "size": advanced_size(
-            advanced, "volcanoHighlightSize",
-            general_size + 4.0 if general_size is not None else 10.0,
-        ),
+        "width": max(.1, advanced_number(advanced, "volcanoHighlightWidth", 1.0)),
         "color": advanced_text(advanced, "volcanoHighlightColor") or "#22c55e",
         "legend": _advanced_bool(advanced, "volcanoHighlightLegend", True),
         "label": advanced_text(advanced, "volcanoHighlightLegendLabel") or "Highlighted",
@@ -936,7 +997,7 @@ def _volcano_top_hits(
         wanted.append(subset.head(int(count)))
     if not wanted:
         return volcano_df.head(0)
-    return pd.concat(wanted, ignore_index=True)
+    return pd.concat(wanted)
 
 
 def _volcano_figure(
@@ -954,6 +1015,8 @@ def _volcano_figure(
     advanced: dict | None = None,
     highlight_outline: bool = True,
     highlight_labels: bool = False,
+    label_top_up: int = 0,
+    label_top_down: int = 0,
 ):
     """The interactive volcano. `highlight_labels` is accepted for parity with the
     static figure and ignored: hovering a point names it."""
@@ -964,6 +1027,8 @@ def _volcano_figure(
         significance: str(style[significance]["color"]) for significance in VOLCANO_COLORS
     }
     normalized_highlights = {_normalize_highlight_token(term) for term in highlight_terms if _normalize_highlight_token(term)}
+
+    top_indices = _volcano_top_hits(volcano_df, label_column=label_column, up=label_top_up, down=label_top_down).index
 
     def is_highlighted(value: object) -> bool:
         if not normalized_highlights or not highlight_outline:
@@ -1019,17 +1084,18 @@ def _volcano_figure(
         return "<br>".join(parts)
 
     fig = go.Figure()
+    has_highlights = False
     for significance, color in color_mapping.items():
         subset = volcano_df[volcano_df["significance"] == significance].copy()
         if subset.empty:
             continue
         subset["_hover"] = subset.apply(build_hover_text, axis=1)
-        subset["highlighted"] = subset[label_column].apply(is_highlighted)
+        subset["highlighted"] = highlight_outline & (subset[label_column].apply(is_highlighted) | subset.index.isin(top_indices))
         for highlighted, suffix in ((False, ""), (True, f" ({style['_highlight']['label']})")):
-            part = subset[subset["highlighted"] == highlighted]
+            part = subset[subset["highlighted"]] if highlighted else subset
             if part.empty:
                 continue
-            size = style["_highlight"]["size"] if highlighted else style[significance]["size"]
+            size = style[significance]["size"]
             marker = {
                 "color": color,
                 "size": size,
@@ -1039,7 +1105,8 @@ def _volcano_figure(
                 ),
             }
             if highlighted:
-                marker["line"] = {"color": style["_highlight"]["color"], "width": 2}
+                has_highlights = True
+                marker["line"] = {"color": style["_highlight"]["color"], "width": style["_highlight"]["width"]}
                 # A highlighted point is one the user went looking for, so it is
                 # drawn at full strength whatever its class opacity is.
                 marker["opacity"] = 1.0
@@ -1050,11 +1117,18 @@ def _volcano_figure(
                     mode="markers",
                     marker=marker,
                     name=f"{significance}{suffix}",
-                    showlegend=bool(style["_highlight"]["legend"]) if highlighted else True,
+                    showlegend=not highlighted,
+                    legendgroup=significance,
                     text=part["_hover"],
                     hovertemplate="%{text}<br>log2FC=%{x:.3f}<br>-log10 p=%{y:.3f}<extra></extra>",
                 )
             )
+
+    if has_highlights and style["_highlight"]["legend"]:
+        fig.add_scatter(x=[None], y=[None], mode="markers", hoverinfo="skip",
+            marker={"size": 6, "symbol": "circle-open", "color": style["_highlight"]["color"],
+                    "line": {"width": style["_highlight"]["width"]}},
+            name=str(style["_highlight"]["label"]), legendgroup="_copylot_highlight_legend", showlegend=True)
 
     y_line = float(-np.log10(max(p_value_threshold, 1e-300)))
     max_y = max(y_line, float(volcano_df["neg_log10_selected_pval"].max()) if not volcano_df.empty else y_line)
@@ -1100,9 +1174,6 @@ _LABEL_OFFSETS = (
     (0, 34), (0, -36), (30, 14), (-30, 14),
     (0, 50), (0, -52), (44, 22), (-44, 22),
 )
-# Beyond this distance the connection between label and point stops being
-# obvious, so a leader line is drawn.
-_LABEL_LEADER_AFTER = 20.0
 
 
 def _place_volcano_labels(
@@ -1113,6 +1184,9 @@ def _place_volcano_labels(
     label_column: str,
     fontsize: float,
     color: str = "#111827",
+    connector: bool = True,
+    connector_color: str = "#000000",
+    connector_width: float = 0.5,
 ) -> int:
     """Label the named points without letting the labels land on each other.
 
@@ -1125,8 +1199,8 @@ def _place_volcano_labels(
     every box already placed; otherwise it is moved to the next candidate
     position. Labels are placed most-significant first, so the hit that matters
     most gets the position closest to its point and the crowding is pushed
-    outward onto the less important ones. A label that ends up far from home
-    gets a leader line. One that cannot be placed at all is dropped rather than
+    outward onto the less important ones. Each label gets an optional connector
+    to its point. One that cannot be placed at all is dropped rather than
     drawn on top of something -- returning the count so the caller can say so.
     """
     if hits.empty or label_column not in hits.columns:
@@ -1134,18 +1208,20 @@ def _place_volcano_labels(
 
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    placed: list[Any] = []
+    legend_artist = ax.get_legend()
+    placed: list[Any] = [legend_artist.get_window_extent(renderer)] if legend_artist is not None and legend_artist.get_visible() else []
     drawn = 0
 
     ordered = hits.sort_values("neg_log10_selected_pval", ascending=False, kind="mergesort")
     for row in ordered.itertuples():
         text = str(getattr(row, label_column, "") or "").strip()
+        if label_column == "ProteinNames":
+            text = text.split(";", 1)[0].strip()
         if not text:
             continue
         point = (float(row.log2FC), float(row.neg_log10_selected_pval))
         annotation = None
         for x_offset, y_offset in _LABEL_OFFSETS:
-            distance = (x_offset**2 + y_offset**2) ** 0.5
             annotation = ax.annotate(
                 text,
                 point,
@@ -1157,14 +1233,14 @@ def _place_volcano_labels(
                 va="bottom" if y_offset >= 0 else "top",
                 zorder=5,
                 arrowprops=(
-                    {"arrowstyle": "-", "color": "#9ca3af", "linewidth": 0.5,
+                    {"arrowstyle": "-", "color": connector_color, "linewidth": connector_width,
                      "shrinkA": 1.0, "shrinkB": 2.0}
-                    if distance > _LABEL_LEADER_AFTER
+                    if connector
                     else None
                 ),
             )
             box = annotation.get_window_extent(renderer=renderer)
-            inside = box.x0 >= 0 and box.y0 >= 0 and box.x1 <= fig.bbox.x1 and box.y1 <= fig.bbox.y1
+            inside = ax.bbox.contains(box.x0, box.y0) and ax.bbox.contains(box.x1, box.y1)
             # Cushioned, and more so vertically: two labels whose boxes merely
             # touch still read as one run of text at this size.
             cushioned = box.expanded(1.04, 1.35)
@@ -1255,14 +1331,16 @@ def _volcano_png_figure(
     picked = volcano_df.head(0)
     if normalized_highlights and label_column in volcano_df.columns:
         picked = volcano_df[volcano_df[label_column].apply(is_highlighted)]
+    top = _volcano_top_hits(volcano_df, label_column=label_column, up=label_top_up, down=label_top_down)
+    picked = volcano_df.loc[volcano_df.index.isin(picked.index) | volcano_df.index.isin(top.index)]
     if highlight_outline and not picked.empty:
         ax.scatter(
             picked["log2FC"],
             picked["neg_log10_selected_pval"],
-            s=marker_area(float(style["_highlight"]["size"])),
+            s=[marker_area(float(style[significance]["size"])) for significance in picked["significance"]],
             facecolors="none",
             edgecolors=str(style["_highlight"]["color"]),
-            linewidths=1.2,
+            linewidths=float(style["_highlight"]["width"]),
             label=str(style["_highlight"]["label"]) if style["_highlight"]["legend"] else "_nolegend_",
             zorder=4,
         )
@@ -1310,17 +1388,7 @@ def _volcano_png_figure(
     # display coordinates, and `tight_layout` moves the axes -- so labels chosen
     # before it are checked against positions the figure does not end up having,
     # and land on each other anyway.
-    hits = volcano_df.head(0)
-    if label_top_up > 0 or label_top_down > 0:
-        hits = _volcano_top_hits(
-            volcano_df, label_column=label_column, up=label_top_up, down=label_top_down
-        )
-    if highlight_labels and not picked.empty:
-        # The union, one label per feature: a highlighted gene that is also a
-        # top hit is labelled once (`_volcano_top_hits` resets the index, so
-        # the match is on the label itself).
-        extra = picked.loc[~picked[label_column].isin(hits[label_column])] if not hits.empty else picked
-        hits = pd.concat([hits, extra], ignore_index=True)
+    hits = picked if highlight_labels else volcano_df.head(0)
     if not hits.empty:
         _place_volcano_labels(
             fig,
@@ -1328,6 +1396,9 @@ def _volcano_png_figure(
             hits,
             label_column=label_column,
             fontsize=max(4.0, advanced_number(advanced, "volcanoLabelSize", 7.0)),
+            connector=(advanced or {}).get("volcanoLabelConnector") is not False,
+            connector_color=advanced_text(advanced, "volcanoLabelConnectorColor") or "#000000",
+            connector_width=max(0.0, advanced_number(advanced, "volcanoLabelConnectorWidth", 0.5)),
         )
     return fig, plt
 
@@ -1403,11 +1474,12 @@ def volcano_png(
 
 def volcano_html(
     payload: VolcanoRequest | VolcanoControlRequest, advanced: dict | None = None,
-    *, highlight_outline: bool = True,
+    *, highlight_outline: bool = True, label_top_up: int = 0, label_top_down: int = 0,
 ) -> str:
     """The same volcano as the interactive page."""
     df, figure_arguments = _volcano_inputs(payload)
-    fig = _volcano_figure(df, **figure_arguments, advanced=advanced, highlight_outline=highlight_outline)
+    fig = _volcano_figure(df, **figure_arguments, advanced=advanced, highlight_outline=highlight_outline,
+                          label_top_up=label_top_up, label_top_down=label_top_down)
     fig.update_layout(**advanced_plotly_layout(advanced))
     return _plotly_html(fig)
 
@@ -1894,6 +1966,7 @@ def _anova_heatmap_figure(
     # the cluster strip -- in a column of their own, sized to the longest label,
     # so they never run into the colour bar.
     row_label_texts: list[str] = []
+    row_label_indices = np.array([], dtype=int)
     row_label_size = 0.0
     row_label_width = 0.0
     if clustered and row_labels:
@@ -1902,8 +1975,19 @@ def _anova_heatmap_figure(
         else:
             row_label_texts = [str(value) for value in plot_df.index.tolist()]
         heatmap_height_pt = 9.2 * 72 * 0.62
-        auto_size = min(7.0, max(2.0, 0.8 * heatmap_height_pt / max(len(row_label_texts), 1)))
+        auto_size = min(7.0, max(6.0, 0.8 * heatmap_height_pt / max(len(row_label_texts), 1)))
         row_label_size = advanced_number(advanced, "rowLabelSize", 0.0) or auto_size
+        # Drawing thousands of overlapping ticks repeatedly during auto-layout
+        # can take minutes. Space only the labels, never remove heatmap rows.
+        label_capacity = max(1, min(250, int(heatmap_height_pt / max(1.3 * row_label_size, 1))))
+        row_label_indices = np.linspace(0, len(row_label_texts) - 1,
+            min(len(row_label_texts), label_capacity), dtype=int)
+        if len(row_label_indices) < len(row_label_texts):
+            fig._copylot_notice += (
+                f". Showing {len(row_label_indices):,} of {len(row_label_texts):,} row labels for readability; "
+                "all rows remain in the heatmap and result table. Select a smaller cluster to see more names."
+            )
+        row_label_texts = [row_label_texts[index] for index in row_label_indices]
         longest = max((len(text) for text in row_label_texts), default=0)
         row_label_width = min(0.6, max(0.04, longest * row_label_size * 0.6 / 72 / 9.0))
 
@@ -1974,7 +2058,7 @@ def _anova_heatmap_figure(
     ax.set_xticklabels(x_labels, rotation=90, fontsize=5)
     if row_label_texts:
         ax.yaxis.tick_right()
-        ax.set_yticks(np.arange(len(row_label_texts)))
+        ax.set_yticks(row_label_indices)
         ax.set_yticklabels(
             row_label_texts,
             fontsize=row_label_size,
@@ -2256,16 +2340,35 @@ def _validate_enrichment_kind(kind: AnnotationKind) -> None:
         )
 
 
-def _genes_from_values(values: list[object]) -> list[str]:
-    """Every member of every value, once, sorted.
+def _explicit_gene_tokens(values):
+    """Every member of an explicitly supplied gene list, once, sorted.
 
-    A protein group "A;B" used to contribute only "A":
-    hits and background were consistent with each other, but a group's other
-    members were silently absent from the universe. All members count now, for
-    every source (volcano, control volcano, ANOVA cluster, pasted lists) and in
-    the pip and R packages alike.
+    One raw string is pasted text: split on `;`, `,` and whitespace. A list is
+    already itemised: each item splits on `;` and `,` only, so an identifier
+    that itself contains a space (the mouse GO table has three isoform ids
+    such as "mERBB4/iso:JM-A CYT-2") survives when passed as one item.
     """
-    return sorted({gene for value in values for gene in _gene_tokens(value) if gene})
+    if isinstance(values, str):
+        return sorted({gene for token in _gene_tokens(values) for gene in token.split()})
+    return sorted({gene for entry in values for gene in _gene_tokens(entry)})
+
+
+def _genes_from_values(values: list[object]) -> list[str]:
+    """The leading member of every value, once, sorted.
+
+    One quantified feature is one draw from the urn. A protein group "A;B"
+    contributes its leading member only, for hits and background alike and for
+    every source (volcano, control volcano, ANOVA cluster); the
+    pip and R packages apply the same rule. Counting every member (beta.2
+    pre-release) inflated the query size and the overlaps of paralog families
+    such as histone clusters, which is anti-conservative for their terms.
+    """
+    leading = set()
+    for value in values:
+        tokens = [gene for gene in _gene_tokens(value) if gene]
+        if tokens:
+            leading.add(tokens[0])
+    return sorted(leading)
 
 
 def _prepare_ora_universe(
@@ -2513,9 +2616,8 @@ def run_enrichment_from_list(payload: ListEnrichmentRequest) -> ListEnrichmentRe
     if payload.minTermSize > payload.maxTermSize:
         raise ValueError("Minimum term size cannot be larger than maximum term size.")
 
-    # Pasted lists may hold "A;B" groups too: every member counts.
-    cleaned_genes = _genes_from_values(list(payload.genes))
-    cleaned_background = _genes_from_values(list(payload.backgroundGenes))
+    cleaned_genes = _explicit_gene_tokens(list(payload.genes))
+    cleaned_background = _explicit_gene_tokens(list(payload.backgroundGenes))
     if payload.backgroundMode == "experiment" and not cleaned_background:
         raise ValueError(
             "Provide the tested-gene background for experiment-specific ORA, "
@@ -3042,11 +3144,11 @@ def pathway_heatmap_png(
             heatmap_data, context="pathway heatmap"
         )
         heatmap_data = heatmap_data.loc[pathway_completeness.kept]
-    if cluster_rows and heatmap_data.shape[0] > 1:
+    if cluster_matrix is not None and cluster_rows and heatmap_data.shape[0] > 1:
         row_order = leaves_list(linkage(pdist(cluster_matrix), method="average"))
         heatmap_data = heatmap_data.iloc[row_order]
         cluster_matrix = cluster_matrix[row_order]
-    if cluster_cols and heatmap_data.shape[1] > 1:
+    if cluster_matrix is not None and cluster_cols and heatmap_data.shape[1] > 1:
         col_order = leaves_list(linkage(pdist(cluster_matrix.T), method="average"))
         heatmap_data = heatmap_data.iloc[:, col_order]
 
@@ -3334,24 +3436,41 @@ def simulation_html(payload: SimulationRequest, advanced: dict | None = None) ->
     return _plotly_html(fig)
 
 
+# These API responses contain JSON records for every feature and sample.
+# Keep one immutable representation and give each caller its own typed rows.
+def _cache_stats_response(compute, response_type):
+    from functools import wraps
+    from pydantic_core import to_json
+    from app.services.runtime_cache import cached_call
+
+    @wraps(compute)
+    def wrapped(payload):
+        def encode():
+            return to_json(compute(payload).model_dump(), inf_nan_mode="constants")
+
+        encoded = cached_call(compute.__module__ + "." + compute.__name__, payload, encode, copy_result=False)
+        return response_type.model_validate_json(encoded)
+    return wrapped
+
+
+run_volcano = _cache_stats_response(run_volcano, VolcanoResultResponse)
+run_volcano_control = _cache_stats_response(run_volcano_control, VolcanoResultResponse)
+run_anova = _cache_stats_response(run_anova, AnovaResultResponse)
+run_simulation = _cache_stats_response(run_simulation, SimulationResultResponse)
+
+
 apply_cached_wrappers(
     globals(),
     [
         "statistical_options",
-        "run_volcano",
-        "run_volcano_control",
-        "run_anova",
         "anova_png",
         "volcano_html",
-        "volcano_control_html",
         "volcano_png",
-        "volcano_control_png",
         "pathway_options",
         "run_enrichment",
         "run_enrichment_from_list",
         "ora_plot_png",
         "pathway_heatmap_png",
-        "run_simulation",
         "simulation_html",
     ],
 )

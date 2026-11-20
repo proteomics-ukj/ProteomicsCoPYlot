@@ -2,12 +2,12 @@
 import ast
 import json
 from functools import lru_cache
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
+from app.schemas.stats import EnrichmentTerm
 
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_styling, portable_output_format, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
 from app.services.notebook_volcano import volcano_source
 
 GO_ATTRIBUTION = (
@@ -18,6 +18,68 @@ GO_ATTRIBUTION = (
     'from the GO Consortium release recorded in data/db/README.md and data/reference-sources/manifest.json '
     'of the CoPYlot repository; serialized as Parquet for this export. No warranties. '
     'The original database checksum is recorded in provenance; resource checksums identify this export.\n').encode()
+
+
+@lru_cache(maxsize=1)
+def gene_list_source():
+    table = '''
+def gene_list_terms_table(database, genes, background_genes=None, *, organism="Homo sapiens",
+                         input_source="manual", named_list="", top_n=10, min_term_size=20,
+                         max_term_size=300, adj_p_value_cutoff=0.05):
+    genes = _explicit_gene_tokens(genes)
+    background = None if background_genes is None else _explicit_gene_tokens(background_genes)
+    if background is not None and (not background or set(genes).difference(background)):
+        raise ValueError("The experiment background must include all query genes.")
+    result = calculate_enrichment(database, genes, background, min_term_size=min_term_size,
+        max_term_size=max_term_size, top_n=top_n, adj_p_value_cutoff=adj_p_value_cutoff)
+    size = len(result["annotatedBackground"])
+    context = dict(method="ORA", organism=organism, inputSource=input_source, namedList=named_list,
+                   submittedGeneCount=len(genes), backgroundMode="global" if background is None else "experiment",
+                   backgroundSize=size if background is None else len(background), annotatedBackgroundSize=size,
+                   correctionMethod="Benjamini-Hochberg", testedTermCount=result["counts"]["searchSpace"],
+                   **result["counts"], adjPValueCutoff=adj_p_value_cutoff, minTermSize=min_term_size,
+                   maxTermSize=max_term_size, topN=top_n)
+    return pd.DataFrame([{**context, **term, "intersectingGenes": ",".join(term["intersectingGenes"])}
+                         for term in result["terms"]], columns=[*context, *TERM_COLUMNS])
+'''
+    table = table.replace("TERM_COLUMNS", repr(list(EnrichmentTerm.model_fields)))
+    source = merge_source(ora_source().code, extract_notebook_source(volcano_source().code, ("_gene_tokens",)).code,
+                          function_definition(module_source("stats_tools.py"), "_explicit_gene_tokens"), table)
+    return extract_notebook_source(source, ("gene_list_terms_table",))
+
+
+def capture_gene_list(payload, result):
+    import pandas as pd
+    from app.services import stats_tools
+    from app.services.session_context import get_session_id
+    from app.services.viewer_policy import notebook_exports_blocked
+
+    if notebook_exports_blocked():
+        return ""
+    database = stats_tools.load_go_db(payload.organism)[["ontology", "term", "description", "genes"]]
+    settings = dict(input_source=payload.inputSource, named_list=payload.namedList, organism=result.organism,
+                    top_n=payload.topN, min_term_size=payload.minTermSize, max_term_size=payload.maxTermSize,
+                    adj_p_value_cutoff=payload.adjPValueCutoff)
+    original = [term.model_dump() for term in result.terms]
+    recipe = NotebookRecipe(plot_name="Gene List Enrichment", original_filename="", source=gene_list_source(),
+        settings=settings, provenance={"inputReplay": "submitted-gene-list", "databaseSha256": result.databaseSha256},
+        resources={"input.parquet": dataframe_bytes(pd.DataFrame({"gene": payload.genes})),
+                   "metadata.parquet": dataframe_bytes(pd.DataFrame({"gene": payload.backgroundGenes})),
+                   "database.parquet": dataframe_bytes(database), "GO_ATTRIBUTION.txt": GO_ATTRIBUTION,
+                   "terms.json": json.dumps(original).encode()},
+        input_explanation="The submitted gene list and its Gene Ontology database are included.",
+        calculation="from IPython.display import display\n"
+            "database = read_resource_table(RESOURCES / 'database.parquet')\n"
+            + ("background = metadata['gene'].tolist()\n" if payload.backgroundMode == "experiment" else "background = None\n") +
+            "table = functions.gene_list_terms_table(database, data['gene'].tolist(), background, **settings)\n"
+            f"expected = pd.DataFrame(json.loads((RESOURCES / 'terms.json').read_text()), columns={list(EnrichmentTerm.model_fields)!r})\n"
+            "expected['intersectingGenes'] = expected['intersectingGenes'].map(','.join)\n"
+            "pd.testing.assert_frame_equal(table[expected.columns], expected, check_exact=True)\n"
+            "table.to_csv('ora_terms.csv', index=False)\ndisplay(table)\n"
+            "Path('ora_query_genes.txt').write_text('\\n'.join(functions._explicit_gene_tokens(data['gene'])), encoding='utf-8', newline='')\n"
+            "if background is not None:\n"
+            "    Path('ora_background_genes.txt').write_text('\\n'.join(functions._explicit_gene_tokens(background)), encoding='utf-8', newline='')")
+    return capture_notebook(get_session_id(), recipe)
 
 
 @lru_cache(maxsize=3)
@@ -42,14 +104,15 @@ def ora_source(upstream=None):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and any(
             isinstance(part, ast.Name) and (part.id.startswith("_ORA_") or part.id == "_POINTS_TO_CM")
             for part in ast.walk(node)))
-    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines()
-                        if not line.startswith("from app."))
+    styling = portable_styling()
     calculation = '''
 def calculate_enrichment(database, query_genes, background_genes, *, min_term_size=20,
-                         max_term_size=300, top_n=10, adj_p_value_cutoff=0.05):
+                         max_term_size=300, top_n=10, adj_p_value_cutoff=0.05, universe=None):
     if min_term_size > max_term_size:
         raise ValueError("Minimum term size cannot be larger than maximum term size.")
-    background, eligible = prepare_universe(database, background_genes, min_term_size, max_term_size)
+    if universe is None:
+        universe = prepare_universe(database, background_genes, min_term_size, max_term_size)
+    background, eligible = universe
     counts = {}
     terms = _enrichment_terms(query_genes, top_n, adj_p_value_cutoff, background, eligible, counts)
     return {"terms": [vars(term) for term in terms], "counts": counts,
@@ -70,7 +133,13 @@ def export_term_rows(result, request, direction):
         keys = ['testType', 'pValueThreshold', 'log2fcThreshold', 'useUncorrected']
     keys += ['adjPValueCutoff', 'minTermSize', 'maxTermSize']
     context.update({key: request[key] for key in keys})
-    return [dict(context, **term) for term in result[f'{direction}Terms']]
+    rows = []
+    for term in result[f'{direction}Terms']:
+        row = dict(context, ontology=term['source'])
+        row.update({key: value for key, value in term.items() if key != 'source'})
+        row['intersectingGenes'] = ','.join(term['intersectingGenes'])
+        rows.append(row)
+    return rows
 '''
     code = merge_source(
         "import numpy as np\nimport pandas as pd\nfrom types import SimpleNamespace\nfrom scipy.stats import hypergeom",
@@ -120,12 +189,10 @@ def export_term_rows(result, request, direction):
 
 @lru_cache(maxsize=3)
 def ora_module(upstream=None):
-    module = ModuleType(f"_copylot_portable_ora_{upstream or 'terms'}")
-    sys.modules[module.__name__] = module
-    exec(ora_source(upstream).code, module.__dict__)
-    return module
+    return portable_module(f"_copylot_portable_ora_{upstream or 'terms'}", lambda: ora_source(upstream))
 
 
+@cached_notebook_render
 def render_ora(payload, *, direction, advanced=None, width_cm=26, height_cm=12, dpi=300, table_only=False):
     from app.schemas.stats import AnovaRequest
     from app.services import stats_tools
@@ -166,8 +233,9 @@ def render_ora(payload, *, direction, advanced=None, width_cm=26, height_cm=12, 
     queries, tested = module.select_queries(data, metadata, mask, settings)
     database = stats_tools.load_go_db(payload.organism)[['ontology', 'term', 'description', 'genes']].copy(deep=True)
     background = tested if payload.backgroundMode == 'experiment' else None
+    universe = module.prepare_universe(database, background, payload.minTermSize, payload.maxTermSize)
     for key, genes in queries.items():
-        calculated = module.calculate_enrichment(database, genes, background, **settings['enrichment'])
+        calculated = module.calculate_enrichment(database, genes, background, universe=universe, **settings['enrichment'])
         if (genes != result[f'{key}Genes'] or calculated['terms'] != result[f'{key}Terms']
                 or calculated['counts'] != result['termCounts'][key]
                 or len(calculated['annotatedBackground']) != result['annotatedBackgroundSize']):
@@ -176,11 +244,8 @@ def render_ora(payload, *, direction, advanced=None, width_cm=26, height_cm=12, 
         raise NotebookProvenanceError("The ORA background changed; render again.")
     module._ora_direction_texts(SimpleNamespace(**settings['request']), SimpleNamespace(**result), direction, advanced)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         content = b'' if table_only else module.render_plot(result, settings['request'], **settings['figure'])
-    finally:
-        module.plot_output_format.reset(format_token)
     resources = {'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
         'database.parquet': dataframe_bytes(database), 'result.json': json.dumps(result, allow_nan=False).encode(),
         'GO_ATTRIBUTION.txt': GO_ATTRIBUTION}

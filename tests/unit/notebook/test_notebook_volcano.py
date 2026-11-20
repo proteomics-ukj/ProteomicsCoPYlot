@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import pandas as pd
@@ -31,7 +29,7 @@ def test_volcano_statistics_and_standalone_plot_match_app(inputs, tmp_path, test
     payload = cls(kind='protein', condition1='A', condition2='B', dataSource=source,
                   testType=test_type, identifier='genes', highlightTerms=['G3'],
                   useUncorrected=test_type == 'unpaired_welch', **extra)
-    options = dict(dpi=80, label_top_up=2, label_top_down=2,
+    options = dict(dpi=80, label_top_up=2, label_top_down=2, highlight_labels=True,
                    advanced={'volcanoNsColor': '#8899aa', 'conditionLabels': {'A': 'Treatment'}})
     expected = stats_tools.volcano_png(payload, **options)
     actual, token = render_volcano(payload, **options)
@@ -47,12 +45,14 @@ def test_volcano_statistics_and_standalone_plot_match_app(inputs, tmp_path, test
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == actual
+    untested = pd.read_parquet(io.BytesIO(recipe.resources['untested.parquet']))
+    if not untested.empty:
+        assert (tmp_path / 'reproduced_not_tested.csv').read_text() == untested.to_csv(index=False).replace('\r\n', '\n')
     if test_type.startswith('moderated'):
         assert '|' in recipe.settings['limma_runtime'], 'the R and limma versions are recorded'
         assert 'limma' in recipe.input_explanation
@@ -61,8 +61,7 @@ def test_volcano_statistics_and_standalone_plot_match_app(inputs, tmp_path, test
                                 "(setattr(functions, 'limma_runtime_version', lambda: '0.0.0|0.0.0'), None)[1] or functions.calculate_table(", 1)
         altered = altered.replace("assert functions.limma_runtime_version()",
                                   "functions.limma_runtime_version = lambda: '0.0.0|0.0.0'\nassert functions.limma_runtime_version()", 1)
-        result = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + altered],
-                                cwd=tmp_path, capture_output=True, text=True, timeout=90)
+        result = replay_cells(altered, tmp_path, timeout=90)
         assert result.returncode != 0 and 'recorded R and Bioconductor limma' in result.stderr
 
 
@@ -165,10 +164,9 @@ def test_interactive_volcano_matches_traces_and_replays_offline(inputs, tmp_path
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'reproduced.html').read_text(encoding='utf-8') == html
 

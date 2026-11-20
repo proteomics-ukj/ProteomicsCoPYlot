@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services import viewer_bootstrap
 

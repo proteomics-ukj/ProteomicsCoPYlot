@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.stats import AnovaRequest, SimulationRequest
 from app.services import stats_tools as st

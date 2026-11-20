@@ -97,7 +97,7 @@ def select_matrix(kind, data_source="data") -> tuple[str, pd.DataFrame, pd.DataF
             )
     return source, frame, metadata
 
-def _select_matrix_all_rows(kind, data_source="data") -> tuple[str, pd.DataFrame, pd.DataFrame]:
+def _select_matrix_all_rows(kind, data_source="data", *, annotation=None) -> tuple[str, pd.DataFrame, pd.DataFrame]:
     """The matrix an analysis runs on, before the phosphosite cutoff.
 
     Returns the resolved name, the frame and the metadata. Every unavailable or
@@ -112,7 +112,8 @@ def _select_matrix_all_rows(kind, data_source="data") -> tuple[str, pd.DataFrame
             f"{str(data_source)!r}. Choose one of: {', '.join(DATA_SOURCES)}."
         )
 
-    annotation = annotation_store.get_annotation(kind)
+    if annotation is None:
+        annotation = annotation_store.get_annotation(kind)
     if annotation is None or annotation.metadata.empty:
         raise ValueError(
             f"No annotation metadata available for {kind}. Generate annotation first."

@@ -31,6 +31,66 @@
         "additionalProperties": false,
         "description": "One plot's appearance overrides. Absent means the plot's own choice.",
         "properties": {
+          "abundanceHighlightColor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightcolor"
+          },
+          "abundanceHighlightLegend": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightlegend"
+          },
+          "abundanceHighlightLegendLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightlegendlabel"
+          },
+          "abundanceHighlightWidth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancehighlightwidth"
+          },
+          "abundanceLabelSize": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Abundancelabelsize"
+          },
           "axisLabelFontFamily": {
             "anyOf": [
               {
@@ -425,6 +485,54 @@
             "default": null,
             "title": "Correlationcolormap"
           },
+          "distributionNoteText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnotetext"
+          },
+          "distributionNoteVisible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnotevisible"
+          },
+          "distributionNoteXOffset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnotexoffset"
+          },
+          "distributionNoteYOffset": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Distributionnoteyoffset"
+          },
           "fontFamily": {
             "anyOf": [
               {
@@ -557,6 +665,22 @@
             ],
             "default": null,
             "title": "Legendframe"
+          },
+          "legendPlacement": {
+            "anyOf": [
+              {
+                "enum": [
+                  "below",
+                  "right"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legendplacement"
           },
           "legendTextColor": {
             "anyOf": [
@@ -1039,7 +1163,7 @@
             "default": null,
             "title": "Volcanohighlightlegendlabel"
           },
-          "volcanoHighlightSize": {
+          "volcanoHighlightWidth": {
             "anyOf": [
               {
                 "type": "number"
@@ -1049,7 +1173,43 @@
               }
             ],
             "default": null,
-            "title": "Volcanohighlightsize"
+            "title": "Volcanohighlightwidth"
+          },
+          "volcanoLabelConnector": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volcanolabelconnector"
+          },
+          "volcanoLabelConnectorColor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volcanolabelconnectorcolor"
+          },
+          "volcanoLabelConnectorWidth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Volcanolabelconnectorwidth"
           },
           "volcanoLabelSize": {
             "anyOf": [
@@ -3141,7 +3301,8 @@
                 2,
                 3,
                 4,
-                5
+                5,
+                6
               ],
               "type": "integer"
             },
@@ -4378,7 +4539,7 @@
             "type": "boolean"
           },
           "seed": {
-            "default": 1337,
+            "default": 1,
             "maximum": 2147483647.0,
             "minimum": 0.0,
             "title": "Seed",
@@ -4430,6 +4591,15 @@
             "title": "Genes",
             "type": "array"
           },
+          "inputSource": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "list"
+            ],
+            "title": "Inputsource",
+            "type": "string"
+          },
           "maxTermSize": {
             "default": 300,
             "minimum": 1.0,
@@ -4441,6 +4611,11 @@
             "minimum": 1.0,
             "title": "Mintermsize",
             "type": "integer"
+          },
+          "namedList": {
+            "default": "",
+            "title": "Namedlist",
+            "type": "string"
           },
           "organism": {
             "default": "human",
@@ -4508,6 +4683,11 @@
             },
             "title": "Genes",
             "type": "array"
+          },
+          "notebookToken": {
+            "default": "",
+            "title": "Notebooktoken",
+            "type": "string"
           },
           "organism": {
             "default": "Homo sapiens",
@@ -5478,35 +5658,6 @@
         "title": "PeptidePathResponse",
         "type": "object"
       },
-      "PeptideQuantityOptionsResponse": {
-        "properties": {
-          "columns": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Columns",
-            "type": "array"
-          },
-          "defaultColumn": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Defaultcolumn"
-          },
-          "requiresSelection": {
-            "default": false,
-            "title": "Requiresselection",
-            "type": "boolean"
-          }
-        },
-        "title": "PeptideQuantityOptionsResponse",
-        "type": "object"
-      },
       "PhosphoLocalizationCutoffRequest": {
         "properties": {
           "cutoff": {
@@ -6306,6 +6457,60 @@
         "title": "SummaryMetadataTable",
         "type": "object"
       },
+      "SummaryPlotEntry": {
+        "description": "One plot added to the report, as it was when it was added.\n\n`request` holds the page's options for that plot, `render` how it was drawn\n(type Normal or Interactive, widthCm, heightCm, dpi) and `advanced` its\nadvanced appearance. The report has a protein and a phosphosite level, so\nthose are the levels an entry can belong to.",
+        "properties": {
+          "advanced": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advanced"
+          },
+          "kind": {
+            "enum": [
+              "protein",
+              "phospho"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "render": {
+            "additionalProperties": true,
+            "title": "Render",
+            "type": "object"
+          },
+          "request": {
+            "additionalProperties": true,
+            "title": "Request",
+            "type": "object"
+          },
+          "type": {
+            "enum": [
+              "volcano",
+              "pearson",
+              "venn",
+              "anova",
+              "ora",
+              "single_box",
+              "single_line"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "kind"
+        ],
+        "title": "SummaryPlotEntry",
+        "type": "object"
+      },
       "SummaryReportContext": {
         "properties": {
           "advancedPlotMode": {
@@ -6334,6 +6539,13 @@
             "title": "Completenesssettings",
             "type": "object"
           },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryPlotEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
           "qcAdvancedSettingsByTab": {
             "additionalProperties": {
               "additionalProperties": true,
@@ -6356,6 +6568,17 @@
             },
             "title": "Volcanoentries",
             "type": "array"
+          },
+          "workflowPlotSettings": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "title": "Workflowplotsettings",
+            "type": "object"
           }
         },
         "title": "SummaryReportContext",
@@ -6368,6 +6591,11 @@
             "title": "Author",
             "type": "string"
           },
+          "includeSampleLabels": {
+            "default": false,
+            "title": "Includesamplelabels",
+            "type": "boolean"
+          },
           "reportContext": {
             "anyOf": [
               {
@@ -6377,6 +6605,13 @@
                 "type": "null"
               }
             ]
+          },
+          "sampleLabels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Samplelabels",
+            "type": "object"
           },
           "textEntries": {
             "additionalProperties": {
@@ -6455,6 +6690,13 @@
           },
           "protein": {
             "$ref": "#/components/schemas/SummaryMetadataTable"
+          },
+          "sampleNames": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Samplenames",
+            "type": "array"
           }
         },
         "required": [
@@ -7396,7 +7638,7 @@
   },
   "info": {
     "title": "Proteomics CoPYlot API",
-    "version": "1.0.0b1"
+    "version": "1.0.0b2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7548,6 +7790,20 @@
                 "phosprot"
               ],
               "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "selected",
+              "enum": [
+                "selected",
+                "all"
+              ],
+              "title": "Scope",
               "type": "string"
             }
           }
@@ -9686,27 +9942,6 @@
         ]
       }
     },
-    "/api/peptide/quantity-options": {
-      "get": {
-        "operationId": "get_peptide_quantity_options_api_peptide_quantity_options_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PeptideQuantityOptionsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Get Peptide Quantity Options",
-        "tags": [
-          "peptide"
-        ]
-      }
-    },
     "/api/peptide/sequence-coverage": {
       "get": {
         "operationId": "get_sequence_coverage_api_peptide_sequence_coverage_get",
@@ -10073,7 +10308,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#1f77b4",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -10250,7 +10485,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#1f77b4",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -10580,7 +10815,7 @@
             "name": "color1",
             "required": false,
             "schema": {
-              "default": "#1f77b4",
+              "default": "",
               "title": "Color1",
               "type": "string"
             }
@@ -10590,7 +10825,7 @@
             "name": "color2",
             "required": false,
             "schema": {
-              "default": "#ff7f0e",
+              "default": "",
               "title": "Color2",
               "type": "string"
             }
@@ -10600,7 +10835,7 @@
             "name": "color3",
             "required": false,
             "schema": {
-              "default": "#2ca02c",
+              "default": "",
               "title": "Color3",
               "type": "string"
             }
@@ -10884,7 +11119,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#2563eb",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -11011,7 +11246,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 187,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -11126,7 +11361,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11183,6 +11418,87 @@
           }
         },
         "summary": "Imputation After Route",
+        "tags": [
+          "plots"
+        ]
+      }
+    },
+    "/api/plots/imputation/{kind}/applied-notebook": {
+      "get": {
+        "operationId": "applied_imputation_notebook_route_api_plots_imputation__kind__applied_notebook_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "protein",
+                "phospho",
+                "phosprot"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "normalization",
+            "required": false,
+            "schema": {
+              "default": "separate",
+              "title": "Normalization",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "showImputationDraw",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Showimputationdraw",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "advanced",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Advanced",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Applied Imputation Notebook Route Api Plots Imputation  Kind  Applied Notebook Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Applied Imputation Notebook Route",
         "tags": [
           "plots"
         ]
@@ -11261,7 +11577,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11386,7 +11702,7 @@
             "name": "seed",
             "required": false,
             "schema": {
-              "default": 1337,
+              "default": 1,
               "title": "Seed",
               "type": "integer"
             }
@@ -11450,6 +11766,7 @@
     },
     "/api/plots/notebooks/{token}.zip": {
       "get": {
+        "description": "One export as a ZIP.\n\n`matrices` ships the data matrices of deterministic steps, `imputed` the full\nimputed matrix. Both are off unless the user turned them on in Settings: the\nexport then holds only what cannot be recomputed from the original file.",
         "operationId": "download_plot_notebook_api_plots_notebooks__token__zip_get",
         "parameters": [
           {
@@ -11459,6 +11776,26 @@
             "schema": {
               "title": "Token",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "matrices",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Matrices",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "imputed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Imputed",
+              "type": "boolean"
             }
           }
         ],
@@ -11710,99 +12047,6 @@
         ]
       }
     },
-    "/api/plots/peptide/rt-interactive.html": {
-      "get": {
-        "operationId": "peptide_rt_interactive_route_api_plots_peptide_rt_interactive_html_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "addLine",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Addline",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "header",
-            "required": false,
-            "schema": {
-              "default": true,
-              "title": "Header",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "randomSeed",
-            "required": false,
-            "schema": {
-              "default": 69,
-              "title": "Randomseed",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "widthCm",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "title": "Widthcm",
-              "type": "number"
-            }
-          },
-          {
-            "in": "query",
-            "name": "heightCm",
-            "required": false,
-            "schema": {
-              "default": 15,
-              "title": "Heightcm",
-              "type": "number"
-            }
-          },
-          {
-            "in": "query",
-            "name": "advanced",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Advanced",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Peptide Rt Interactive Route",
-        "tags": [
-          "plots"
-        ]
-      }
-    },
     "/api/plots/peptide/rt.png": {
       "get": {
         "operationId": "peptide_rt_route_api_plots_peptide_rt_png_get",
@@ -11812,7 +12056,7 @@
             "name": "method",
             "required": false,
             "schema": {
-              "default": "Hexbin Plot",
+              "default": "Scatter Plot",
               "title": "Method",
               "type": "string"
             }
@@ -11832,7 +12076,7 @@
             "name": "bins",
             "required": false,
             "schema": {
-              "default": 1000,
+              "default": 100,
               "title": "Bins",
               "type": "integer"
             }
@@ -11852,7 +12096,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -12062,7 +12306,7 @@
             "name": "colorClassI",
             "required": false,
             "schema": {
-              "default": "#2563eb",
+              "default": "",
               "title": "Colorclassi",
               "type": "string"
             }
@@ -12072,7 +12316,7 @@
             "name": "colorNotClassI",
             "required": false,
             "schema": {
-              "default": "#f59e0b",
+              "default": "",
               "title": "Colornotclassi",
               "type": "string"
             }
@@ -12082,7 +12326,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -12254,7 +12498,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#87CEEB",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -12615,7 +12859,7 @@
             "name": "color",
             "required": false,
             "schema": {
-              "default": "#87CEEB",
+              "default": "",
               "title": "Color",
               "type": "string"
             }
@@ -13206,6 +13450,72 @@
               "title": "Advanced",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topHigh",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tophigh",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topLow",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Toplow",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightOutline",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Highlightoutline",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightLabels",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Highlightlabels",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "identifier",
+            "required": false,
+            "schema": {
+              "default": "workflow",
+              "enum": [
+                "workflow",
+                "genes"
+              ],
+              "title": "Identifier",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -13319,6 +13629,72 @@
             "schema": {
               "default": "",
               "title": "Advanced",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topHigh",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tophigh",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topLow",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Toplow",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightOutline",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Highlightoutline",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "highlightLabels",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Highlightlabels",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "identifier",
+            "required": false,
+            "schema": {
+              "default": "workflow",
+              "enum": [
+                "workflow",
+                "genes"
+              ],
+              "title": "Identifier",
               "type": "string"
             }
           }
@@ -13862,7 +14238,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 187,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -14154,6 +14530,75 @@
         ]
       }
     },
+    "/api/plots/qc/{kind}/feature-cvs.csv": {
+      "get": {
+        "description": "The feature CVs as CSV (what the notebook export reproduces) or, for reading, as an Excel file.",
+        "operationId": "qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "protein",
+                "phospho",
+                "phosprot"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshot",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Snapshot",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "csv",
+              "enum": [
+                "csv",
+                "xlsx"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {},
+              "text/csv": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Qc Feature Cvs Route",
+        "tags": [
+          "plots"
+        ]
+      }
+    },
     "/api/plots/qc/{kind}/intensity-histogram.png": {
       "get": {
         "operationId": "qc_hist_route_api_plots_qc__kind__intensity_histogram_png_get",
@@ -14271,7 +14716,9 @@
               "enum": [
                 "protein",
                 "phospho",
-                "phosprot"
+                "phosprot",
+                "peptide",
+                "precursor"
               ],
               "title": "Kind",
               "type": "string"
@@ -14484,7 +14931,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -14711,7 +15158,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -14979,7 +15426,7 @@
             "name": "randomState",
             "required": false,
             "schema": {
-              "default": 42,
+              "default": 1,
               "title": "Randomstate",
               "type": "integer"
             }
@@ -15270,7 +15717,7 @@
             "name": "randomSeed",
             "required": false,
             "schema": {
-              "default": 69,
+              "default": 1,
               "title": "Randomseed",
               "type": "integer"
             }
@@ -17347,6 +17794,26 @@
           },
           {
             "in": "query",
+            "name": "labelTopUp",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopup",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labelTopDown",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopdown",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "advanced",
             "required": false,
             "schema": {
@@ -17857,6 +18324,26 @@
               "default": true,
               "title": "Highlightoutline",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labelTopUp",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopup",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "labelTopDown",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Labeltopdown",
+              "type": "integer"
             }
           },
           {

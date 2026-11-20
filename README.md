@@ -10,7 +10,7 @@ Proteomics CoPYlot is a React and FastAPI application for proteomics and phospho
 
 ## Capabilities
 
-- Upload wide-format quantitative tables; Spectronaut and DIA-NN column names are recognized automatically, and other exports can be mapped by naming the sample columns during annotation.
+- Upload wide-format quantitative tables; Spectronaut and DIA-NN column names are recognized automatically, and other exports can be mapped by naming the sample columns during annotation. Spectronaut peptide pivot, long and PTM site reports, MaxQuant `evidence.txt` and FragPipe combined protein, ion and peptide tables are read through adapters.
 - Annotate samples and manage protein, peptide, phosphosite, and phosphoprotein datasets.
 - Run completeness, quality-control, statistical, comparison, peptide, phospho, and single-protein workflows.
 - Generate interactive Plotly and static Matplotlib/Seaborn plots.
@@ -44,8 +44,8 @@ server. The browser interface connects to that server once it is ready.
 
 ## Quick start from source
 
-The current development release is **1.0.0 Beta 1** (planned GitHub tag
-`v1.0.0-beta.1`). Python metadata uses the equivalent version `1.0.0b1`.
+The current development release is **1.0.0 Beta 2** (planned GitHub tag
+`v1.0.0-beta.2`). Python metadata uses the equivalent version `1.0.0b2`.
 See [release versions](docs/RELEASING.md) for the naming convention.
 
 Install backend and frontend dependencies on Windows:
@@ -92,6 +92,8 @@ continues to populate the currently selected profile. Uploads above the five-pro
 are rejected before any profile is changed. Deleting a source profile also deletes its
 dependent derived profiles and frees a source-profile slot.
 
+Metadata can be converted to CoPYlot's upload format with an LLM using the [metadata conversion prompt](docs/metadata-conversion-prompt.md).
+
 ### AI providers and data handling
 
 The chat surface runs against a local [Ollama](https://ollama.com) instance by default, in which
@@ -122,6 +124,8 @@ specifications and write their own answers, whose numbers the application checks
 are the same at every level; see [Installation](docs/INSTALLATION.md#assistant-levels).
 
 
+See [AI conversation logs](docs/ai-conversation-logs.md) for inspecting and downloading the assistant activity record.
+
 ### Saving work
 
 Refreshing the analysis app starts a new analysis. After interaction, the browser
@@ -136,32 +140,38 @@ does not reset or show this analysis warning.
 
 ## Notebook package
 
-Install the Python package from a checkout of this repository:
+The pip package provides Python analysis and plotting functions for scripts and
+notebooks. The browser application is distributed separately through GitHub Releases.
+Python 3.11 or newer is required; Python 3.11–3.13 are tested.
 
-```bash
-python -m pip install ".[bio]"
+See [Python and R installation](docs/INSTALLATION.md#python-package) for the Beta 2 version pin, checkout and editable installs, and optional dependencies.
+
+```python
+from proteomicscopylot import notebook_functions as pcp
+
+data = pcp.load_example_data("protein")
+metadata = pcp.load_example_data("protein_metadata")
+filtered = pcp.filter_data(data, metadata, 3, "per_group")
+results = pcp.volcano_data_f(filtered, metadata, "WT", "GRK")
 ```
-
-For development, install it editable instead (`python -m pip install -e ".[bio]"`) so changes
-to `proteomicscopylot/` take effect without reinstalling. The `bio` extra adds Biopython for
-FASTA-based sequence coverage.
 
 Load the bundled HEK293 example with `load_example_data("protein")` (also `"phospho"`,
 `"phosphoprotein"`, `"protein_metadata"` and `"phospho_metadata"`); the R functions provide
 the same `load_example_data()`.
 
-Install the optional R packages the R functions use:
+**View the HEK293 example with plots and tables** · [Python notebook](examples/rendered/python.ipynb) · [R notebook](examples/rendered/r.ipynb)
 
-```r
-install.packages(c("arrow", "hexbin", "plotly", "readxl", "scatterplot3d", "VennDiagram"))
-# VSN normalization and the moderated t-tests (optional) come from Bioconductor:
-install.packages("BiocManager"); BiocManager::install(c("vsn", "limma"))
+**Run the Python tutorial.** Download [the example notebook](examples/example.ipynb) from the matching release checkout, or copy the exact version included in your installed Beta 2 wheel. In a new working folder:
+
+```bash
+python -m pip install jupyterlab
+python -c "from importlib.resources import files; open('example.ipynb','xb').write(files('proteomicscopylot').joinpath('example.ipynb').read_bytes())"
+python -m jupyterlab example.ipynb
 ```
 
-Examples:
+Select your CoPYlot Python environment and run all cells for the bundled experiment. The settings cell also supports your own tables, input scales, comparison groups and an optional results folder.
 
-- `examples/example.ipynb`
-- `examples/example.R`
+Run the [R example script](examples/example.R) from the checkout. For the shared table functions, set `RETICULATE_PYTHON` to the Python executable in your CoPYlot environment before starting R.
 
 The Python package, the R functions (`notebook_functions.R`, loaded with `source()`; it
 is a script, not an installable R package) and the app support the same core analysis
@@ -174,13 +184,19 @@ Cambridge cRAP reference and selectable categories. It is off by default and
 retains mixed protein groups; gene symbols are not matched.
 
 Most plots and tables, and the report, can be downloaded as a ZIP that holds a Jupyter
-notebook recreating them. Given the original upload, the notebook replays the recorded
-preprocessing (normalization, filtering, localization cutoff and phosphosite collapse) and
-checks that it reproduces the exact input matrix the app used. Outputs computed from
-imputed data are the exception: the ZIP ships that exact imputed matrix together with the
-imputation settings, and the random draws are not repeated. The last cell compares every
-figure byte for byte with the one CoPYlot produced, which requires the package versions in
-the ZIP's `requirements.txt` and the same fonts.
+notebook recreating them. By default the ZIP holds what cannot be recomputed: the code, the
+settings, the outputs, and for imputed data the values that were drawn. The notebook asks
+for the path of the original upload in its first cell, checks the file by a fingerprint of
+its content (a different file is reported, not refused), replays the recorded preprocessing
+(identifier translation, normalization, filtering, localization cutoff, phosphosite collapse)
+and places the drawn values; the imputation call is shown and run for comparison, never used.
+
+Two options under Settings, both off by default, add data to the ZIP: **Ship data matrices**
+includes the matrix each output was drawn from, and **Ship full imputed matrix** the whole
+imputed matrix. The notebook then runs as it is, and switches to the original file as soon as
+its path is filled in. The last cell always compares every figure byte for byte with the one
+CoPYlot produced, which requires the package versions in the ZIP's `requirements.txt` and
+the same fonts.
 
 The installable package includes:
 
@@ -196,11 +212,7 @@ implementations rather than reimplemented, so that "VSN" and "limma" in a Method
 section mean exactly those packages: VSN normalization (`vsn`, Huber et al. 2002)
 and the moderated t-tests (`limma`, Ritchie et al. 2015). The app runs them as a
 separate `Rscript` process and offers them only when R and the package are present;
-without R the corresponding options are hidden. Install once:
-
-```r
-install.packages("BiocManager"); BiocManager::install(c("vsn", "limma"))
-```
+without R the corresponding options are hidden. See the [R package installation commands](docs/INSTALLATION.md#python-package).
 
 The Settings page reports whether `Rscript` is available. Detection checks explicit CoPYlot/R environment variables, `PATH`, and common platform installation locations. The desktop
 bundles and the pip package do not include R; the Docker image does (R 4.2, Bioconductor 3.16).
@@ -209,67 +221,19 @@ CoPYlot calls them and does not copy or link their code.
 
 ## Architecture
 
-- `backend/`: FastAPI routes, schemas, services, and runtime stores.
-- `frontend/`: React/TypeScript UI and public assets.
-- `proteomicscopylot/`: notebook APIs and canonical bundled example data.
-- `examples/`: runnable notebook and R examples.
-- `docs/`: installation and architectural guidance.
-- `packaging/`: platform launchers and distribution builders.
-- `deploy/`: hosting and reverse-proxy examples.
-- `viewer_data/`: checked-in viewer examples and local/private project locations.
-- `data/`: intentionally versioned biological reference resources.
-
 See [Architecture](docs/ARCHITECTURE.md) for runtime flow and directory ownership.
 
 ## Viewer configuration
 
-The checked-in `viewer_config.json` points to the canonical HEK293 example data in `proteomicscopylot/example_data/`. Local overrides and credentials belong under ignored `local/` files.
-
-Viewer portal credential template:
-
-```json
-{
-  "credentials": [
-    {
-      "password_pbkdf2_sha256": "GENERATED_VALUE",
-      "project": "HEK293",
-      "label": "HEK293 example"
-    }
-  ]
-}
-```
-
-Do not commit real passwords or private project inputs.
-
-The Docker stacks also require local credential files. Copy the three checked-in
-`*.example.json` templates into `local/` as described in
-[Installation, Running, and Packaging](docs/INSTALLATION.md), replace their zero digests,
-and keep the resulting `*.local.json` files private.
-
-Tool and QR bearer links use URL fragments (`#tool=...` and `#qr=...`). Credentials in query
-strings are deliberately ignored because proxies and referrers can log them.
+See [Viewer portal setup](docs/INSTALLATION.md#viewer-portal) for the HEK293 defaults, credential example and private-file guidance, and [Docker credentials and access links](docs/INSTALLATION.md#docker) for deployment security.
 
 ## Docker
 
-```bash
-docker compose up -d --build
-docker compose -f docker-compose.viewer.yml up -d --build
-```
+See [Docker setup and commands](docs/INSTALLATION.md#docker) for the analysis and viewer stacks.
 
 ## Development
 
-Install development dependencies and run validation:
-
-```powershell
-.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
-npm.cmd --prefix frontend run build
-npm.cmd --prefix frontend run lint
-```
-
-For a reproducible Python 3.13 reference environment, install
-`backend/requirements.lock` and then install this package editable with
-`--no-deps`. Production Docker builds use the smaller
-`backend/requirements-runtime.lock`; security CI audits both exact locks.
+See [development setup](CONTRIBUTING.md#getting-set-up) and [checks](CONTRIBUTING.md#running-the-checks), plus the installation guide's [platform-specific dependencies](docs/INSTALLATION.md#install), [validation commands](docs/INSTALLATION.md#validation) and [reproducible dependency sets](docs/INSTALLATION.md#reproducible-dependency-sets).
 
 ## Methods and citations
 

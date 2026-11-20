@@ -54,3 +54,10 @@ match_sites_to_proteins = _core.match_sites_to_proteins
 protein_corrected_site_changes = _core.protein_corrected_site_changes
 
 contaminant_mask = _core.contaminant_mask
+
+COPYLOT_COLORS = _core.COPYLOT_COLORS
+copylot_colors = _core.copylot_colors
+
+UKJ_COLORS = _core.UKJ_COLORS
+MATPLOTLIB_TAB10 = _core.MATPLOTLIB_TAB10
+resolve_plot_colors = _core.resolve_plot_colors

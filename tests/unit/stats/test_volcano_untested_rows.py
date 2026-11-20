@@ -9,7 +9,6 @@ the tested rows are unchanged.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,7 +19,6 @@ from app.main import app
 from app.schemas.stats import VolcanoRequest
 from app.services import stats_tools
 
-ROOT = Path(__file__).resolve().parents[3]
 SAMPLES = ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "D1", "D2"]
 
 
@@ -110,11 +108,20 @@ def test_nothing_is_added_when_every_row_is_testable():
 
 @pytest.mark.parametrize("kind,total,untested", [("protein", 7490, 55), ("phospho", 11916, 1753)])
 def test_bundled_data_through_the_route_the_page_calls(example_project, kind, total, untested):
+    request = VolcanoRequest(kind=kind, condition1="GRK", condition2="WT").model_dump()
     with TestClient(app) as client:
-        response = client.post("/api/stats/volcano/run",
-                               json=VolcanoRequest(kind=kind, condition1="GRK", condition2="WT").model_dump())
+        response = client.post("/api/stats/volcano/run", json=request)
+        compact = client.post("/api/stats/volcano/run", json=request,
+                              headers={"Accept": "application/vnd.copylot.stats+json"})
     assert response.status_code == 200, response.text[:300]
     body = response.json()
+    assert compact.status_code == 200
+    packed = compact.json()
+    for key in ("rows", "untestedRows"):
+        table = packed[key]
+        assert table["columns"] == list(body[key][0])
+        packed[key] = [dict(zip(table["columns"], row, strict=True)) for row in table["values"]]
+    assert packed == body
     assert len(body["untestedRows"]) == untested
     assert body["totalRows"] + untested == total
     assert f"{untested:,} of {total:,} rows were not tested" in " ".join(body["warnings"])

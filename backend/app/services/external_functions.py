@@ -223,7 +223,7 @@ def peptideCollapse(data, cutoff=0.0, collapse_level='PG', *, progress=None):
         data, dropped = _finish_collapsed(data, fine_names)
         if dropped:
             emit(str(dropped) + ' site(s) without a value in any run were removed')
-        emit('Collapse done succesfully;' + ' ' + str(data.shape[0]) + ' ' + 'unique phosphosite profiles')
+        emit('Collapse done successfully;' + ' ' + str(data.shape[0]) + ' ' + 'unique phosphosite profiles')
         emit('Site values are the median of the log2 precursor intensities per run; '
              'localization is the maximum over runs and precursors, cutoff ' + str(cutoff))
         et = time.time()
@@ -247,7 +247,7 @@ def peptideCollapse(data, cutoff=0.0, collapse_level='PG', *, progress=None):
         data, dropped = _finish_collapsed(data, fine_names)
         if dropped:
             emit(str(dropped) + ' site(s) without a value in any run were removed')
-        emit('Collapse done succesfully;' + ' ' + str(data.shape[0]) + ' ' + 'unique phosphosite profiles')
+        emit('Collapse done successfully;' + ' ' + str(data.shape[0]) + ' ' + 'unique phosphosite profiles')
         emit('Site values are the median of the log2 precursor intensities per run; '
              'localization is the maximum over runs and precursors, cutoff ' + str(cutoff))
         et = time.time()

@@ -23,17 +23,14 @@ import { oraExportRows, oraListExportRows } from "../../src/features/stats/oraEx
 import { SimulationPanel } from "../../src/features/stats/SimulationPanel";
 import * as api from "../../src/lib/api";
 import type { EnrichmentResultResponse, ListEnrichmentResultResponse, StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "./apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "./apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("./apiMock")).mockApiModule(original));
 
 const PROTEIN = [{ value: "protein", label: "Protein" }];
-const OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B"],
-  samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] }, pairIdsBySample: {},
+const OPTIONS: StatisticalOptionsResponse = statisticalOptions({
   availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }],
-  warnings: [], availableDataSources: ["data"], defaultDataSource: "data",
-};
+});
 const TERM = {
   source: "BP", termId: "GO:1", name: "a process", termSize: 10, intersectionSize: 2, querySize: 5,
   geneRatio: 0.4, hitPercent: 20, pValue: 0.001, adjPValue: 0.01, intersectingGenes: ["G1", "G2"],
@@ -136,7 +133,7 @@ describe("removed on purpose", () => {
     // The hint style that rendered under a control, as opposed to the row
     // labels and in-card paragraphs that share its colour.
     expect(container.querySelectorAll("span.mt-1.block.text-slate-500").length).toBe(0);
-    for (const label of ["Dot size (pt)", "Dot outline width (0 = none)", "Hit label size (static plot)"]) {
+    for (const label of ["Dot size (pt)", "Dot outline width (0 = none)", "Highlighted label size (static plot)"]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
   });

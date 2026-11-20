@@ -6,7 +6,9 @@ import io
 import json
 import logging
 import os
+import re
 import stat
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +29,11 @@ from app.schemas.annotation import (
 )
 from app.services.managed_temp import open_private, private_temp_dir, write_private_bytes
 from app.services.temp_file_lifecycle import retain_temp_file, temporary_file_scope
-from app.services.annotation_processor import compute_annotation_from_metadata
+from app.services.annotation_processor import (
+    UPLOADED_METADATA_NOTICE,
+    annotation_filter_kwargs,
+    compute_annotation_from_metadata,
+)
 from app.services.annotation_store import (
     get_annotation,
     list_annotation_profiles,
@@ -92,14 +98,11 @@ DatasetKind = Literal["protein", "phospho", "phosprot", "peptide"]
 _TABLE_KINDS: tuple[TableKind, ...] = ("protein", "phospho", "phosprot")
 _DATASET_KINDS: tuple[DatasetKind, ...] = ("protein", "phospho", "phosprot", "peptide")
 _METADATA_KINDS: tuple[Literal["protein", "phospho"], ...] = ("protein", "phospho")
-_STATE_FORMAT = "copylot_state_v1"
-_DEFAULT_RESTORE_UPLOAD_LIMIT_BYTES = 64 * 1024 * 1024
-_DEFAULT_RESTORE_EXPANDED_LIMIT_BYTES = 256 * 1024 * 1024
-_DEFAULT_RESTORE_TABLE_MAX_ROWS = 5_000_000
-_DEFAULT_RESTORE_TABLE_MAX_COLUMNS = 50_000
-_DEFAULT_RESTORE_TABLE_MAX_CELLS = 50_000_000
-_DEFAULT_RESTORE_REPLACEMENT_MAX_FILES = 256
-_DEFAULT_RESTORE_MANIFEST_MAX_CHARS = 1_000_000
+_STATE_FORMAT = "copylot_state"
+_LEGACY_STATE_FORMAT = "copylot_state_v1"
+# The app version in which the layout of a save file last changed. It follows
+# docs/RELEASING.md and moves only with the layout, not with every release.
+_STATE_FORMAT_VERSION = "1.0.0b2"
 _READ_CHUNK_BYTES = 1024 * 1024
 LOGGER = logging.getLogger(__name__)
 RESTORE_COMPATIBILITY_NOTICE = (
@@ -124,57 +127,55 @@ def _current_restore_lock() -> RLock:
         return lock
 
 
-def restore_upload_max_bytes() -> int:
-    return env_int(
-        "COPYLOT_RESTORE_UPLOAD_MAX_BYTES",
-        _DEFAULT_RESTORE_UPLOAD_LIMIT_BYTES,
-        minimum=1,
-    )
+def _configured_limit(name: str) -> int | None:
+    """A restore limit, or None when the operator has not set one.
+
+    Saving and restoring are unlimited by default, so a large analysis can always
+    be saved and reopened. A server operator bounds them with the variables in
+    docs/ENVIRONMENT.md.
+    """
+    value = env_int(name, 0, minimum=1)
+    return value or None
 
 
-def restore_expanded_max_bytes() -> int:
-    return env_int(
-        "COPYLOT_RESTORE_EXPANDED_MAX_BYTES",
-        _DEFAULT_RESTORE_EXPANDED_LIMIT_BYTES,
-        minimum=1,
-    )
+def _exceeds(value: int, limit: int | None) -> bool:
+    return limit is not None and value > limit
 
 
-def restore_replacement_max_bytes() -> int:
-    return env_int("COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES", upload_max_bytes(), minimum=1)
+def restore_upload_max_bytes() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_UPLOAD_MAX_BYTES")
 
 
-def restore_replacements_total_max_bytes() -> int:
-    per_file = restore_replacement_max_bytes()
-    return env_int("COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES", per_file * 2, minimum=1)
+def restore_expanded_max_bytes() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_EXPANDED_MAX_BYTES")
 
 
-def restore_table_max_rows() -> int:
-    return env_int("COPYLOT_RESTORE_TABLE_MAX_ROWS", _DEFAULT_RESTORE_TABLE_MAX_ROWS, minimum=1)
+def restore_replacement_max_bytes() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES")
 
 
-def restore_table_max_columns() -> int:
-    return env_int("COPYLOT_RESTORE_TABLE_MAX_COLUMNS", _DEFAULT_RESTORE_TABLE_MAX_COLUMNS, minimum=1)
+def restore_replacements_total_max_bytes() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES")
 
 
-def restore_table_max_cells() -> int:
-    return env_int("COPYLOT_RESTORE_TABLE_MAX_CELLS", _DEFAULT_RESTORE_TABLE_MAX_CELLS, minimum=1)
+def restore_table_max_rows() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_TABLE_MAX_ROWS")
 
 
-def restore_replacement_max_files() -> int:
-    return env_int(
-        "COPYLOT_RESTORE_REPLACEMENT_MAX_FILES",
-        _DEFAULT_RESTORE_REPLACEMENT_MAX_FILES,
-        minimum=1,
-    )
+def restore_table_max_columns() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_TABLE_MAX_COLUMNS")
 
 
-def restore_manifest_max_chars() -> int:
-    return env_int(
-        "COPYLOT_RESTORE_MANIFEST_MAX_CHARS",
-        _DEFAULT_RESTORE_MANIFEST_MAX_CHARS,
-        minimum=1,
-    )
+def restore_table_max_cells() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_TABLE_MAX_CELLS")
+
+
+def restore_replacement_max_files() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_REPLACEMENT_MAX_FILES")
+
+
+def restore_manifest_max_chars() -> int | None:
+    return _configured_limit("COPYLOT_RESTORE_MANIFEST_MAX_CHARS")
 
 
 @dataclass
@@ -192,6 +193,7 @@ class PreparedRestoreInput:
     peptide_path_by_package: dict[str, tuple[str, str | None]]
     warnings: list[str]
     changed_datasets: set[tuple[str, TableKind]]
+    untranslated_datasets: set[tuple[str, TableKind]]
 
 
 @dataclass
@@ -233,7 +235,7 @@ def _validate_table_dimensions(row_count: int, column_count: int) -> None:
         (column_count, restore_table_max_columns(), "column", "COPYLOT_RESTORE_TABLE_MAX_COLUMNS"),
         (row_count * column_count, restore_table_max_cells(), "cell", "COPYLOT_RESTORE_TABLE_MAX_CELLS"),
     ):
-        if count > limit:
+        if _exceeds(count, limit):
             raise RestoreStateError(f"Restore table exceeds the configured {label} limit. Adjust {setting} to support this state.")
 
 
@@ -416,6 +418,181 @@ def _imputed_rows_mismatch(imputed: pd.DataFrame, filtered: pd.DataFrame | None,
     return None
 
 
+def _imputation_basis(filtered: pd.DataFrame | None, log2: pd.DataFrame | None) -> pd.DataFrame | None:
+    """The matrix imputation fills: the filtered one, or the log2 one without a filter."""
+    return filtered if filtered is not None else log2
+
+
+def _row_label_digest(frame: pd.DataFrame) -> tuple[str | None, str | None]:
+    label = next((c for c in _IMPUTATION_LABEL_COLUMNS if c in frame.columns), None)
+    if label is None:
+        return None, None
+    text = "\n".join(frame[label].astype(str).tolist())
+    return label, hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _observed_summary(basis: pd.DataFrame, columns: list[str]) -> dict[str, Any]:
+    values = basis[columns].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    return {
+        "columns": columns,
+        "missing": np.isnan(values).sum(axis=0).tolist(),
+        "columnSums": np.nansum(values, axis=0).tolist(),
+    }
+
+
+def _sparse_imputation_payload(
+    imputed: pd.DataFrame, basis: pd.DataFrame | None, samples: list[str],
+) -> dict[str, Any] | None:
+    """Only the values imputation drew, with what a restore needs to place them.
+
+    An imputed matrix is its basis with some cells filled. The basis is recomputed
+    from the data file on restore, so the save file carries the filled cells and
+    not the whole matrix. Returns None when the matrix is not its basis plus
+    numeric cells; the caller then stores the full matrix.
+    """
+    columns = [str(column) for column in imputed.columns]
+    if (
+        basis is None
+        or imputed.shape != basis.shape
+        or sorted(columns) != sorted(str(column) for column in basis.columns)
+        or len(set(columns)) != len(columns)
+    ):
+        return None
+    # Compared by column name; the saved matrix keeps its own column order.
+    basis = basis.set_axis([str(column) for column in basis.columns], axis=1)[columns]
+    cells: dict[str, dict[str, list[Any]]] = {}
+    for position, column in enumerate(columns):
+        saved, base = imputed.iloc[:, position], basis.iloc[:, position]
+        if pd.api.types.is_numeric_dtype(saved) and pd.api.types.is_numeric_dtype(base):
+            saved_values = saved.to_numpy(dtype=float)
+            base_values = base.to_numpy(dtype=float)
+            differs = ~((saved_values == base_values) | (np.isnan(saved_values) & np.isnan(base_values)))
+            if differs.any():
+                rows = np.flatnonzero(differs)
+                drawn = saved_values[rows]
+                if not np.isfinite(drawn).all():
+                    return None
+                cells[column] = {"rows": rows.tolist(), "values": drawn.tolist()}
+        elif not saved.astype(object).where(saved.notna(), None).equals(base.astype(object).where(base.notna(), None)):
+            return None
+    label, label_digest = _row_label_digest(basis)
+    return {
+        "rows": int(len(imputed)),
+        "columns": columns,
+        "labelColumn": label,
+        "labelSha256": label_digest,
+        "observed": _observed_summary(basis, [sample for sample in samples if sample in basis.columns]),
+        "sha256": _table_fingerprint(imputed),
+        "cells": cells,
+    }
+
+
+def _imputed_from_sparse(payload: Any, basis: pd.DataFrame | None) -> tuple[pd.DataFrame | None, str | None]:
+    """The imputed matrix of a save file, or why it no longer belongs to this basis."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("cells"), dict):
+        return None, "the saved imputed values are unreadable"
+    if basis is None:
+        return None, "the recomputed matrix is unavailable"
+    columns = [str(column) for column in basis.columns]
+    if payload.get("rows") != len(basis):
+        return None, f"it has {payload.get('rows')} rows while the recomputed matrix has {len(basis):,}"
+    saved_columns = payload.get("columns")
+    if (
+        not isinstance(saved_columns, list)
+        or len(set(columns)) != len(columns)
+        or sorted(str(column) for column in saved_columns) != sorted(columns)
+    ):
+        return None, "its columns are not the recomputed matrix's columns"
+    # The saved matrix keeps its own column order; the values are found by name.
+    basis = basis.set_axis(columns, axis=1)[[str(column) for column in saved_columns]]
+    columns = [str(column) for column in saved_columns]
+    label, label_digest = _row_label_digest(basis)
+    if payload.get("labelColumn") != label or payload.get("labelSha256") != label_digest:
+        return None, f"its {label or 'label'} rows are not the recomputed matrix's rows"
+    frame = basis.copy()
+    try:
+        for column, entry in payload["cells"].items():
+            position = columns.index(str(column))
+            rows = np.asarray(entry["rows"], dtype=int)
+            values = np.asarray(entry["values"], dtype=float)
+            if rows.shape != values.shape or (len(rows) and (rows.min() < 0 or rows.max() >= len(frame))):
+                return None, "the saved imputed values are unreadable"
+            filled = pd.to_numeric(frame.iloc[:, position], errors="coerce").to_numpy(dtype=float, copy=True)
+            filled[rows] = values
+            frame.isetitem(position, filled)
+    except (KeyError, TypeError, ValueError):
+        return None, "the saved imputed values are unreadable"
+    if payload.get("sha256") == _table_fingerprint(frame):
+        return frame, None
+    # Column sums and missing counts cannot establish cell-wise agreement:
+    # exchanging two measured values preserves both but changes the analysis.
+    # Sparse saves do not retain the observed cells for a tolerance comparison,
+    # so only a matching fingerprint can verify this reconstruction.
+    return None, "its reconstructed values do not match the saved matrix fingerprint"
+
+
+def _replay_translations(frame: pd.DataFrame, steps: Any) -> pd.DataFrame:
+    from app.services.id_translation import replay_id_translations
+
+    return replay_id_translations(frame, [
+        step if isinstance(step, dict) else step.model_dump() for step in steps or []
+    ])
+
+
+def _translated_file_matches(stored: Any, table_sha256: str, file_sha256: str | None) -> bool:
+    """Whether the dataset's file plus its recorded translations gives the loaded table."""
+    source_path = _optional_text(getattr(stored, "source_path", None))
+    if not source_path or not file_sha256:
+        return False
+    key = (file_sha256, table_sha256)
+    cached = getattr(stored, "_restore_replay_check", None)
+    if isinstance(cached, tuple) and cached[0] == key:
+        return bool(cached[1])
+    try:
+        rebuilt = _replay_translations(_read_table_from_path(source_path), stored.id_translations)
+        matches = _table_fingerprint(rebuilt) == table_sha256
+    except Exception:
+        matches = False
+    try:
+        setattr(stored, "_restore_replay_check", (key, matches))
+    except Exception:
+        pass
+    return matches
+
+
+def _collapse_source(lineage: Any) -> Literal["imputed", "non_imputed"]:
+    return "imputed" if str(lineage.source) == "imputed" else "non_imputed"
+
+
+def _phosprot_recompute_recipe(stored: Any, package_name: str, table_sha256: str) -> dict[str, Any] | None:
+    """How a restore rebuilds a collapsed phosphoprotein table, if it can.
+
+    The collapse is deterministic, so the table is left out of the save file when
+    collapsing the phosphosite annotation again gives exactly this table.
+    """
+    from app.services.phosprot_tools import collapse_phospho_annotation
+
+    lineage = getattr(stored, "phosprot_lineage", None)
+    if lineage is None:
+        return None
+    active = get_active_profile(package_name=package_name)
+    profiles = [active, *[name for name in _export_profile_names(package_name) if name != active]]
+    for profile_name in profiles:
+        phospho = get_annotation("phospho", package_name=package_name, metadata_profile_name=profile_name)
+        if phospho is None or phospho.metadata.empty:
+            continue
+        try:
+            frame, _ = collapse_phospho_annotation(
+                phospho, lineage.aggregation, _collapse_source(lineage), lineage.localizationCutoff or 0.0,
+            )
+            frame = _replay_translations(frame, stored.id_translations)
+        except Exception:
+            continue
+        if _table_fingerprint(frame) == table_sha256:
+            return {"type": "phosphoCollapse", "profile": profile_name}
+    return None
+
+
 def _coerce_phosprot_aggregation(payload: Any) -> str | None:
     """Accept only a known aggregation mode from a restored state file.
 
@@ -591,21 +768,53 @@ def _ensure_exportable_table_path(stored: Any) -> str | None:
     return resolved
 
 
+def _version_key(text: str) -> tuple[int, int, int, int, int] | None:
+    """Order release versions written as in docs/RELEASING.md (1.0.0b2, 1.0.0, 1.1.0)."""
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:-?(?:b|beta)\.?(\d+))?", text.strip().lower())
+    if match is None:
+        return None
+    major, minor, patch, beta = match.groups()
+    # A beta sorts before its release.
+    return (int(major), int(minor), int(patch), 0 if beta is not None else 1, int(beta or 0))
+
+
+def _check_state_format(parsed: dict[str, Any]) -> None:
+    state_format = str(parsed.get("format", "")).strip()
+    if state_format == _LEGACY_STATE_FORMAT:
+        return
+    if state_format != _STATE_FORMAT:
+        raise RestoreStateError(
+            f"Unsupported restore format '{state_format or 'unknown'}'. Expected '{_STATE_FORMAT}'."
+        )
+    format_version = str(parsed.get("formatVersion", "")).strip()
+    saved, supported = _version_key(format_version), _version_key(_STATE_FORMAT_VERSION)
+    if saved is None or supported is None:
+        raise RestoreStateError(
+            f"Unsupported restore format version '{format_version or 'unknown'}'."
+        )
+    if saved > supported:
+        raise RestoreStateError(
+            f"This save state needs app version {format_version} or newer. "
+            f"Current app version is {APP_VERSION}."
+        )
+
+
 def _parse_state_blob(blob: bytes) -> dict[str, Any]:
     if not blob:
         raise RestoreStateError("Restore file is empty.")
-    if len(blob) > restore_upload_max_bytes():
+    if _exceeds(len(blob), restore_upload_max_bytes()):
         raise RestoreStateError("Restore file exceeds the configured upload limit.")
+    expanded_limit = restore_expanded_max_bytes()
     raw: bytes
     if blob.startswith(b"\x1f\x8b"):
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(blob), mode="rb") as handle:
-                raw = handle.read(restore_expanded_max_bytes() + 1)
+                raw = handle.read() if expanded_limit is None else handle.read(expanded_limit + 1)
         except Exception as exc:
             raise RestoreStateError(f"Restore file has invalid gzip data: {exc}") from exc
     else:
         raw = blob
-    if len(raw) > restore_expanded_max_bytes():
+    if _exceeds(len(raw), expanded_limit):
         raise RestoreStateError("Expanded restore state exceeds the configured size limit.")
     try:
         parsed = json.loads(raw.decode("utf-8"))
@@ -613,11 +822,7 @@ def _parse_state_blob(blob: bytes) -> dict[str, Any]:
         raise RestoreStateError(f"Restore file is invalid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise RestoreStateError("Restore file must contain a JSON object.")
-    state_format = str(parsed.get("format", "")).strip()
-    if state_format != _STATE_FORMAT:
-        raise RestoreStateError(
-            f"Unsupported restore format '{state_format or 'unknown'}'. Expected '{_STATE_FORMAT}'."
-        )
+    _check_state_format(parsed)
     return parsed
 
 
@@ -633,13 +838,13 @@ def describe_restore_version_warning(state: dict[str, Any]) -> str | None:
 
 def _serialize_state_payload(payload: dict[str, Any]) -> bytes:
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(raw) > restore_expanded_max_bytes():
+    if _exceeds(len(raw), restore_expanded_max_bytes()):
         raise RestoreStateError(
             "Expanded restore state exceeds the configured size limit. "
             "Adjust COPYLOT_RESTORE_EXPANDED_MAX_BYTES to support this state."
         )
     blob = gzip.compress(raw, compresslevel=6)
-    if len(blob) > restore_upload_max_bytes():
+    if _exceeds(len(blob), restore_upload_max_bytes()):
         raise RestoreStateError(
             "Restore file exceeds the configured upload limit. "
             "Adjust COPYLOT_RESTORE_UPLOAD_MAX_BYTES to support this state."
@@ -677,6 +882,22 @@ def _export_profile_names(package_name: str) -> list[str]:
     return ordered
 
 
+def _imputed_export(stored_annotation: Any) -> dict[str, Any]:
+    imputed = getattr(stored_annotation, "imputed_data", None)
+    if not isinstance(imputed, pd.DataFrame) or imputed.empty:
+        return {"imputedFrame": None}
+    basis = _imputation_basis(
+        getattr(stored_annotation, "filtered_data", None), getattr(stored_annotation, "log2_data", None),
+    )
+    samples = stored_annotation.metadata["sample"].astype(str).tolist()
+    sparse = _sparse_imputation_payload(imputed, basis, samples)
+    if sparse is not None:
+        rebuilt, problem = _imputed_from_sparse(sparse, basis)
+        if problem is None and rebuilt is not None and _table_fingerprint(rebuilt) == sparse["sha256"]:
+            return {"imputedFrame": None, "imputedSparse": sparse}
+    return {"imputedFrame": _frame_to_payload(imputed)}
+
+
 @temporary_file_scope()
 def export_state_blob(
     *,
@@ -695,9 +916,15 @@ def export_state_blob(
                 dataset_payload[kind] = None
                 continue
             derived = _is_derived_table(stored)
+            frame = getattr(stored, "frame", None)
+            table_sha256 = _table_fingerprint(frame) if isinstance(frame, pd.DataFrame) else None
+            recompute = (
+                _phosprot_recompute_recipe(stored, package_name, table_sha256)
+                if derived and kind == "phosprot" and table_sha256 else None
+            )
             entry: dict[str, Any] = {
                 "filename": str(getattr(stored, "filename", "") or ""),
-                "path": None if portable else _ensure_exportable_table_path(stored),
+                "path": None if portable or recompute else _ensure_exportable_table_path(stored),
                 "phosprotAggregation": getattr(stored, "phosprot_aggregation", None),
                 "phosprotLineage": stored.phosprot_lineage.model_dump() if getattr(stored, "phosprot_lineage", None) else None,
                 "idTranslations": [step.model_dump() for step in stored.id_translations],
@@ -709,14 +936,19 @@ def export_state_blob(
                 fingerprint = _file_fingerprint(Path(str(fingerprint_path)).expanduser())
                 if fingerprint is not None:
                     entry.update(fingerprint)
-            frame = getattr(stored, "frame", None)
-            if isinstance(frame, pd.DataFrame):
-                entry["tableSha256"] = _table_fingerprint(frame)
-            if derived and isinstance(frame, pd.DataFrame):
-                # A table derived inside the tool (a phosprot aggregation) has no
-                # file of its own. The temp copy written above is a convenience
-                # on this machine; the table itself travels in the export, so a
-                # portable restore never asks for a file the user never had.
+            if table_sha256:
+                entry["tableSha256"] = table_sha256
+            if not derived and stored.id_translations and table_sha256:
+                # A translated table is its file plus the recorded translations.
+                # It is embedded only when replaying them does not give this table.
+                derived = not _translated_file_matches(stored, table_sha256, entry.get("sha256"))
+            if recompute:
+                entry["derived"] = True
+                entry["recompute"] = recompute
+            elif derived and isinstance(frame, pd.DataFrame):
+                # A table derived inside the tool has no file of its own, and it
+                # could not be rebuilt from one. The table itself travels in the
+                # export, so a restore never asks for a file the user never had.
                 entry["derived"] = True
                 entry["frame"] = _frame_to_payload(frame)
             dataset_payload[kind] = entry
@@ -778,6 +1010,9 @@ def export_state_blob(
                             getattr(stored_annotation, "log2_auto_detected", False)
                         ),
                         "metadataSource": str(getattr(stored_annotation, "metadata_source", "manual")),
+                        # The notices shown with the annotation. A restore recomputes the
+                        # matrices, not the wording that described how they were made.
+                        "warnings": [str(warning) for warning in stored_annotation.warnings],
                         "filter": {
                             "method": str(stored_annotation.filter_config.method),
                             "minPresent": int(stored_annotation.filter_config.minPresent),
@@ -801,15 +1036,7 @@ def export_state_blob(
                         ),
                         "phosprotLineage": stored_annotation.phosprot_lineage.model_dump()
                             if getattr(stored_annotation, "phosprot_lineage", None) else None,
-                        "imputedFrame": (
-                            _frame_to_payload(stored_annotation.imputed_data)
-                            if isinstance(
-                                getattr(stored_annotation, "imputed_data", None),
-                                pd.DataFrame,
-                            )
-                            and not stored_annotation.imputed_data.empty
-                            else None
-                        ),
+                        **_imputed_export(stored_annotation),
                         "metadataFrame": _frame_to_payload(stored_annotation.metadata),
                     }
                 )
@@ -837,6 +1064,7 @@ def export_state_blob(
 
     payload: dict[str, Any] = {
         "format": _STATE_FORMAT,
+        "formatVersion": _STATE_FORMAT_VERSION,
         "appVersion": APP_VERSION,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "portable": portable,
@@ -862,11 +1090,11 @@ def parse_replacements_manifest(
     files = list(replacement_files or [])
     if not files:
         return {}
-    if len(files) > restore_replacement_max_files():
+    if _exceeds(len(files), restore_replacement_max_files()):
         raise RestoreStateError("Too many replacement files were provided.")
     if not manifest_text:
         raise RestoreStateError("Replacement file manifest is required when replacement files are provided.")
-    if len(manifest_text) > restore_manifest_max_chars():
+    if _exceeds(len(manifest_text), restore_manifest_max_chars()):
         raise RestoreStateError("Replacement manifest exceeds the configured size limit.")
     try:
         parsed = json.loads(manifest_text)
@@ -896,12 +1124,12 @@ def parse_replacements_manifest(
             size_bytes = upload_size_bytes(
                 files[index],
                 label=f"Replacement file for {package_name}:{kind}",
-                max_bytes=per_file_limit,
+                max_bytes=sys.maxsize if per_file_limit is None else per_file_limit,
             )
         except ValueError as exc:
             raise RestoreStateError(str(exc)) from exc
         total_size += size_bytes
-        if total_size > total_limit:
+        if _exceeds(total_size, total_limit):
             raise RestoreStateError("Replacement files exceed the configured aggregate upload limit.")
         mapped[key] = ReplacementInput(
             file=files[index],
@@ -920,7 +1148,7 @@ def _validate_replacement_inputs(
     for (package_name, kind), replacement in replacements.items():
         if isinstance(replacement.size_bytes, int):
             size_bytes = replacement.size_bytes
-            if size_bytes > per_file_limit:
+            if _exceeds(size_bytes, per_file_limit):
                 raise RestoreStateError(
                     f"Replacement file for {package_name}:{kind} exceeds the configured upload limit."
                 )
@@ -929,13 +1157,13 @@ def _validate_replacement_inputs(
                 size_bytes = upload_size_bytes(
                     replacement.file,
                     label=f"Replacement file for {package_name}:{kind}",
-                    max_bytes=per_file_limit,
+                    max_bytes=sys.maxsize if per_file_limit is None else per_file_limit,
                 )
             except ValueError as exc:
                 raise RestoreStateError(str(exc)) from exc
         replacement.size_bytes = size_bytes
         total_size += size_bytes
-        if total_size > total_limit:
+        if _exceeds(total_size, total_limit):
             raise RestoreStateError("Replacement files exceed the configured aggregate upload limit.")
 
 
@@ -951,14 +1179,24 @@ def _read_replacement_bytes(replacement: ReplacementInput, *, label: str) -> byt
     chunks: list[bytes] = []
     observed = 0
     while True:
-        chunk = stream.read(min(_READ_CHUNK_BYTES, limit - observed + 1))
+        chunk = stream.read(_READ_CHUNK_BYTES if limit is None else min(_READ_CHUNK_BYTES, limit - observed + 1))
         if not chunk:
             break
         observed += len(chunk)
-        if observed > limit:
+        if _exceeds(observed, limit):
             raise RestoreStateError(f"{label} exceeds the configured upload limit.")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+def _named_packages(packages: Iterable[Any]) -> Iterable[tuple[str, dict[str, Any]]]:
+    """Yield named package entries in their original order, retaining legacy coercion."""
+    for package_entry in packages:
+        if not isinstance(package_entry, dict):
+            continue
+        package_name = str(package_entry.get("name", "")).strip()
+        if package_name:
+            yield package_name, package_entry
 
 
 def inspect_missing_files(
@@ -974,12 +1212,7 @@ def inspect_missing_files(
         raise RestoreStateError("Restore file is missing package list.")
 
     missing: list[MissingStateFile] = []
-    for package_entry in packages:
-        if not isinstance(package_entry, dict):
-            continue
-        package_name = str(package_entry.get("name", "")).strip()
-        if not package_name:
-            continue
+    for package_name, package_entry in _named_packages(packages):
         datasets = package_entry.get("datasets")
         if not isinstance(datasets, dict):
             continue
@@ -1000,8 +1233,8 @@ def inspect_missing_files(
                 continue
 
             filename = _optional_text(dataset_entry.get("filename"))
-            if dataset_entry.get("frame") is not None:
-                # The table itself is in the export (a derived phosprot table).
+            if dataset_entry.get("frame") is not None or isinstance(dataset_entry.get("recompute"), dict):
+                # The table itself is in the export, or is rebuilt from another one.
                 continue
             path_text = _optional_text(dataset_entry.get("path")) if allow_local_paths else None
             has_replacement = (package_name, kind) in replacements
@@ -1056,14 +1289,10 @@ def _prepare_restore_inputs(
     frame_by_package_kind: dict[tuple[str, TableKind], tuple[pd.DataFrame, str, str | None]] = {}
     peptide_path_by_package: dict[str, tuple[str, str | None]] = {}
     changed_datasets: set[tuple[str, TableKind]] = set()
+    untranslated_datasets: set[tuple[str, TableKind]] = set()
     warnings: list[str] = []
 
-    for package_entry in packages:
-        if not isinstance(package_entry, dict):
-            continue
-        package_name = str(package_entry.get("name", "")).strip()
-        if not package_name:
-            continue
+    for package_name, package_entry in _named_packages(packages):
         datasets = package_entry.get("datasets")
         if not isinstance(datasets, dict):
             continue
@@ -1079,6 +1308,8 @@ def _prepare_restore_inputs(
             path_text = _optional_text(dataset_entry.get("path")) if allow_local_paths else None
             replacement = replacements.get((package_name, kind))
             embedded = dataset_entry.get("frame")
+            if embedded is None and replacement is None and isinstance(dataset_entry.get("recompute"), dict):
+                continue
             if embedded is not None and replacement is None:
                 try:
                     frame_by_package_kind[(package_name, kind)] = (
@@ -1128,17 +1359,38 @@ def _prepare_restore_inputs(
                     f"to the saved source ({mismatch}); results may not match the saved analysis."
                 )
             frame = read_dataframe(replacement.file.filename or filename, io.BytesIO(content))
+            replacement_path = replacement.source_path if allow_local_paths else None
+            if not replacement_path:
+                # Kept as the dataset's source file, as an upload is. A later save
+                # then refers to the file again and does not embed the whole table.
+                target = _restore_upload_dir() / f"{uuid4().hex}_{Path(replacement.file.filename or filename).name}"
+                write_private_bytes(target, content)
+                replacement_path = str(target.resolve())
             frame_by_package_kind[(package_name, kind)] = (
                 frame,
                 replacement.file.filename or filename,
-                replacement.source_path if allow_local_paths else None,
+                replacement_path,
             )
             warnings.append(f"Restored {package_name}:{kind} from uploaded replacement file.")
 
         for kind in _TABLE_KINDS:
             prepared_table = frame_by_package_kind.get((package_name, kind))
             entry = datasets.get(kind)
-            if prepared_table is None or not isinstance(entry, dict) or "tableSha256" not in entry:
+            if prepared_table is None or not isinstance(entry, dict):
+                continue
+            if entry.get("frame") is None and entry.get("idTranslations"):
+                # The file holds the table as uploaded; the recorded identifier
+                # translations are applied again to get the table that was saved.
+                try:
+                    prepared_table = (_replay_translations(prepared_table[0], entry["idTranslations"]), *prepared_table[1:])
+                    frame_by_package_kind[(package_name, kind)] = prepared_table
+                except ValueError as exc:
+                    untranslated_datasets.add((package_name, kind))
+                    warnings.append(
+                        f"The identifier translation of {package_name}:{kind} could not be applied again "
+                        f"({exc}); the table was restored without it."
+                    )
+            if "tableSha256" not in entry:
                 continue
             if entry["tableSha256"] != _table_fingerprint(prepared_table[0]):
                 changed_datasets.add((package_name, kind))
@@ -1185,6 +1437,7 @@ def _prepare_restore_inputs(
         peptide_path_by_package=peptide_path_by_package,
         warnings=warnings,
         changed_datasets=changed_datasets,
+        untranslated_datasets=untranslated_datasets,
     )
 
 
@@ -1205,6 +1458,105 @@ def _restore_peptide_metadata_payload(
         save_peptide_metadata(filename=filename, frame=frame, package_name=package_name)
     except Exception:
         warnings.append(f"Failed to restore peptide metadata table for {package_name}.")
+
+
+def _restored_annotation_warnings(saved: Any, computed: list[str], metadata_source: str, *, changed: bool) -> list[str]:
+    """The notices of a restored annotation.
+
+    The saved ones, as long as the data they describe is the saved data. A save
+    file without them, or data that changed, gets the recomputed notices; the
+    notice of an uploaded metadata table is kept only for an annotation made
+    from one, because a restore always recomputes from a metadata table.
+    """
+    if not changed and isinstance(saved, list) and all(isinstance(item, str) for item in saved):
+        return list(saved)
+    return [
+        warning for warning in computed
+        if metadata_source == "uploaded" or warning != UPLOADED_METADATA_NOTICE
+    ]
+
+
+_REBUILD_PHOSPROT = "rebuild-phosprot"
+
+
+def _annotation_restore_order(package_entry: dict[str, Any], prepared: PreparedRestoreInput, package_name: str) -> Any:
+    """The saved annotations, with a rebuilt phosphoprotein table in its place.
+
+    A collapsed table that is not in the save file is rebuilt from the restored
+    phosphosite annotation, so that annotation comes first and the phosphoprotein
+    ones follow the rebuild.
+    """
+    annotations = package_entry.get("annotations")
+    datasets = package_entry.get("datasets")
+    entry = datasets.get("phosprot") if isinstance(datasets, dict) else None
+    if (
+        not isinstance(entry, dict)
+        or not isinstance(entry.get("recompute"), dict)
+        or (package_name, "phosprot") in prepared.frame_by_package_kind
+    ):
+        return annotations
+    entries = annotations if isinstance(annotations, list) else []
+    def is_phosprot(item: Any) -> bool:
+        return isinstance(item, dict) and _normalize_table_kind(item.get("kind")) == "phosprot"
+    return [
+        *[item for item in entries if not is_phosprot(item)],
+        _REBUILD_PHOSPROT,
+        *[item for item in entries if is_phosprot(item)],
+    ]
+
+
+def _rebuild_phosprot_dataset(
+    package_name: str,
+    entry: dict[str, Any],
+    warnings: list[str],
+    restored_datasets: list[str],
+    changed_datasets: set[tuple[str, TableKind]],
+) -> None:
+    from app.schemas.annotation import IdentifierTranslationStep
+    from app.services.phosprot_tools import collapse_phospho_annotation
+
+    lineage = _coerce_phosprot_lineage(entry.get("phosprotLineage"))
+    profile_name = str(entry["recompute"].get("profile") or "").strip() or DEFAULT_METADATA_PROFILE_NAME
+    try:
+        if lineage is None:
+            raise ValueError("its collapse settings could not be read")
+        phospho = get_annotation("phospho", package_name=package_name, metadata_profile_name=profile_name)
+        if phospho is None or phospho.metadata.empty:
+            raise ValueError("the phosphosite annotation it was collapsed from was not restored")
+        frame, _ = collapse_phospho_annotation(
+            phospho, lineage.aggregation, _collapse_source(lineage), lineage.localizationCutoff or 0.0,
+        )
+        frame = _replay_translations(frame, entry.get("idTranslations"))
+    except ValueError as exc:
+        warnings.append(
+            f"The phosphoprotein table of {package_name} could not be rebuilt from the phosphosite data "
+            f"({str(exc).splitlines()[0][:200]}). Collapse the phosphosites again."
+        )
+        return
+    except Exception:
+        LOGGER.exception("Failed to rebuild the phosphoprotein table of %s", package_name)
+        warnings.append(
+            f"The phosphoprotein table of {package_name} could not be rebuilt from the phosphosite data. "
+            "Collapse the phosphosites again."
+        )
+        return
+    if entry.get("tableSha256") != _table_fingerprint(frame):
+        changed_datasets.add((package_name, "phosprot"))
+        warnings.append(
+            f"The rebuilt phosphoprotein table for {package_name} differs from the one in the saved "
+            "analysis; the phosphosite data may have changed. Results will be recomputed without "
+            "the saved imputed data."
+        )
+    save_table_dataset(
+        filename=_optional_text(entry.get("filename")) or "phosprot.csv",
+        kind="phosprot",
+        frame=frame,
+        package_name=package_name,
+        phosprot_aggregation=_coerce_phosprot_aggregation(entry.get("phosprotAggregation")),
+        phosprot_lineage=lineage,
+        id_translations=[IdentifierTranslationStep.model_validate(step) for step in entry.get("idTranslations") or []],
+    )
+    restored_datasets.append(f"{package_name}:phosprot")
 
 
 def _apply_prepared_restore_state(
@@ -1232,21 +1584,11 @@ def _apply_prepared_restore_state(
     package_names: list[str] = []
     deferred_auto_metadata: list[DeferredAutoMetadataRestore] = []
     metadata_active_profile_by_package: dict[str, str] = {}
-    for package_entry in packages:
-        if not isinstance(package_entry, dict):
-            continue
-        package_name = str(package_entry.get("name", "")).strip()
-        if not package_name:
-            continue
+    for package_name, package_entry in _named_packages(packages):
         package_names.append(package_name)
         create_package(package_name)
 
-    for package_entry in packages:
-        if not isinstance(package_entry, dict):
-            continue
-        package_name = str(package_entry.get("name", "")).strip()
-        if not package_name:
-            continue
+    for package_name, package_entry in _named_packages(packages):
         set_active_package(package_name)
         datasets = package_entry.get("datasets")
         if not isinstance(datasets, dict):
@@ -1268,7 +1610,8 @@ def _apply_prepared_restore_state(
                 source_path=source_path,
                 phosprot_aggregation=_coerce_phosprot_aggregation(datasets[kind].get("phosprotAggregation")) if kind == "phosprot" else None,
                 phosprot_lineage=_coerce_phosprot_lineage(datasets[kind].get("phosprotLineage")) if kind == "phosprot" else None,
-                id_translations=[IdentifierTranslationStep.model_validate(step)
+                id_translations=[] if (package_name, kind) in prepared.untranslated_datasets else [
+                    IdentifierTranslationStep.model_validate(step)
                     for step in datasets[kind].get("idTranslations", [])],
             )
             restored_datasets.append(f"{package_name}:{kind}")
@@ -1280,6 +1623,10 @@ def _apply_prepared_restore_state(
                 stored = save_peptide_path(path_value, package_name=package_name)
                 if source_path:
                     stored.path = source_path
+                else:
+                    # An uploaded replacement is stored under a generated name;
+                    # the dataset keeps the name it was saved with.
+                    stored.filename = _optional_text(datasets["peptide"].get("filename")) or stored.filename
                 restored_datasets.append(f"{package_name}:peptide")
 
         metadata_block = package_entry.get("metadata")
@@ -1386,16 +1733,17 @@ def _apply_prepared_restore_state(
             "as a manual metadata profile because the derived profile could not be regenerated."
         )
 
-    for package_entry in packages:
-        if not isinstance(package_entry, dict):
-            continue
-        package_name = str(package_entry.get("name", "")).strip()
-        if not package_name:
-            continue
+    for package_name, package_entry in _named_packages(packages):
         set_active_package(package_name)
-        annotations_payload = package_entry.get("annotations")
+        annotations_payload = _annotation_restore_order(package_entry, prepared, package_name)
         if isinstance(annotations_payload, list):
             for annotation_entry in annotations_payload:
+                if annotation_entry is _REBUILD_PHOSPROT:
+                    _rebuild_phosprot_dataset(
+                        package_name, package_entry["datasets"]["phosprot"],
+                        warnings, restored_datasets, prepared.changed_datasets,
+                    )
+                    continue
                 if not isinstance(annotation_entry, dict):
                     continue
                 profile_name = str(annotation_entry.get("profile", "")).strip() or DEFAULT_METADATA_PROFILE_NAME
@@ -1441,7 +1789,25 @@ def _apply_prepared_restore_state(
                             f"Discarded invalid imputed data for "
                             f"{package_name}:{profile_name}:{kind}."
                         )
+                sparse_payload = annotation_entry.get("imputedSparse") if imputed_payload is None else None
+                if not isinstance(sparse_payload, dict):
+                    sparse_payload = None
                 required_imputed_samples = metadata_frame["sample"].astype(str).tolist()
+                if sparse_payload is not None and (package_name, kind) in prepared.changed_datasets:
+                    warnings.append(
+                        f"Discarded stale imputed data for {package_name}:{profile_name}:{kind} "
+                        "because the source file no longer matches its saved fingerprint. "
+                        "Run imputation again before selecting imputed results."
+                    )
+                    sparse_payload = None
+                if sparse_payload is not None and any(
+                    sample not in (sparse_payload.get("columns") or []) for sample in required_imputed_samples
+                ):
+                    warnings.append(
+                        f"Discarded stale imputed data for {package_name}:{profile_name}:{kind} "
+                        "because sample columns no longer match."
+                    )
+                    sparse_payload = None
                 if not imputed_data.empty and (package_name, kind) in prepared.changed_datasets:
                     warnings.append(
                         f"Discarded stale imputed data for {package_name}:{profile_name}:{kind} "
@@ -1457,7 +1823,9 @@ def _apply_prepared_restore_state(
                         "because sample columns no longer match."
                     )
                     imputed_data = pd.DataFrame()
-                if imputation is None and imputation_problem is not None and not imputed_data.empty:
+                if imputation is None and imputation_problem is not None and (
+                    not imputed_data.empty or sparse_payload is not None
+                ):
                     # The matrix is intact; only its description is unreadable.
                     # Keep the matrix and say so, rather than dropping every
                     # "imputed data" plot back to the raw matrix in silence.
@@ -1473,7 +1841,8 @@ def _apply_prepared_restore_state(
                     )
                 if imputation is None:
                     imputed_data = pd.DataFrame()
-                elif imputed_data.empty:
+                    sparse_payload = None
+                elif imputed_data.empty and sparse_payload is None:
                     imputation = imputation.model_copy(update={"applied": False})
                 else:
                     imputation = imputation.model_copy(update={"applied": True})
@@ -1482,24 +1851,25 @@ def _apply_prepared_restore_state(
                         data=dataset.frame,
                         metadata=metadata_frame,
                         is_log2_transformed=is_log2_transformed,
-                        min_present=filter_config.minPresent,
-                        filter_mode=filter_config.mode,
-                        filter_method=filter_config.method,
-                        min_percentage=filter_config.minPercentage,
-                        normalization=filter_config.normalization,
-                        normalization_fit=filter_config.normalizationFit,
-                        contaminants=filter_config.contaminants.model_dump(),
+                        **annotation_filter_kwargs(filter_config),
                     )
-                    if not imputed_data.empty:
+                    mismatch = None
+                    if sparse_payload is not None:
+                        rebuilt, mismatch = _imputed_from_sparse(
+                            sparse_payload, _imputation_basis(computed.filtered_data, computed.log2_data),
+                        )
+                        if rebuilt is not None:
+                            imputed_data = rebuilt
+                    elif not imputed_data.empty:
                         mismatch = _imputed_rows_mismatch(imputed_data, computed.filtered_data, computed.log2_data)
-                        if mismatch:
-                            warnings.append(
-                                f"Discarded stale imputed data for {package_name}:{profile_name}:{kind} "
-                                f"because {mismatch}. Run imputation again before selecting imputed results."
-                            )
-                            imputed_data = pd.DataFrame()
-                            if imputation is not None:
-                                imputation = imputation.model_copy(update={"applied": False})
+                    if mismatch:
+                        warnings.append(
+                            f"Discarded stale imputed data for {package_name}:{profile_name}:{kind} "
+                            f"because {mismatch}. Run imputation again before selecting imputed results."
+                        )
+                        imputed_data = pd.DataFrame()
+                        if imputation is not None:
+                            imputation = imputation.model_copy(update={"applied": False})
                     save_annotation(
                         kind=kind,
                         source_data=dataset.frame,
@@ -1510,7 +1880,10 @@ def _apply_prepared_restore_state(
                         metadata_source=metadata_source,
                         filter_config=filter_config,
                         auto_detected=computed.auto_detected,
-                        warnings=computed.warnings,
+                        warnings=_restored_annotation_warnings(
+                            annotation_entry.get("warnings"), computed.warnings, metadata_source,
+                            changed=(package_name, kind) in prepared.changed_datasets,
+                        ),
                         log2_auto_detected=log2_auto_detected,
                         imputation=imputation,
                         imputed_data=imputed_data,

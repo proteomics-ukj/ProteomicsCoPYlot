@@ -27,8 +27,8 @@ from app.schemas.dataset import (
 )
 from app.services.managed_temp import open_private, private_temp_dir
 from app.services.temp_file_lifecycle import temporary_file_scope
-from app.services.annotation_processor import compute_annotation_from_metadata
-from app.services.dataset_reader import get_extension, read_dataframe
+from app.services.annotation_processor import annotation_filter_kwargs, compute_annotation_from_metadata
+from app.services.dataset_reader import file_holds_protein_and_peptide_level, get_extension, read_dataframe
 from app.services.dataset_store import (
     create_package,
     get_active_package,
@@ -63,7 +63,7 @@ from app.services.metadata_upload_store import (
     set_active_profile as set_active_metadata_profile,
 )
 from app.services.peptide_metadata_store import clear_peptide_metadata
-from app.services.upload_limits import ensure_upload_size
+from app.api.upload_validation import require_upload
 from app.services.viewer_bootstrap import viewer_mode_enabled
 from app.services.json_records import json_records
 
@@ -129,6 +129,44 @@ def _read_table_from_local_path(path_text: str):
         raise FileNotFoundError(f"File not found: {candidate}")
     with candidate.open("rb") as handle:
         return candidate, read_dataframe(candidate.name, handle)
+
+
+def _other_level_is_free(kind: Literal["protein", "peptide"], filename: str) -> bool:
+    """The other level is empty, or holds another report of this kind that came with an earlier upload.
+
+    A level that already holds this very report is left alone: loading the file
+    a second time, as the other level, must not discard its annotation.
+    """
+    stored = get_current_dataset(kind)
+    if stored is None:
+        return True
+    if stored.filename == filename:
+        return False
+    path = getattr(stored, "path", None) or getattr(stored, "source_path", None)
+    return bool(path) and file_holds_protein_and_peptide_level(path)
+
+
+def _fill_peptide_level(path: str, filename: str) -> None:
+    """A Spectronaut long report loaded as the protein table is the peptide report too."""
+    if not file_holds_protein_and_peptide_level(path) or not _other_level_is_free("peptide", filename):
+        return
+    stored = save_peptide_path(path)
+    stored.filename = filename
+    clear_peptide_metadata(active_package_only=True)
+
+
+def _fill_protein_level(path: str, filename: str) -> None:
+    """The same report loaded as the peptide report fills the protein table."""
+    if not file_holds_protein_and_peptide_level(path) or not _other_level_is_free("protein", filename):
+        return
+    try:
+        _, frame = _read_table_from_local_path(path)
+    except Exception:  # noqa: BLE001 - the peptide report stays loaded; the protein table is the user's to load
+        LOGGER.exception("Could not derive the protein table from the peptide report")
+        return
+    clear_annotation("protein", clear_all_profiles=True)
+    save_table_dataset(filename, "protein", frame, source_path=path)
+    clear_uploaded_metadata("protein", clear_all_profiles=True)
 
 
 def _current_datasets_response() -> CurrentDatasetsResponse:
@@ -223,13 +261,7 @@ def _ensure_profile_annotation_for_kind(
         data=current_dataset.frame,
         metadata=metadata_frame,
         is_log2_transformed=is_log2_transformed,
-        min_present=filter_config.minPresent,
-        filter_mode=filter_config.mode,
-        filter_method=filter_config.method,
-        min_percentage=filter_config.minPercentage,
-        normalization=filter_config.normalization,
-        normalization_fit=filter_config.normalizationFit,
-        contaminants=filter_config.contaminants.model_dump(),
+        **annotation_filter_kwargs(filter_config),
     )
     save_annotation(
         kind=kind,
@@ -277,17 +309,12 @@ def upload_dataset(
     # no page sent and which let a remote client name any server file for the
     # export to fingerprint. Loading a file by
     # its local path is `/table-path`, which keeps the local-path guard.
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
-    try:
-        ensure_upload_size(file, label="Dataset")
-    except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e)) from e
+    filename = require_upload(file, label="Dataset")
 
-    safe_name = Path(file.filename).name
+    safe_name = Path(filename).name
 
     try:
-        _ = get_extension(file.filename)
+        _ = get_extension(filename)
         target = _table_upload_dir() / f"{uuid4().hex}_{safe_name}"
         with open_private(target, "wb") as handle:
             shutil.copyfileobj(file.file, handle)
@@ -308,9 +335,11 @@ def upload_dataset(
     # Re-uploading a dataset invalidates existing annotation state for that level.
     clear_annotation(kind, clear_all_profiles=True)
 
-    stored = save_table_dataset(file.filename, kind, df, source_path=stored_path)
+    stored = save_table_dataset(filename, kind, df, source_path=stored_path)
     if kind in ("protein", "phospho"):
         clear_uploaded_metadata(kind, clear_all_profiles=True)
+    if kind == "protein":
+        _fill_peptide_level(stored_path, safe_name)
     return _table_preview_response(stored)
 
 
@@ -322,9 +351,7 @@ def set_table_path(payload: TableDatasetPathRequest) -> DatasetPreviewResponse:
 
     try:
         candidate, df = _read_table_from_local_path(path_text)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except ValueError as e:
+    except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         LOGGER.exception("Failed to parse dataset from local path")
@@ -342,6 +369,8 @@ def set_table_path(payload: TableDatasetPathRequest) -> DatasetPreviewResponse:
     )
     if payload.kind in ("protein", "phospho"):
         clear_uploaded_metadata(payload.kind, clear_all_profiles=True)
+    if payload.kind == "protein":
+        _fill_peptide_level(str(candidate), candidate.name)
     return _table_preview_response(stored)
 
 
@@ -353,6 +382,7 @@ def set_peptide_path(payload: PeptidePathRequest) -> PeptidePathResponse:
     _resolve_target_package(payload.packageName)
     stored = save_peptide_path(payload.path)
     clear_peptide_metadata(active_package_only=True)
+    _fill_protein_level(stored.path, stored.filename)
     return _peptide_response(stored)
 
 
@@ -362,16 +392,11 @@ def upload_peptide_file(
     file: UploadFile = File(...),
     package_name: str | None = Form(default=None, alias="packageName"),
 ) -> PeptidePathResponse:
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
-    try:
-        ensure_upload_size(file, label="Peptide dataset")
-    except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e)) from e
+    filename = require_upload(file, label="Peptide dataset")
 
     _resolve_target_package(package_name)
 
-    safe_name = Path(file.filename).name
+    safe_name = Path(filename).name
     target = _peptide_upload_dir() / f"{uuid4().hex}_{safe_name}"
 
     try:
@@ -386,6 +411,7 @@ def upload_peptide_file(
     # Keep the displayed dataset filename user-friendly (original selected file name),
     # while path points to the stored absolute temp file.
     stored.filename = safe_name
+    _fill_protein_level(stored.path, safe_name)
     return _peptide_response(stored)
 
 

@@ -1,19 +1,13 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import get_args
 
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
-
 from app.api.plot_responses import table_rows
 from app.main import app
-
-API = ROOT / "backend" / "app" / "api"
-ROUTE_FILES = sorted(API.glob("routes_*.py"))
 
 
 def test_table_rows_serializes_missing_categorical_values() -> None:
@@ -23,6 +17,8 @@ def test_table_rows_serializes_missing_categorical_values() -> None:
 
 
 ENUM_PROBES = [
+    ("/api/plots/qc/protein/abundance.png", "identifier", "NOT_AN_ID", "workflow", {}),
+    ("/api/plots/qc/protein/abundance-interactive.html", "identifier", "NOT_AN_ID", "workflow", {}),
     ("/api/plots/qc/protein/pca.png", "plotDim", "9D", "3D", {}),
     ("/api/plots/qc/protein/pca.png", "colorBy", "NOT_A_FIELD", "Condition", {}),
     ("/api/plots/qc/protein/pca.png", "method", "NOT_A_METHOD", "PCA", {}),

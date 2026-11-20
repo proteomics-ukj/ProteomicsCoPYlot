@@ -2,17 +2,18 @@ import type {
   AnnotationKind,
   AdvancedPlotSettings,
   CurrentDatasetsResponse,
-  DataSource,
+  ReportEntry,
+  ReportEntryType,
   SummaryReportContext,
-  SummaryVolcanoEntry,
 } from "./types";
-import { DATA_SOURCE_LABELS, restoreVolcanoRenderType } from "./types";
-import { getAdvancedPlotMode, getAdvancedPlotSettingsByKey } from "./appSettings";
-import { readPersistedUiState } from "./persistedUiState";
+import { restoreVolcanoRenderType } from "./types";
+import { getActiveAdvancedPlotSettingsJson, getAdvancedPlotMode, getAdvancedPlotSettingsByKey } from "./appSettings";
+import { readPersistedUiState, readWorkflowState, readQcWorkflowState } from "./persistedUiState";
 import { IS_VIEWER_MODE } from "./appMode";
 
 const QC_SETTINGS_KEY = "pcopylot.report.qcSettings.v1";
 const VOLCANO_LOG_KEY = "pcopylot.report.volcanoLog.v1";
+const ENTRIES_KEY = "pcopylot.report.entries.v2";
 const REPORT_SCOPE_KEY = "pcopylot.report.datasetScope.v1";
 
 function readJson<T>(key: string, fallback: T): T {
@@ -73,14 +74,17 @@ function datasetScopeToken(
   const phosprot = datasets.phosprot
     ? `phosprot:${datasets.phosprot.filename}:${datasets.phosprot.rows}:${datasets.phosprot.columns}`
     : "phosprot:none";
+  // The file name only: its path on the server changes when a saved session is
+  // restored, and a restore must keep the report list it brings back.
   const peptide = datasets.peptide
-    ? `peptide:${datasets.peptide.filename}:${datasets.peptide.path}`
+    ? `peptide:${datasets.peptide.filename}`
     : "peptide:none";
   return [pkg, metadataProfile, protein, phospho, phosprot, peptide].join("|");
 }
 
 function clearSummaryReportState() {
   removeKey(VOLCANO_LOG_KEY);
+  removeKey(ENTRIES_KEY);
   removeKey(QC_SETTINGS_KEY);
 }
 
@@ -100,7 +104,7 @@ export function syncSummaryReportStateWithDatasets(
 }
 
 export function saveQcReportSettings(
-  kind: AnnotationKind | "peptide",
+  kind: AnnotationKind | "peptide" | "precursor",
   settings: Record<string, unknown>
 ) {
   const all = readJson<Record<string, Record<string, unknown>>>(
@@ -109,10 +113,6 @@ export function saveQcReportSettings(
   );
   all[kind] = { ...all[kind], ...settings };
   writeJson(QC_SETTINGS_KEY, all);
-}
-
-export function listVolcanoReportEntries(): SummaryVolcanoEntry[] {
-  return readJson<SummaryVolcanoEntry[]>(VOLCANO_LOG_KEY, []);
 }
 
 function readAdvancedUiState(key: string): Record<string, AdvancedPlotSettings> {
@@ -125,85 +125,118 @@ function readAdvancedUiState(key: string): Record<string, AdvancedPlotSettings> 
     : {};
 }
 
-function normalizeDataSource(value: unknown): DataSource {
-  // Anything-but-"data" used to mean "imputed" here, from when those were the
-  // only two matrices. A volcano built on the filtered matrix was therefore
-  // logged as imputed, and the report then described a matrix the figure had
-  // not used. An unrecognised value falls back to the least processed one
-  // rather than inventing the most processed one.
-  const text = String(value ?? "").trim().toLowerCase();
-  return text in DATA_SOURCE_LABELS ? (text as DataSource) : "data";
+// What decides which plot an entry is, per type. Remove matches on these and
+// on Normal/Interactive; highlight options, aliases, colours, the figure size
+// and the advanced appearance do not make a different plot.
+const SELECTION_KEYS: Record<ReportEntryType, readonly string[]> = {
+  volcano: ["dataSource", "condition1", "condition2", "identifier", "testType", "pValueThreshold",
+    "log2fcThreshold", "useUncorrected", "proteinCorrection"],
+  pearson: ["mode", "sample1", "sample2", "condition1", "condition2", "header"],
+  venn: ["mode", "first", "second", "third", "minPresent", "header"],
+  anova: ["source", "dataSource", "identifier", "pValueThreshold", "useUncorrected", "showDendrograms",
+    "showLegend", "showRowLabels", "nClusters", "clusterMethod", "selectedCluster", "postHoc",
+    "postHocCondition1", "postHocCondition2"],
+  ora: ["direction", "source", "dataSource", "condition1", "condition2", "condition1Control", "condition2Control",
+    "pValueThreshold", "log2fcThreshold", "testType", "useUncorrected", "selectedCluster", "nClusters",
+    "clusterMethod", "adjPValueCutoff", "topN", "minTermSize", "maxTermSize", "backgroundMode", "organism"],
+  single_box: ["protein", "conditions", "identifier", "dataSource", "outliers", "dots", "sampleN", "randomSeed",
+    "header", "legend"],
+  single_line: ["proteins", "conditions", "includeId", "showNaLow", "identifier", "dataSource", "header", "legend"],
+};
+
+function selectionOf(entry: ReportEntry): string {
+  return JSON.stringify([
+    entry.type,
+    entry.kind,
+    entry.render.type,
+    SELECTION_KEYS[entry.type].map((key) => entry.request[key] ?? null),
+  ]);
 }
 
-function normalizeLabelCount(value: unknown): number {
-  const count = Number(value ?? 0);
-  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+      : item
+  );
 }
 
-function normalizeEntry(entry: SummaryVolcanoEntry): SummaryVolcanoEntry {
-  const renderType = restoreVolcanoRenderType(entry.renderType);
-  return {
-    ...entry,
-    dataSource: normalizeDataSource(entry.dataSource),
-    highlightTerms: [...entry.highlightTerms].map((item) => item.trim()).filter(Boolean),
-    condition1Control: entry.condition1Control ?? null,
-    condition2Control: entry.condition2Control ?? null,
-    proteinCorrection: Boolean(entry.proteinCorrection),
-    renderType,
-    // The label counts only reach the static renderer, so an interactive entry
-    // stores zeros and two entries that differ only in a setting neither of
-    // them uses stay one entry.
-    labelTopUp: renderType === "Normal" ? normalizeLabelCount(entry.labelTopUp) : 0,
-    labelTopDown: renderType === "Normal" ? normalizeLabelCount(entry.labelTopDown) : 0,
-    // Without highlight terms neither switch draws anything, so two entries
-    // that differ only there stay one entry; labels are a static-only choice.
-    highlightOutline: entry.highlightTerms.length ? entry.highlightOutline !== false : true,
-    highlightLabels: entry.highlightTerms.length && renderType === "Normal" ? Boolean(entry.highlightLabels) : false,
-  };
+// Volcano entries saved before the other plot types could be added.
+function convertVolcanoLog(): ReportEntry[] {
+  const saved = readJson<Record<string, unknown>[]>(VOLCANO_LOG_KEY, []);
+  return saved
+    .filter((entry) => !entry.control && (entry.kind === "protein" || entry.kind === "phospho"))
+    .map((entry) => {
+      const request = { ...entry };
+      for (const key of ["kind", "control", "renderType", "condition1Control", "condition2Control"]) delete request[key];
+      return {
+        type: "volcano",
+        kind: entry.kind as ReportEntry["kind"],
+        request,
+        render: { type: restoreVolcanoRenderType(entry.renderType) },
+        advanced: null,
+      };
+    });
 }
 
-function isSameVolcanoEntry(a: SummaryVolcanoEntry, b: SummaryVolcanoEntry): boolean {
-  const left = normalizeEntry(a);
-  const right = normalizeEntry(b);
-  if (left.kind !== right.kind) return false;
-  if (left.control !== right.control) return false;
-  if (left.dataSource !== right.dataSource) return false;
-  if (left.condition1 !== right.condition1) return false;
-  if (left.condition2 !== right.condition2) return false;
-  if ((left.condition1Control ?? "") !== (right.condition1Control ?? "")) return false;
-  if ((left.condition2Control ?? "") !== (right.condition2Control ?? "")) return false;
-  if (left.identifier !== right.identifier) return false;
-  if (left.testType !== right.testType) return false;
-  if (left.useUncorrected !== right.useUncorrected) return false;
-  if (Boolean(left.proteinCorrection) !== Boolean(right.proteinCorrection)) return false;
-  if (left.highlightOutline !== right.highlightOutline) return false;
-  if (left.highlightLabels !== right.highlightLabels) return false;
-  if (left.pValueThreshold !== right.pValueThreshold) return false;
-  if (left.log2fcThreshold !== right.log2fcThreshold) return false;
-  if (left.renderType !== right.renderType) return false;
-  if (left.labelTopUp !== right.labelTopUp) return false;
-  if (left.labelTopDown !== right.labelTopDown) return false;
-  if (left.highlightTerms.length !== right.highlightTerms.length) return false;
-  return left.highlightTerms.every((item, index) => item === right.highlightTerms[index]);
+export function listReportEntries(): ReportEntry[] {
+  const entries = readJson<ReportEntry[]>(ENTRIES_KEY, []);
+  if (readRaw(VOLCANO_LOG_KEY) == null) return entries;
+  const merged = [...convertVolcanoLog(), ...entries];
+  writeJson(ENTRIES_KEY, merged);
+  removeKey(VOLCANO_LOG_KEY);
+  return merged;
 }
 
-export function addVolcanoReportEntry(entry: SummaryVolcanoEntry): boolean {
-  const normalized = normalizeEntry(entry);
-  const current = listVolcanoReportEntries();
-  if (current.some((existing) => isSameVolcanoEntry(existing, normalized))) {
-    return false;
+/** `only` narrows a plot type to one of its views (the single clusters of an ANOVA, say). */
+export function countReportEntries(type: ReportEntryType, kind: string, only?: (entry: ReportEntry) => boolean): number {
+  return listReportEntries().filter((entry) => entry.type === type && entry.kind === kind && (!only || only(entry))).length;
+}
+
+/** The advanced appearance of the plot on screen, as an entry stores it. */
+export function currentAdvancedAppearance(): AdvancedPlotSettings | null {
+  try {
+    const parsed = JSON.parse(getActiveAdvancedPlotSettingsJson() || "null");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as AdvancedPlotSettings) : null;
+  } catch {
+    return null;
   }
-  current.push(normalized);
-  writeJson(VOLCANO_LOG_KEY, current);
+}
+
+export function addReportEntry(entry: ReportEntry): boolean {
+  const current = listReportEntries();
+  const identity = sortedJson(entry);
+  if (current.some((existing) => sortedJson(existing) === identity)) return false;
+  writeJson(ENTRIES_KEY, [...current, entry]);
   return true;
 }
 
-export function removeVolcanoReportEntry(entry: SummaryVolcanoEntry): number {
-  const normalized = normalizeEntry(entry);
-  const current = listVolcanoReportEntries();
-  const next = current.filter((existing) => !isSameVolcanoEntry(existing, normalized));
-  writeJson(VOLCANO_LOG_KEY, next);
+export function removeMatchingReportEntries(entry: ReportEntry): number {
+  const current = listReportEntries();
+  const selection = selectionOf(entry);
+  const next = current.filter((existing) => selectionOf(existing) !== selection);
+  writeJson(ENTRIES_KEY, next);
   return current.length - next.length;
+}
+
+export function deleteAllReportEntries(type: ReportEntryType, kind: string, only?: (entry: ReportEntry) => boolean): number {
+  const current = listReportEntries();
+  const next = current.filter((entry) => !(entry.type === type && entry.kind === kind && (!only || only(entry))));
+  writeJson(ENTRIES_KEY, next);
+  return current.length - next.length;
+}
+
+/** Whether the report holds a plot of this type with the same values for `keys`. */
+export function hasReportEntryMatching(
+  type: ReportEntryType,
+  kind: string,
+  request: Record<string, unknown>,
+  keys: readonly string[]
+): boolean {
+  return listReportEntries().some(
+    (entry) =>
+      entry.type === type && entry.kind === kind && keys.every((key) => (entry.request[key] ?? null) === (request[key] ?? null))
+  );
 }
 
 export function getSummaryReportContext(): SummaryReportContext {
@@ -211,10 +244,20 @@ export function getSummaryReportContext(): SummaryReportContext {
     QC_SETTINGS_KEY,
     {}
   );
-  const volcanoEntries = listVolcanoReportEntries();
+  const workflowPlotSettings: NonNullable<SummaryReportContext["workflowPlotSettings"]> = {};
+  for (const kind of ["protein", "phospho", "phosprot", "peptide", "precursor"]) {
+    const qc = readQcWorkflowState(kind);
+    const completeness = readWorkflowState("completeness.v1", kind);
+    workflowPlotSettings[kind] = {
+      qcAppearance: (qc.advancedV2 ?? {}) as Record<string, AdvancedPlotSettings>,
+      completenessAppearance: (completeness.advancedV2 ?? {}) as Record<string, AdvancedPlotSettings>,
+      missingPlot: (completeness.missingPlot ?? {}) as Record<string, unknown>,
+    };
+  }
   return {
     qcSettings,
-    volcanoEntries,
+    workflowPlotSettings,
+    entries: listReportEntries(),
     completenessSettings: readPersistedUiState<{ missingPlot?: Record<string, unknown> }>("completeness.v1", {}).missingPlot ?? {},
     advancedPlotMode: getAdvancedPlotMode(),
     advancedPlotSettingsByKey: getAdvancedPlotSettingsByKey(),

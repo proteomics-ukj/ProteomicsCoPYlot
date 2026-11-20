@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.main import app
 from app.services.viewer_policy import VIEWER_ALLOWED_OPERATIONS, auth_route as _auth_route, viewer_request_allowed

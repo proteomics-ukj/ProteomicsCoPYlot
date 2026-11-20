@@ -12,12 +12,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.app_version import APP_VERSION
 from app.services import report_function

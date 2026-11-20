@@ -1,13 +1,18 @@
 """Extract a dependency-closed subset of trusted notebook source, never user code."""
 from __future__ import annotations
 
+from functools import lru_cache
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import ast
 import builtins
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 import re
 import symtable
 import sys
+from types import ModuleType
 
 
 @dataclass(frozen=True)
@@ -15,6 +20,50 @@ class NotebookSource:
     code: str
     functions: tuple[str, ...]
     imports: tuple[str, ...]
+
+
+def bound_settings(function: Callable, /, *args, **options) -> dict:
+    """Bind renderer options and include its defaults in declaration order."""
+    bound = inspect.signature(function).bind(*args, **options)
+    bound.apply_defaults()
+    from app.services.condition_palette_store import fill_category_palette
+
+    return fill_category_palette(function, dict(bound.arguments))
+
+
+@contextmanager
+def portable_output_format(module: ModuleType, fmt: str) -> Iterator[None]:
+    """Set a portable renderer's output format for this scope, then restore it."""
+    token = module.plot_output_format.set(fmt)
+    try:
+        yield
+    finally:
+        module.plot_output_format.reset(token)
+
+
+def portable_module(name: str, source: Callable[[], NotebookSource]) -> ModuleType:
+    """Load trusted notebook code; the adapter owns caching and module naming."""
+    module = ModuleType(name)
+    sys.modules[name] = module
+    exec(source().code, module.__dict__)
+    return module
+
+
+def _target_names(target: ast.expr) -> set[str]:
+    """Names an assignment target binds, by Python's rules.
+
+    `x = ...`, `a, (b, *c) = ...` bind names; `d[k] = ...` and `o.attr = ...`
+    bind nothing (they mutate `d` / `o`). Walking every `Name` under the
+    target made `sys.modules[name] = module` count as a rebinding of `sys`,
+    and the extractor refused the package source as ambiguous (2026-11-02).
+    """
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(_target_names(element) for element in target.elts))
+    return set()
 
 
 def _bindings(node: ast.AST) -> set[str]:
@@ -28,7 +77,7 @@ def _bindings(node: ast.AST) -> set[str]:
         return {alias.asname or alias.name for alias in node.names}
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        return {part.id for target in targets for part in ast.walk(target) if isinstance(part, ast.Name)}
+        return set().union(*(_target_names(target) for target in targets))
     if isinstance(node, (ast.Try, ast.If)):
         return set().union(*(_bindings(child) for child in ast.iter_child_nodes(node)))
     if isinstance(node, ast.ExceptHandler):
@@ -50,6 +99,7 @@ def _segment(source: str, node: ast.stmt) -> str:
     return "\n".join(source.splitlines()[start - 1:node.end_lineno])
 
 
+@lru_cache(maxsize=64)
 def extract_notebook_source(source: str, entry_points: tuple[str, ...]) -> NotebookSource:
     """Select definitions, constants and imports without executing the source.
 
@@ -176,6 +226,16 @@ def _inline_core(text: str) -> str:
         inlined = "\n\n".join(_segment(core, node) for node in core_body if node in selected)
         text = text[:match.start()] + inlined + "\n" + text[match.end():]
     return text
+
+
+def portable_styling(*, include_matplotlib: bool = False) -> str:
+    """Prepare styling source without app imports; adapters retain their caches."""
+    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines()
+                        if not line.startswith("from app."))
+    if include_matplotlib:
+        styling += "\n\n" + function_definition(module_source("plotting_common.py"), "get_plt")
+        styling += "\n\ndef _get_plt():\n    return get_plt()\n"
+    return styling
 
 
 def function_definition(source: str, name: str) -> str:

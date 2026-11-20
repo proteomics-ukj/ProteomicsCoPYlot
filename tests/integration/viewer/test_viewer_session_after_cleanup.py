@@ -8,7 +8,6 @@ marker, and the marker alone is no longer trusted when the stores are empty.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -16,7 +15,7 @@ from app.services import session_cleanup, viewer_bootstrap
 from app.services.dataset_store import reset_all_datasets, session_has_datasets
 from app.services.session_context import reset_session_id, set_session_id
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 SESSION = "viewer-cleanup-under-test"
 
 

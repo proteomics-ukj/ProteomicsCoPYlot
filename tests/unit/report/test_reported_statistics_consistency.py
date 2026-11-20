@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 import app.services.completeness_tools as ct
 
@@ -478,7 +477,7 @@ def test_peptide_coverage_counts_selected_entities_and_excludes_zeros(monkeypatc
         "Precursor.Id": ["PEPA_2", "PEPA_3", "PEPB_2"] * 2,
         "Precursor.Quantity": [10., 20., 0., 0., 30., 5.],
     })
-    monkeypatch.setattr(peptide_tools, "get_peptide_frame", lambda: frame)
+    monkeypatch.setattr(peptide_tools, "get_peptide_frame", lambda **kwargs: frame)
     metadata = pd.DataFrame({
         "sample": samples,
         "label": ["A", "B"], "condition": ["A", "B"],
@@ -514,7 +513,7 @@ def test_peptide_coverage_counts_selected_entities_and_excludes_zeros(monkeypatc
 def test_peptide_coverage_rejects_ambiguous_numeric_fallback(monkeypatch, level):
     from app.services import plot_images, peptide_tools
 
-    monkeypatch.setattr(peptide_tools, "get_peptide_frame", lambda: _peptide_frame(
+    monkeypatch.setattr(peptide_tools, "get_peptide_frame", lambda **kwargs: _peptide_frame(
         ["ctrl_01.raw", "treat_01.raw"]
     ))
     metadata = pd.DataFrame({

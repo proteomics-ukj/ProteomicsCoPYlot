@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import subprocess
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,7 +19,7 @@ import pytest
 
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from app.services import functions as backend  # noqa: E402
 
@@ -31,7 +30,6 @@ COLUMNS = ["sample", "condition", "missing_fraction", "reference_missing_fractio
            "complete_features", "complete_offset"]
 
 
-from _r_runtime import RSCRIPT
 
 
 def _simulated(missing_b: float = 0.30, seed: int = 11) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -141,7 +139,7 @@ def test_the_bundled_phosphosites_show_the_grk_shift() -> None:
 @pytest.mark.requires_r()
 @pytest.mark.parametrize("source,method", [("simulated", "median"), ("simulated", "quantile"),
                                            ("example", "median"), ("simulated", "none")])
-def test_r_matches_python(tmp_path, source, method) -> None:
+def test_r_matches_python(tmp_path, source, method, rscript) -> None:
     frame, meta = _simulated() if source == "simulated" else _example()
     frame.to_csv(tmp_path / "data.csv", index=False)
     meta.to_csv(tmp_path / "meta.csv", index=False)
@@ -158,7 +156,7 @@ def test_r_matches_python(tmp_path, source, method) -> None:
     write.csv(table, "{(tmp_path / 'table.csv').as_posix()}", row.names = FALSE)
     writeLines(if (length(caught)) caught else "<none>", "{(tmp_path / 'warning.txt').as_posix()}", useBytes = TRUE)
     """
-    completed = subprocess.run([RSCRIPT, "-e", script], capture_output=True, text=True, timeout=300)
+    completed = subprocess.run([rscript, "-e", script], capture_output=True, text=True, timeout=300)
     assert completed.returncode == 0, completed.stderr[-2000:]
 
     with warnings.catch_warnings(record=True) as caught:

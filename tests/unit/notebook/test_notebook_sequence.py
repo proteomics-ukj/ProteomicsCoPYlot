@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import pandas as pd
@@ -61,10 +59,9 @@ def test_exact_sequence_map_and_independent_replay(sequence_input, tmp_path, mon
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    run = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    run = replay_cells(cells, tmp_path, timeout=60)
     assert run.returncode == 0, run.stderr
     assert (tmp_path / 'reproduced_coverage.txt').read_text(encoding='utf-8') == expected['sequenceText']
     assert json.loads((tmp_path / 'reproduced_summary.json').read_text()) == expected

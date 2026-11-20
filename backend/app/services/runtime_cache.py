@@ -6,6 +6,7 @@ import sys
 from collections import OrderedDict
 from concurrent.futures import Future
 from copy import deepcopy
+from dataclasses import fields, is_dataclass
 from itertools import chain
 from threading import RLock, get_ident
 from typing import Any, Callable, TypeVar
@@ -13,6 +14,7 @@ from typing import Any, Callable, TypeVar
 import pandas as pd
 from pydantic import BaseModel
 
+from app.services.upload_limits import _memory_capacity_bytes
 from app.services.session_context import get_session_id
 from app.services.plot_export import plot_output_format
 
@@ -24,10 +26,11 @@ _LOCK = RLock()
 _CACHE_VERSION = 0
 _GLOBAL_VERSION = 0
 _SESSION_VERSIONS: dict[str, int] = {}
-_CACHE: "OrderedDict[tuple[Any, ...], Any]" = OrderedDict()
-_IN_FLIGHT: dict[tuple[Any, ...], tuple[int, Future[tuple[Any] | None]]] = {}
+_CACHE: OrderedDict[tuple[Any, ...], tuple[int, Any]] = OrderedDict()
+_IN_FLIGHT: dict[tuple[Any, ...], tuple[int, Future[tuple[Any] | tuple[()] | None]]] = {}
 _MAX_ENTRIES = 128
-_MAX_ENTRY_BYTES = 12 * 1024 * 1024
+# Admission targets only: a result larger than the cache is still returned in full.
+_MAX_TOTAL_BYTES = min(512 * 1024**2, (_memory_capacity_bytes() or 1024**3) // 8)
 
 
 class UnfreezableArgument(TypeError):
@@ -56,13 +59,11 @@ def _freeze(value: Any) -> Any:
     if isinstance(value, (str, float, type(None), bytes)):
         return value
     if isinstance(value, dict):
-        return tuple(
-            sorted((str(key), _freeze(inner_value)) for key, inner_value in value.items())
-        )
+        return ("dict", frozenset((_freeze(key), _freeze(item)) for key, item in value.items()))
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze(item) for item in value)
+        return (type(value).__name__, tuple(_freeze(item) for item in value))
     if isinstance(value, set):
-        return tuple(sorted(_freeze(item) for item in value))
+        return ("set", frozenset(_freeze(item) for item in value))
     if hasattr(value, "model_dump") and callable(value.model_dump):
         return _freeze(value.model_dump())
     raise UnfreezableArgument(
@@ -126,12 +127,14 @@ def _estimate_size_bytes(value: Any) -> int:
                     pending.append(iter(item))
                 elif isinstance(item, BaseModel):
                     pending.append(iter((item.__dict__, item.__pydantic_extra__, item.__pydantic_private__)))
+                elif is_dataclass(item) and not isinstance(item, type):
+                    pending.append(iter(tuple(getattr(item, field.name) for field in fields(item))))
                 elif not isinstance(item, (str, bytes, bytearray, int, float, complex, bool, type(None))):
-                    return _MAX_ENTRY_BYTES + 1
-            if size > _MAX_ENTRY_BYTES:
+                    return _MAX_TOTAL_BYTES + 1
+            if size > _MAX_TOTAL_BYTES:
                 return size
     except Exception:
-        return _MAX_ENTRY_BYTES + 1
+        return _MAX_TOTAL_BYTES + 1
     return size
 
 
@@ -152,6 +155,15 @@ def invalidate_runtime_cache(reason: str = "", *, all_sessions: bool = False) ->
                 if key[2] == session_id:
                     del _CACHE[key]
         return _CACHE_VERSION
+
+
+def discard_runtime_cache(session_id: str) -> None:
+    with _LOCK:
+        _SESSION_VERSIONS.pop(session_id, None)
+        for mapping in (_CACHE, _IN_FLIGHT):
+            for key in list(mapping):
+                if key[2] == session_id:
+                    del mapping[key]
 
 
 def runtime_cache_version() -> int:
@@ -187,7 +199,7 @@ def cached_call(
         version = _SESSION_VERSIONS.get(session_id, _GLOBAL_VERSION)
         key = (namespace, version, session_id, plot_output_format.get(), frozen)
         if key in _CACHE:
-            cached = _CACHE[key]
+            _, cached = _CACHE[key]
             _CACHE.move_to_end(key)
             return _copy_for_caller(cached) if copy_result else cached
         pending = _IN_FLIGHT.get(key)
@@ -195,7 +207,7 @@ def cached_call(
         # Nested calculations must not wait on one another (including themselves).
         nested = any(thread == get_ident() for thread, _ in _IN_FLIGHT.values())
         if pending is None:
-            future: Future[tuple[T] | None] = Future()
+            future: Future[tuple[T] | tuple[()] | None] = Future()
             _IN_FLIGHT[key] = (get_ident(), future)
         else:
             _, future = pending
@@ -204,6 +216,9 @@ def cached_call(
         if nested:
             return factory()
         shared = future.result()
+        # A disposed owner cannot admit a waiting request to a replacement session.
+        if shared is not None and len(shared) == 0:
+            return factory()
         if runtime_cache_version() != version:
             return cached_call(namespace, key_data, factory, copy_result=copy_result)
         # Oversized/unknown objects retain the existing uncached behavior.
@@ -213,20 +228,26 @@ def cached_call(
 
     try:
         result = factory()
-        cacheable = _estimate_size_bytes(result) <= _MAX_ENTRY_BYTES
+        entry_bytes = _estimate_size_bytes(result)
+        cacheable = entry_bytes <= _MAX_TOTAL_BYTES
         with _LOCK:
-            if cacheable and _SESSION_VERSIONS.get(session_id, _GLOBAL_VERSION) == version:
-                _CACHE[key] = result
+            active = _IN_FLIGHT.get(key) == (get_ident(), future)
+            if active and cacheable and _SESSION_VERSIONS.get(session_id, _GLOBAL_VERSION) == version:
+                _CACHE[key] = (entry_bytes, result)
                 _CACHE.move_to_end(key)
-                while len(_CACHE) > _MAX_ENTRIES:
-                    _CACHE.popitem(last=False)
-            future.set_result((result,) if cacheable else None)
+                total = sum(entry[0] for entry in _CACHE.values())
+                while len(_CACHE) > _MAX_ENTRIES or total > _MAX_TOTAL_BYTES:
+                    _, (evicted_bytes, _) = _CACHE.popitem(last=False)
+                    total -= evicted_bytes
+            shared = (result,) if cacheable else None
+            future.set_result(shared if active else ())
     except BaseException as exc:
         future.set_exception(exc)
         raise
     finally:
         with _LOCK:
-            _IN_FLIGHT.pop(key, None)
+            if _IN_FLIGHT.get(key) == (get_ident(), future):
+                _IN_FLIGHT.pop(key, None)
     return _copy_for_caller(result) if cacheable and copy_result else result
 
 

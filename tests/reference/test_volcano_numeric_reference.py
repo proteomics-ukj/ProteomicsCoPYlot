@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -8,7 +7,6 @@ import pytest
 from scipy import stats as scipy_stats
 from statsmodels.stats.multitest import multipletests
 
-ROOT = Path(__file__).resolve().parents[2]
 
 from app.services.annotation_store import get_annotation
 from app.schemas.stats import AnovaRequest

@@ -1,11 +1,13 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 import { AssistantInput } from "../../components/AssistantFields";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildPlotUrl, getDistributionSummary, isAbortError } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
 import { withBasePath } from "../../lib/basePath";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import type { ContextMode, AnnotationKind, DistributionSummaryResponse } from "../../lib/types";
+import NotebookDownload from "../../components/NotebookDownload";
 import SelectField from "../../components/SelectField";
 import LocalizationCutoffField from "../../components/LocalizationCutoffField";
 
@@ -14,27 +16,21 @@ type Props = {
   advancedPlotOptions?: ReactNode;
 };
 
-export default function DistributionPage({ advancedPlotOptions, onContextModeChange }: Props) {
+function DistributionPageView({ advancedPlotOptions, onContextModeChange }: Props) {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("data.distribution.v1", {}),
-    []
-  );
-  const [kind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein");
-    return value === "phospho" || value === "phosprot" ? value : "protein";
-  });
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("data.distribution.v1", kind), [kind]);
   const { availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<DistributionSummaryResponse | null>(null);
-  const [randomSeed, setRandomSeed] = useState(() => Number(persisted.randomSeed ?? 187));
+  const [randomSeed, setRandomSeed] = useState(() => Number(persisted.randomSeed ?? 1));
   useEffect(() => {
     onContextModeChange?.({ kind, randomSeed });
   }, [onContextModeChange, kind, randomSeed]);
 
   useEffect(() => {
-    writePersistedUiState("data.distribution.v1", { kind, randomSeed });
+    writeWorkflowState("data.distribution.v1", { kind, randomSeed });
   }, [kind, randomSeed]);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
@@ -68,7 +64,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
     const controller = new AbortController();
     loadSummary(controller.signal);
     return () => controller.abort();
-  }, [kind, availableKinds, loadSummary]);
+  }, [kind, availableKinds, loadSummary, setKind]);
 
   const qqPlotUrl = useMemo(
     () => {
@@ -84,7 +80,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Distribution</h2>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField
             label="Dataset level"
             value={kindOptions.length === 0 ? "" : kind}
@@ -135,7 +131,10 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
       {kindOptions.length > 0 && summary ? (
         <>
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900">QQ Norm Plot</h3>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-slate-900">QQ Norm Plot</h3>
+              <NotebookDownload plotUrl={qqPlotUrl} rendered={null} prepareOnClick />
+            </div>
             {summary.warnings.length > 0 ? (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {summary.warnings.join(" ")}
@@ -162,7 +161,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
             </div>
             <dl className="mt-5 space-y-4 text-sm text-slate-700">
               <div>
-                <dt className="font-semibold text-slate-900">A straight line — normal</dt>
+                <dt className="font-semibold text-slate-900">A straight line, normal</dt>
                 <dd className="mt-1">
                   Values approximately following the line are compatible with a normal distribution.
                   Log transformation often reduces intensity skewness, but does not guarantee a normal
@@ -170,7 +169,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
                 </dd>
               </div>
               <div>
-                <dt className="font-semibold text-slate-900">A curve — skewed</dt>
+                <dt className="font-semibold text-slate-900">A curve, skewed</dt>
                 <dd className="mt-1">
                   Upward curvature indicates right-skewed intensities. Check the declared data scale,
                   but the curve alone does not establish a scale error or invalid p-values.
@@ -179,7 +178,7 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
                 </dd>
               </div>
               <div>
-                <dt className="font-semibold text-slate-900">Both ends departing — heavy tails</dt>
+                <dt className="font-semibold text-slate-900">Both ends departing, heavy tails</dt>
                 <dd className="mt-1">
                   The lower tail falls below the line and the upper tail rises above it. Inspect
                   extreme observations in their feature and sample context; their pooled rank alone
@@ -194,3 +193,5 @@ export default function DistributionPage({ advancedPlotOptions, onContextModeCha
     </div>
   );
 }
+
+export default withWorkflowSettings("data.distribution.v1", DistributionPageView);

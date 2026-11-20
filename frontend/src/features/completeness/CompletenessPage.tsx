@@ -1,4 +1,8 @@
-import { registerStyleStore, styleTemplate, withStyle } from "../../lib/plotStyles";
+import { paletteColorOverride } from "../../lib/conditionColorSets";
+import TableDownloadLink from "../../components/TableDownloadLink";
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
+import { styleTemplate } from "../../lib/plotStyles";
+import { useAppearanceModeSync, useAppearanceRenderDelay, useTabStyleStore } from "../../lib/useTabPlotAppearance";
 import { AssistantAppearanceMount, AssistantSelect } from "../../components/AssistantFields";
 import PlotDownloadControls from "../../components/PlotDownloadControls";
 import OptionsLayout from "../../components/OptionsLayout";
@@ -11,10 +15,10 @@ import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
 import { compactAdvancedPlotSettings as compactAdvancedSettings, migrateAdvancedSettingsMap } from "../../lib/plotSerialization";
 import SummaryCard from "../../components/SummaryCard";
-import { collectColumns, csvDataUrl, rowsToQuotedCsv as rowsToCsv } from "../../lib/tableData";
+import { collectColumns } from "../../lib/tableData";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { fetchPlot } from "../../lib/fetchPlot";
-import { buildPlotUrl, getCompletenessTables, getPeptideQuantityOptions, getQcPlotOptions, isAbortError } from "../../lib/api";
+import { buildPlotUrl, getCompletenessTables, getQcPlotOptions, isAbortError } from "../../lib/api";
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
 import {
   coercePlotDownloadFormat,
@@ -22,9 +26,8 @@ import {
   withPlotDownloadFilename,
   withPlotDownloadFormat,
 } from "../../lib/plotDownload";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import { getAdvancedPlotMode } from "../../lib/appSettings";
-import { IS_VIEWER_MODE } from "../../lib/appMode";
 import AdvancedPlotOptions, {
   type AdvancedPlotControlDefaults,
   type AdvancedPlotVisibleControls,
@@ -35,7 +38,6 @@ import type {
   CompletenessTab,
   CompletenessTablesResponse,
 } from "../../lib/types";
-import SelectField from "../../components/SelectField";
 import PreviewTable from "../../components/PreviewTable";
 import type { ContextMode } from "../../lib/types";
 import LocalizationCutoffField from "../../components/LocalizationCutoffField";
@@ -70,29 +72,19 @@ function withAdvancedParams(
   return { ...params, advanced };
 }
 
-export default function CompletenessPage({ activeTab, onContextModeChange, notebook, onNotebookChange }: Props) {
+function CompletenessPageView({ activeTab, onContextModeChange, notebook, onNotebookChange }: Props) {
   const fieldId = useId();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("completeness.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<CompletenessKind>();
+  const persisted = useMemo(() => readWorkflowState("completeness.v1", kind), [kind]);
   const persistedMissing = (persisted.missingPlot as Record<string, unknown>) ?? {};
   const persistedHeatmap = (persisted.heatmap as Record<string, unknown>) ?? {};
   const persistedTables = (persisted.tables as Record<string, unknown>) ?? {};
   // Versioned for the same reason as the QC page's.
-  const persistedAdvanced: AdvancedPlotState = migrateAdvancedSettingsMap(IS_VIEWER_MODE ? {} : (persisted.advancedV2 as AdvancedPlotState) ?? {});
-  const [kind, setKind] = useState<CompletenessKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    if (value === "protein" || value === "phospho" || value === "phosprot" || value === "peptide" || value === "precursor") return value;
-    return "protein";
-  });
+  const persistedAdvanced: AdvancedPlotState = migrateAdvancedSettingsMap((persisted.advancedV2 as AdvancedPlotState) ?? {});
   const { datasets, availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
   const [sampleOptions, setSampleOptions] = useState<string[]>([]);
   const [sampleDisplayLabels, setSampleDisplayLabels] = useState<Record<string, string>>({});
   const [sampleDisplayLabelsWithId, setSampleDisplayLabelsWithId] = useState<Record<string, string>>({});
-  const [peptideQuantityColumns, setPeptideQuantityColumns] = useState<string[]>([]);
-  const [peptideQuantityRequiresSelection, setPeptideQuantityRequiresSelection] = useState(false);
-  const [peptideQuantityError, setPeptideQuantityError] = useState<string | null>(null);
   const [tableResult, setTableData] = useState<CompletenessTablesResponse | null>(null);
   const [tableResultUrl, setTableResultUrl] = useState("");
   const [tableNotebook, setTableNotebook] = useState<RenderedNotebook | null>(null);
@@ -108,18 +100,17 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
   const [advancedRenderByTab, setAdvancedRenderByTab] = useState<AdvancedPlotState>(() => persistedAdvanced);
 
   const [missingPlot, setMissingPlot] = useState({
-    quantityColumn: String(persistedMissing.quantityColumn ?? ""),
     header: true,
     text: Boolean(persistedMissing.text ?? true),
     binCount: Number(persistedMissing.binCount ?? 0),
     textSize: Number(persistedMissing.textSize ?? 8),
-    color: String(persistedMissing.color ?? "#2563eb"),
+    color: paletteColorOverride(persistedMissing.color, "#2563eb"),
     widthCm: restorePlotDimensionCm(persistedMissing.widthCm, 20),
     heightCm: restorePlotDimensionCm(persistedMissing.heightCm, 10),
     dpi: restorePlotDpi(persistedMissing.dpi, 300),
   });
   const [heatmap, setHeatmap] = useState({
-    includeId: Boolean(persistedHeatmap.includeId ?? true),
+    includeId: Boolean(persistedHeatmap.includeId ?? false),
     header: true,
     widthCm: restorePlotDimensionCm(persistedHeatmap.widthCm, 10),
     heightCm: restorePlotDimensionCm(persistedHeatmap.heightCm, 10),
@@ -140,37 +131,20 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
   const tableData = tableResultUrl === replayUrl ? tableResult : null;
 
   useEffect(() => {
-    const nextState: Record<string, unknown> = {
+    const nextState: Record<string, unknown> & { kind: string } = {
       kind,
       downloadFormat,
       missingPlot,
       heatmap,
       tables,
     };
-    if (!IS_VIEWER_MODE) {
-      nextState.advancedV2 = advancedByTab;
-    }
-    writePersistedUiState("completeness.v1", nextState);
+    nextState.advancedV2 = advancedByTab;
+    writeWorkflowState("completeness.v1", nextState);
   }, [kind, downloadFormat, missingPlot, heatmap, tables, advancedByTab]);
 
-  useEffect(() => {
-    const refresh = () => setAdvancedModeEnabled(getAdvancedPlotMode());
-    window.addEventListener("focus", refresh);
-    window.addEventListener("storage", refresh);
-    window.addEventListener("copylot:advancedPlotModeChanged", refresh);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("copylot:advancedPlotModeChanged", refresh);
-    };
-  }, []);
+  useAppearanceModeSync(setAdvancedModeEnabled);
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setAdvancedRenderByTab(advancedByTab);
-    }, 350);
-    return () => window.clearTimeout(timeout);
-  }, [advancedByTab]);
+  useAppearanceRenderDelay(advancedByTab, setAdvancedRenderByTab);
 
   const activeKindOptions = useMemo<Array<{ value: CompletenessKind; label: string }>>(() => {
     if (activeTab !== "missingPlot") return kindOptions;
@@ -240,40 +214,8 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
     if (!activeKindOptions.some((option) => option.value === kind)) {
       setKind(activeKindOptions[0].value);
     }
-  }, [activeKindOptions, kind]);
+  }, [activeKindOptions, kind, setKind]);
 
-  useEffect(() => {
-    if ((kind !== "peptide" && kind !== "precursor") || !datasets?.peptide) {
-      setPeptideQuantityColumns([]);
-      setPeptideQuantityRequiresSelection(false);
-      setPeptideQuantityError(null);
-      return;
-    }
-    const controller = new AbortController();
-    getPeptideQuantityOptions({ signal: controller.signal })
-      .then((payload) => {
-        setPeptideQuantityColumns(payload.columns);
-        setPeptideQuantityRequiresSelection(payload.requiresSelection);
-        setPeptideQuantityError(
-          payload.columns.length === 0
-            ? "No supported peptide abundance column was found in this dataset."
-            : null
-        );
-        setMissingPlot((current) => {
-          if (current.quantityColumn && payload.columns.includes(current.quantityColumn)) return current;
-          return { ...current, quantityColumn: payload.defaultColumn ?? "" };
-        });
-      })
-      .catch((error) => {
-        if (isAbortError(error)) return;
-        setPeptideQuantityColumns([]);
-        setPeptideQuantityRequiresSelection(false);
-        setPeptideQuantityError(
-          error instanceof Error ? error.message : "Failed to load peptide abundance columns"
-        );
-      });
-    return () => controller.abort();
-  }, [kind, datasets?.peptide]);
 
   useEffect(() => {
     if (!isAnnotationKind(kind) || !availableKinds.includes(kind)) {
@@ -324,16 +266,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
 
   const activeAdvancedSettings = advancedByTab[activeTab] ?? styleTemplate() ?? {};
   // Named styles and "this style on every plot" (lib/plotStyles.ts) reach these settings here.
-  const styleStoreState = useRef({ tab: activeTab, byTab: advancedByTab });
-  useEffect(() => { styleStoreState.current = { tab: activeTab, byTab: advancedByTab }; }, [activeTab, advancedByTab]);
-  useEffect(() => registerStyleStore("completeness", {
-    active: () => styleStoreState.current.byTab[styleStoreState.current.tab] ?? styleTemplate() ?? {},
-    setActive: (settings) => setAdvancedByTab((prev) => ({ ...prev, [styleStoreState.current.tab]: settings })),
-    setAll: (style) => {
-      setAdvancedByTab((prev) => Object.fromEntries(Object.entries(prev).map(([tab, value]) => [tab, withStyle(value, style)])));
-      return Object.keys(styleStoreState.current.byTab).length;
-    },
-  }), []);
+  useTabStyleStore("completeness." + kind, activeTab, advancedByTab, setAdvancedByTab);
   const activeSampleDisplayLabels = useMemo(() => {
     const rawLabels = Object.fromEntries(sampleOptions.map((sample) => [sample, sample]));
     if (activeTab === "heatmap") {
@@ -375,9 +308,6 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
 
   const plotView = useMemo(() => {
     if (activeTab === "missingPlot") {
-      if ((kind === "peptide" || kind === "precursor") && (!missingPlot.quantityColumn || peptideQuantityError)) {
-        return null;
-      }
       return {
         title: "Missing Value Plot",
         filename: `completeness_missing_plot_${kind}.png`,
@@ -392,7 +322,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
       };
     }
     return null;
-  }, [activeTab, kind, missingPlot.quantityColumn, replayUrl, peptideQuantityError]);
+  }, [activeTab, kind, replayUrl]);
   const plotDownloadUrl = useMemo(() => {
     if (!plotView) return "";
     return withPlotDownloadFormat(plotView.url, downloadFormat);
@@ -405,26 +335,26 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
   const sampleCsvUrl = useMemo(() => {
     if (!tableData || tableData.sampleSummary.length === 0) return null;
     const columns = collectColumns(tableData.sampleSummary);
-    return csvDataUrl(rowsToCsv(tableData.sampleSummary, columns));
+    return { rows: tableData.sampleSummary, columns };
   }, [tableData]);
 
   const featureCsvUrl = useMemo(() => {
     if (!tableData || tableData.featureSummary.length === 0) return null;
     const columns = collectColumns(tableData.featureSummary);
-    return csvDataUrl(rowsToCsv(tableData.featureSummary, columns));
+    return { rows: tableData.featureSummary, columns };
   }, [tableData]);
 
   const outlierCsvUrl = useMemo(() => {
     if (!tableData || tableData.outliers.length === 0) return null;
     const rows = tableData.outliers.map((sample) => ({ Sample: sample }));
-    return csvDataUrl(rowsToCsv(rows, ["Sample"]));
+    return { rows, columns: ["Sample"] };
   }, [tableData]);
 
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Data Completeness</h2>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid max-w-2xl gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor={fieldId} className="mb-2 block text-sm font-medium text-slate-700">Dataset level</label>
             <AssistantSelect
@@ -459,16 +389,6 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h3 className="text-lg font-semibold text-slate-900">Options</h3>
         <div className="mt-4">{renderOptions()}</div>
-        {(kind === "peptide" || kind === "precursor") && peptideQuantityError ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {peptideQuantityError}
-          </div>
-        ) : null}
-        {(kind === "peptide" || kind === "precursor") && peptideQuantityRequiresSelection && !missingPlot.quantityColumn ? (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Select which abundance column should be used before rendering this plot.
-          </div>
-        ) : null}
       </section>
       ) : null}
 
@@ -545,13 +465,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
                   <h4 className="text-base font-semibold text-slate-900">Sample-level Missing Values</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {sampleCsvUrl ? (
-                    <a
-                      href={sampleCsvUrl}
-                      download={`completeness_sample_summary_${kind}.csv`}
-                      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-                    >
-                      Download CSV
-                    </a>
+                    <TableDownloadLink table={sampleCsvUrl} filename={`completeness_sample_summary_${kind}.xlsx`} />
                   ) : null}
                   <NotebookDownload plotUrl={replayUrl} rendered={tableNotebook} />
                   </div>
@@ -564,13 +478,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
                   <h4 className="text-base font-semibold text-slate-900">Outliers by Missing Value %</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {outlierCsvUrl ? (
-                    <a
-                      href={outlierCsvUrl}
-                      download={`completeness_outliers_${kind}.csv`}
-                      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-                    >
-                      Download CSV
-                    </a>
+                    <TableDownloadLink table={outlierCsvUrl} filename={`completeness_outliers_${kind}.xlsx`} />
                   ) : null}
                   <NotebookDownload plotUrl={replayUrl} rendered={tableNotebook} />
                   </div>
@@ -592,13 +500,7 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
                   <h4 className="text-base font-semibold text-slate-900">Feature-level Missing Value Distribution</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {featureCsvUrl ? (
-                    <a
-                      href={featureCsvUrl}
-                      download={`completeness_feature_summary_${kind}.csv`}
-                      className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-                    >
-                      Download CSV
-                    </a>
+                    <TableDownloadLink table={featureCsvUrl} filename={`completeness_feature_summary_${kind}.xlsx`} />
                   ) : null}
                   <NotebookDownload plotUrl={replayUrl} rendered={tableNotebook} />
                   </div>
@@ -625,18 +527,6 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
             <CheckboxField assistant={false} key="text" label="Toggle Text" checked={missingPlot.text} onChange={(v) => setMissingPlot({ ...missingPlot, text: v })} />,
           ]}
           fields={[
-            ...((kind === "peptide" || kind === "precursor")
-              ? [
-                  <SelectField
-                    key="quantity-column"
-                    label="Abundance Column"
-                    value={missingPlot.quantityColumn}
-                    onChange={(value) => setMissingPlot({ ...missingPlot, quantityColumn: value })}
-                    options={peptideQuantityColumns}
-                    placeholder={peptideQuantityRequiresSelection ? "Select abundance column" : undefined}
-                  />,
-                ]
-              : []),
             <NumberField assistant={false} key="bin" label="Bin missing values" value={missingPlot.binCount} onChange={(v) => setMissingPlot({ ...missingPlot, binCount: Math.max(0, Math.round(v)) })} />,
           ]}
           size={
@@ -691,3 +581,5 @@ export default function CompletenessPage({ activeTab, onContextModeChange, noteb
     );
   }
 }
+
+export default withWorkflowSettings("completeness.v1", CompletenessPageView);

@@ -7,7 +7,6 @@ a note when the values look unusual for log2 intensities.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -18,7 +17,7 @@ from app.main import app
 from app.services.annotation_processor import detect_log2_transformed, log2_scale_hint
 from app.services.dataset_store import reset_all_datasets, save_table_dataset
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 EXAMPLE = ROOT / "proteomicscopylot" / "example_data"
 SAMPLES = ["A1", "A2", "B1", "B2"]
 
@@ -40,11 +39,18 @@ def _matrix(kind: str) -> pd.DataFrame:
 
 @pytest.mark.parametrize("kind,expected", [
     ("log10", "The values have a median of 6.6 and an interquartile range of 0.8"),
-    ("counts", "100% of the values are whole numbers, which looks like count data"),
 ])
 def test_values_that_look_like_another_scale_get_a_hint(kind, expected):
     hint = log2_scale_hint(_matrix(kind), SAMPLES)
     assert hint is not None and hint.startswith(expected)
+
+
+def test_whole_numbers_are_not_called_count_data():
+    """MaxQuant LFQ intensities are whole numbers (2026-11-13)."""
+    assert log2_scale_hint(_matrix("counts"), SAMPLES) is None
+    rng = np.random.default_rng(5)
+    lfq = pd.DataFrame(np.round(np.power(2.0, rng.normal(24, 2, (500, len(SAMPLES))))), columns=SAMPLES)
+    assert log2_scale_hint(lfq, SAMPLES) is None
 
 
 def test_natural_log_intensities_are_not_caught():
@@ -72,11 +78,9 @@ def test_low_log2_values_with_a_log2_spread_are_left_alone():
     assert log2_scale_hint(narrow, SAMPLES).startswith("The values have a median of 4.0 and an interquartile range")
 
 
-def test_columns_named_log2_are_trusted_for_the_median_but_not_for_counts():
+def test_columns_named_log2_are_trusted_for_the_median():
     frame = _matrix("log10").rename(columns={s: f"{s}.Log2Quantity" for s in SAMPLES})
     assert log2_scale_hint(frame, [f"{s}.Log2Quantity" for s in SAMPLES]) is None
-    counts = _matrix("counts").rename(columns={s: f"{s}.Log2Quantity" for s in SAMPLES})
-    assert log2_scale_hint(counts, [f"{s}.Log2Quantity" for s in SAMPLES]).startswith("100% of the values")
 
 
 def test_the_detection_itself_is_unchanged():

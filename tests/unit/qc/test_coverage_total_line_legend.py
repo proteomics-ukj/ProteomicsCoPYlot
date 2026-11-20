@@ -11,9 +11,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.schemas.annotation import AnnotationFilterConfig
+from annotation_support import save_log2_protein_annotation
 from app.services import plot_images
-from app.services.annotation_store import reset_all_annotations, save_annotation
+from app.services.annotation_store import reset_all_annotations
 
 SAMPLES = [f"{group}{i}" for group in "AB" for i in range(1, 4)]
 
@@ -28,9 +28,7 @@ def annotated():
         frame[sample] = values
     meta = pd.DataFrame({"sample": SAMPLES, "condition": [s[0] for s in SAMPLES]})
     reset_all_annotations()
-    save_annotation(kind="protein", source_data=frame, metadata=meta, log2_data=frame, filtered_data=frame,
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(frame, meta)
     yield frame
     reset_all_annotations()
 
@@ -79,3 +77,26 @@ def test_the_panel_can_drop_the_entry_and_keep_the_line(annotated, monkeypatch) 
     plot_images.qc_coverage_plot("protein", advanced={"referenceLineLegend": False})
     ax = captured["fig"].axes[0]
     assert [t.get_text() for t in ax.get_legend().get_texts()] == ["A", "B"]
+
+@pytest.mark.parametrize("level", ["peptide", "precursor"])
+def test_peptide_coverage_summary_and_labels_use_condition_counts(monkeypatch, level):
+    from matplotlib import pyplot as plt
+    counts = pd.DataFrame({"Sample": ["A_1", "A_2", "B_1"], "Value": [2, 4, 1]})
+    meta = pd.DataFrame({"label": counts.Sample, "sample": ["s1", "s2", "s3"], "condition": ["A", "A", "B"]})
+    monkeypatch.setattr(plot_images, "_peptide_coverage_summary", lambda *args: (counts, 5, meta))
+    captured = _capture(monkeypatch)
+    for summary, heights in [(False, [2, 4, 1]), (True, [3, 1])]:
+        plot_images.qc_peptide_coverage_plot(level=level, summary=summary, text=True, text_size=13,
+            random_seed=42, advanced={"sampleLabels": {"s1": "Sample one"}, "conditionLabels": {"A": "Group A"}})
+        fig = captured["fig"]
+        try:
+            ax = fig.axes[0]
+            assert [bar.get_height() for bar in ax.patches] == heights
+            assert [t.get_text().strip() for t in ax.texts] == list(map(str, heights))
+            assert all(t.get_fontsize() == 13 for t in ax.texts)
+            assert ax.get_xticklabels()[0].get_text() == ("Group A" if summary else "Sample one")
+            assert ax.get_title() == f"{level.capitalize()}s per " + ("condition" if summary else "sample")
+            if summary:
+                assert ax.texts[0].get_position()[1] == pytest.approx(3 + np.std([2, 4], ddof=1))
+        finally:
+            plt.close(fig)

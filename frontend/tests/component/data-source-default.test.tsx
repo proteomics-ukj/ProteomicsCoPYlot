@@ -13,7 +13,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../src/lib/api";
 import type { StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "./apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "./apiMock";
 import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import { AnovaPanel } from "../../src/features/stats/AnovaPanel";
 import { OraPanel } from "../../src/features/stats/OraPanel";
@@ -25,18 +25,12 @@ import KseaPage from "../../src/features/phospho/KseaPage";
 
 vi.mock("../../src/lib/api", async (original) => (await import("./apiMock")).mockApiModule(original));
 
-const OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein",
+const OPTIONS: StatisticalOptionsResponse = statisticalOptions({
   sourceUsed: "imputed",
   imputedAvailable: true,
-  availableConditions: ["A", "B"],
-  samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] },
-  pairIdsBySample: {},
-  availableIdentifiers: [{ key: "workflow", label: "Protein" }],
-  warnings: [],
   availableDataSources: ["data", "filtered", "imputed"],
   defaultDataSource: "imputed",
-};
+});
 const PROTEIN = [{ value: "protein", label: "Protein" }];
 
 function mount(element: ReactElement) {

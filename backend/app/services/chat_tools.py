@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import time
 from threading import Lock
+from typing import Literal
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,7 +32,6 @@ from app.services.provider_http import (
 )
 
 
-_TRUTHY_VALUES = {"1", "true", "yes", "on"}
 _DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 _OLLAMA_DEFAULT_PORT = 11434
 # Names Ollama itself accepts: registry/repo:tag, letters, digits, . _ - / :
@@ -617,42 +617,34 @@ def _validated_model_name(model_name: str) -> str:
     return model
 
 
-def ollama_install_model(model_name: str, endpoint_override: str | None = None) -> OllamaModelManageResponse:
+def _ollama_manage_model(
+    action: Literal["install", "remove"], model_name: str, endpoint_override: str | None,
+) -> OllamaModelManageResponse:
     model = _validated_model_name(model_name)
-    output = _ollama_http_manage_model("install", model, endpoint_override)
+    output = _ollama_http_manage_model(action, model, endpoint_override)
     _invalidate_models_cache(endpoint_override)
     refreshed = ollama_models(endpoint_override=endpoint_override)
-    detail = f"Installed model '{model}'."
+    verb = "Installed" if action == "install" else "Removed"
+    detail = f"{verb} model '{model}'."
     if output:
         detail = f"{detail} {output}"
     return OllamaModelManageResponse(
         ok=True,
-        action="install",
+        action=action,
         model=model,
         detail=detail,
         models=refreshed.models,
         selectedModel=refreshed.selectedModel,
         warnings=refreshed.warnings,
     )
+
+
+def ollama_install_model(model_name: str, endpoint_override: str | None = None) -> OllamaModelManageResponse:
+    return _ollama_manage_model("install", model_name, endpoint_override)
 
 
 def ollama_remove_model(model_name: str, endpoint_override: str | None = None) -> OllamaModelManageResponse:
-    model = _validated_model_name(model_name)
-    output = _ollama_http_manage_model("remove", model, endpoint_override)
-    _invalidate_models_cache(endpoint_override)
-    refreshed = ollama_models(endpoint_override=endpoint_override)
-    detail = f"Removed model '{model}'."
-    if output:
-        detail = f"{detail} {output}"
-    return OllamaModelManageResponse(
-        ok=True,
-        action="remove",
-        model=model,
-        detail=detail,
-        models=refreshed.models,
-        selectedModel=refreshed.selectedModel,
-        warnings=refreshed.warnings,
-    )
+    return _ollama_manage_model("remove", model_name, endpoint_override)
 
 
 def _detect_gpu_status_uncached(endpoint_override: str | None = None) -> OllamaGpuStatusResponse:
@@ -843,6 +835,11 @@ def _extract_system_and_dialogue(
     return "\n\n".join(system_parts).strip(), dialogue
 
 
+def _reply_budget_error(max_tokens: int) -> ValueError:
+    return ValueError(f"The model used its whole reply budget ({max_tokens} tokens) before it finished. "
+                      "Nothing was changed. Ask for a smaller step.")
+
+
 def _provider_call_timeout() -> float:
     """Seconds one model reply may take (`COPYLOT_AI_CALL_TIMEOUT`, default 300)."""
     return float(env_int("COPYLOT_AI_CALL_TIMEOUT", 300, minimum=30))
@@ -856,6 +853,10 @@ def _with_image(messages: list[dict[str, str]], image: str | None, part) -> list
     return sent
 
 
+def _openai_image_parts(text: str, url: str) -> list[dict]:
+    return [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]
+
+
 def _openai_chat_text(
     *,
     model: str,
@@ -867,8 +868,7 @@ def _openai_chat_text(
 ) -> str:
     request_body: dict[str, object] = {
         "model": model,
-        "messages": _with_image(messages, image, lambda text, url: [
-            {"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]),
+        "messages": _with_image(messages, image, _openai_image_parts),
         # max_completion_tokens is accepted by every current chat model and is the
         # only limit reasoning models (o-series, GPT-5) accept.
         "max_completion_tokens": max_tokens,
@@ -1237,8 +1237,7 @@ def assistant_completion(payload: ChatRequest, instruction: str, data: str, *, s
                 f"The request filled the model's {num_ctx}-token context window before the reply was complete. "
                 "Nothing was changed. Ask a narrower question or collapse the advanced plot options.")
         if parsed.get("done_reason") == "length":
-            raise ValueError(f"The model used its whole reply budget ({max_tokens} tokens) before it finished. "
-                             "Nothing was changed. Ask for a smaller step.")
+            raise _reply_budget_error(max_tokens)
     elif provider == "openai_compatible":
         from app.services import local_ai_server
 
@@ -1431,8 +1430,7 @@ def _anthropic_tool_turn(payload: ChatRequest, messages: list[dict], tools: list
     parsed = read_json_response(open_provider_request(request, timeout=_provider_call_timeout(), provider="Anthropic"),
                                  "Anthropic returned invalid JSON.")
     if parsed.get("stop_reason") == "max_tokens":
-        raise ValueError(f"The model used its whole reply budget ({max_tokens} tokens) before it finished. "
-                         "Nothing was changed. Ask for a smaller step.")
+        raise _reply_budget_error(max_tokens)
     texts: list[str] = []
     calls: list[dict] = []
     for block in parsed.get("content") or []:
@@ -1518,8 +1516,7 @@ def assistant_tool_turn(payload: ChatRequest, messages: list[dict], tools: list[
                                      "Ollama returned invalid JSON.")
         message = parsed.get("message") if isinstance(parsed.get("message"), dict) else {}
         if parsed.get("done_reason") == "length":
-            raise ValueError(f"The model used its whole reply budget ({max_tokens} tokens) before it finished. "
-                             "Nothing was changed. Ask for a smaller step.")
+            raise _reply_budget_error(max_tokens)
         for call in message.get("tool_calls") or []:
             function = call.get("function", {})
             if not isinstance(function.get("arguments"), str):
@@ -1528,8 +1525,7 @@ def assistant_tool_turn(payload: ChatRequest, messages: list[dict], tools: list[
     if provider == "openai":
         model = _resolve_chat_model(payload, provider)
         check_ai_operator_policy(provider, model)
-        body = {"model": model, "messages": _with_image(messages, image, lambda content, url: [
-            {"type": "text", "text": content}, {"type": "image_url", "image_url": {"url": url}}]),
+        body = {"model": model, "messages": _with_image(messages, image, _openai_image_parts),
             "tools": tools, "tool_choice": "required", "max_completion_tokens": max_tokens, "stream": False}
         if not reasoning_model("openai", model):
             body["temperature"] = 0
@@ -1541,8 +1537,7 @@ def assistant_tool_turn(payload: ChatRequest, messages: list[dict], tools: list[
         choices = parsed.get("choices")
         first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
         if first.get("finish_reason") == "length":
-            raise ValueError(f"The model used its whole reply budget ({max_tokens} tokens) before it finished. "
-                             "Nothing was changed. Ask for a smaller step.")
+            raise _reply_budget_error(max_tokens)
         message = first.get("message")
         return model, message if isinstance(message, dict) else {}
     if provider == "anthropic":

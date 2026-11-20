@@ -5,7 +5,6 @@ moved to their own files on 2026-10-02."""
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -18,7 +17,7 @@ from app.services.functions import filter_data
 from app.services.viewer_bootstrap import load_viewer_state
 
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 

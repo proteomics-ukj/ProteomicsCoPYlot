@@ -7,14 +7,13 @@ is consulted on a miss; a species mix-up is named.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from app.services import peptide_tools
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 
 def _frame(protein: str, peptides: list[str]) -> pd.DataFrame:

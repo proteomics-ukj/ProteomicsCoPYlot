@@ -35,8 +35,6 @@ from app.services.provider_http import (
 )
 from app.services.workload_manager import provider_deadline
 
-PROVIDER = "openai_compatible"
-LABEL = "Local server (OpenAI-compatible)"
 _DEFAULT_CONTEXT_TOKENS = 8192
 _SCHEMA_REJECTED_HINTS = ("response_format", "json_schema", "grammar", "schema")
 _CONTEXT_EXCEEDED_HINTS = ("context", "n_ctx", "too long", "maximum context", "exceed")
@@ -192,7 +190,7 @@ def context_tokens(endpoint: str | None, api_key: str | None = None) -> int:
 def model_metadata(endpoint: str | None, model: str, api_key: str | None = None) -> dict:
     """What the server says about one model: {params_b, context, vision, reasoning}.
 
-    llama.cpp lists `meta.n_params` and `meta.n_ctx_train` under `/v1/models`,
+    llama.cpp lists `meta.n_params` under `/v1/models`,
     a `multimodal` capability in its Ollama-style `models` list, and
     `modalities.vision` at `/props`. Other servers report less; missing values
     stay None. Cached for five minutes per server and model.
@@ -218,9 +216,6 @@ def model_metadata(endpoint: str | None, model: str, api_key: str | None = None)
                 params = meta.get("n_params")
                 if isinstance(params, (int, float)) and not isinstance(params, bool) and params > 0:
                     found["params_b"] = round(float(params) / 1e9, 2)
-                trained = meta.get("n_ctx_train")
-                if isinstance(trained, int) and not isinstance(trained, bool) and trained > 0:
-                    found["trained_context"] = trained
         for entry in listed.get("models") or []:
             if isinstance(entry, dict) and model in {entry.get("name"), entry.get("model")}:
                 capabilities = {str(item).lower() for item in entry.get("capabilities") or []}

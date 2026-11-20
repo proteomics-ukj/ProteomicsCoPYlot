@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import pandas as pd
@@ -31,6 +29,8 @@ def test_distribution_and_sty_standalone(phosphosites, tmp_path, plot, site_num,
                                    'xTickLabelRotation': 25})
     if plot == 'distribution':
         options['cutoff'] = trim
+        options['advanced'].update(distributionNoteVisible=not site_num, distributionNoteText='Custom trim note',
+                                   distributionNoteXOffset=-12, distributionNoteYOffset=-8)
     image, token = renderer(**options)
     assert image == getattr(phospho_tools, f'phospho_{plot}_png')(**options)
     recipe = snapshots.get(get_session_id(), token)
@@ -46,10 +46,9 @@ def test_distribution_and_sty_standalone(phosphosites, tmp_path, plot, site_num,
         archive.extractall(tmp_path)
         name = next(n for n in archive.namelist() if n.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    run = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    run = replay_cells(cells, tmp_path, timeout=90)
     assert run.returncode == 0, run.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
 
@@ -104,10 +103,9 @@ def test_coverage_exact_standalone_and_scale(phosphosites, tmp_path, mode, log2)
         archive.extractall(tmp_path)
         name = next(n for n in archive.namelist() if n.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    run = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    run = replay_cells(cells, tmp_path, timeout=90)
     assert run.returncode == 0, run.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
 
@@ -152,10 +150,9 @@ def test_counts_exact_and_standalone(phosphosites, tmp_path, cutoff):
         archive.extractall(tmp_path)
         name = next(n for n in archive.namelist() if n.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    run = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    run = replay_cells(cells, tmp_path, timeout=90)
     assert run.returncode == 0, run.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == image
 
@@ -197,3 +194,22 @@ def test_count_snapshot_is_frozen_and_owned(phosphosites, monkeypatch):
             assert client.get(archive_url).status_code == 404
         finally:
             reset_session_id(owner)
+
+
+@pytest.mark.parametrize("visible", [True, False])
+def test_distribution_note_visibility_text_and_offsets(monkeypatch, visible):
+    from app.services.notebook_phospho import category_module
+    module = category_module('distribution')
+    data = pd.DataFrame({'Phosphoprotein': ['A', 'B', 'C'], 'site_num': [1, 2, 8]})
+    monkeypatch.setattr(module, 'to_png_bytes', lambda fig, *_args, **_kwargs: fig)
+    fig = module.render_plot(data, advanced={'distributionNoteVisible': visible,
+        'distributionNoteText': 'Custom note', 'distributionNoteXOffset': -12, 'distributionNoteYOffset': 9})
+    try:
+        texts = fig.axes[0].texts
+        assert len(texts) == int(visible)
+        if visible:
+            assert texts[0].get_text() == 'Custom note'
+            assert texts[0].get_position() == (-12, 9)
+        assert [bar.get_height() for bar in fig.axes[0].patches] == [1, 1, 1]
+    finally:
+        module.get_plt().close(fig)

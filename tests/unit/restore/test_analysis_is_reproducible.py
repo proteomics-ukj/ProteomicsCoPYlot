@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[3]
 
+from annotation_support import save_log2_protein_annotation
 from app.main import app
-from app.schemas.annotation import AnnotationFilterConfig
 from app.services import stats_tools as st
 from app.services.annotation_store import (
     get_annotation,
     reset_all_annotations,
-    save_annotation,
 )
 from app.services.dataset_store import reset_all_datasets, save_table_dataset
 from app.services.runtime_cache import invalidate_runtime_cache
@@ -57,11 +54,7 @@ def loaded(tmp_path):
     path = tmp_path / "protein.tsv"
     frame.to_csv(path, sep="\t", index=False)
     save_table_dataset(filename=str(path), kind="protein", frame=frame)
-    save_annotation(
-        kind="protein", source_data=frame, metadata=metadata, log2_data=frame,
-        filtered_data=frame, is_log2_transformed=True, metadata_source="manual",
-        filter_config=AnnotationFilterConfig(), auto_detected=False, warnings=[],
-    )
+    save_log2_protein_annotation(frame, metadata)
     try:
         yield frame, metadata, path
     finally:

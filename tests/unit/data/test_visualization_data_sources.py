@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from annotation_support import save_log2_protein_annotation
 from app.services import annotation_store, comparison_tools, data_tools, single_protein_tools
 from app.services import analysis_matrix
 from app.services.analysis_matrix import DATA_SOURCES
@@ -58,8 +59,7 @@ def boxplot_project():
     """
     import numpy as np
 
-    from app.schemas.annotation import AnnotationFilterConfig
-    from app.services.annotation_store import reset_all_annotations, save_annotation
+    from app.services.annotation_store import reset_all_annotations
     from app.services.dataset_store import reset_all_datasets, save_table_dataset
 
     reset_all_datasets()
@@ -69,10 +69,7 @@ def boxplot_project():
                           **{sample: [float(index), float(index) + 1] for index, sample in enumerate(samples)}})
     frame.loc[0, "s2"] = np.nan
     save_table_dataset("boxplot.tsv", "protein", frame)
-    save_annotation(kind="protein", source_data=frame, log2_data=frame, filtered_data=frame,
-                    metadata=pd.DataFrame({"sample": samples, "condition": list("AAABBB")}),
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(frame, pd.DataFrame({"sample": samples, "condition": list("AAABBB")}))
     yield
     reset_all_datasets()
     reset_all_annotations()

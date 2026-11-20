@@ -12,13 +12,11 @@ logic in it: it decides which labels are drawn at all.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services import stats_tools
 
@@ -157,7 +155,7 @@ def test_nothing_is_labelled_unless_asked(volcano_frame) -> None:
 
 
 def test_the_labels_are_the_most_significant_in_each_direction(volcano_frame) -> None:
-    fig, plt = _render(volcano_frame, label_top_up=3, label_top_down=2)
+    fig, plt = _render(volcano_frame, label_top_up=3, label_top_down=2, highlight_labels=True)
     try:
         drawn = {text.get_text() for text in fig.axes[0].texts if text.get_text()}
         expected = set(
@@ -179,7 +177,7 @@ def test_labels_never_overlap_each_other(volcano_frame) -> None:
     the page is the case that produced an unreadable smear at the top of the
     figure, which is exactly where the reader is looking.
     """
-    fig, plt = _render(volcano_frame, label_top_up=20, label_top_down=20)
+    fig, plt = _render(volcano_frame, label_top_up=20, label_top_down=20, highlight_labels=True)
     try:
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
@@ -223,5 +221,29 @@ def test_an_empty_frame_still_renders(volcano_frame) -> None:
     fig, plt = _render(volcano_frame.head(0), label_top_up=5, label_top_down=5)
     try:
         assert fig.axes[0] is not None
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize("advanced, expected_color, expected_width, enabled", [
+    ({}, "#000000", 0.5, True),
+    ({"volcanoLabelConnectorColor": "#123456", "volcanoLabelConnectorWidth": 1.7}, "#123456", 1.7, True),
+    ({"volcanoLabelConnector": False}, "#000000", 0.5, False),
+])
+def test_protein_labels_use_first_name_and_configurable_connectors(volcano_frame, advanced, expected_color, expected_width, enabled):
+    from matplotlib.colors import to_rgba
+    frame = volcano_frame.copy()
+    frame["ProteinNames"] = frame["ProteinNames"].astype(str) + ";SECOND_NAME"
+    original = frame.copy(deep=True)
+    fig, plt = _render(frame, label_top_up=3, label_top_down=3, highlight_labels=True, advanced=advanced)
+    try:
+        assert fig.axes[0].texts
+        for annotation in fig.axes[0].texts:
+            assert ";" not in annotation.get_text()
+            assert (annotation.arrow_patch is not None) == enabled
+            if enabled:
+                assert annotation.arrow_patch.get_edgecolor() == to_rgba(expected_color)
+                assert annotation.arrow_patch.get_linewidth() == expected_width
+        pd.testing.assert_frame_equal(frame, original)
     finally:
         plt.close(fig)

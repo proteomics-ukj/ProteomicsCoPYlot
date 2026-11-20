@@ -292,6 +292,46 @@ describe("applying changes", () => {
   });
 });
 
+describe("a field that rebuilds its page", () => {
+  // Dataset level remounts the plot's fields: the same field is registered again under a
+  // new id. The change happened, so it is recorded instead of "did not accept the requested value".
+  function Level() {
+    const [level, setLevel] = useState("protein");
+    return (
+      <Surface key={level}>
+        <AssistantSelect aria-label="Dataset level" data-assistant-permission="view" value={level} onChange={(event) => setLevel(event.target.value)}>
+          {["protein", "phospho"].map((option) => <option key={option} value={option}>{option}</option>)}
+        </AssistantSelect>
+      </Surface>
+    );
+  }
+
+  it("reads the new value from the rebuilt field", () => {
+    render(<Level />);
+    const before = byLabel("Dataset level");
+    const receipts = applyAssistantControls([{ type: "set_control", target: before.id, value: "phospho" }]);
+    expect(receipts).toEqual(['Set Dataset level to "phospho".']);
+    expect(byLabel("Dataset level").value).toBe("phospho");
+    expect(byLabel("Dataset level").id).not.toBe(before.id);
+  });
+
+  it("still refuses when the rebuilt field holds another value", () => {
+    function Stubborn() {
+      const [count, setCount] = useState(0);
+      return (
+        <Surface key={count}>
+          <AssistantSelect aria-label="Dataset level" data-assistant-permission="view" value="protein" onChange={() => setCount(count + 1)}>
+            {["protein", "phospho"].map((option) => <option key={option} value={option}>{option}</option>)}
+          </AssistantSelect>
+        </Surface>
+      );
+    }
+    render(<Stubborn />);
+    expect(() => applyAssistantControls([{ type: "set_control", target: byLabel("Dataset level").id, value: "phospho" }]))
+      .toThrow(/did not accept the requested value/);
+  });
+});
+
 describe("adding canvas tiles", () => {
   const state = { wrong: false, failAt: Infinity };
 

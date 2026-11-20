@@ -31,17 +31,12 @@ import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import * as api from "../../src/lib/api";
 import { readAssistantControls } from "../../src/lib/assistantControls";
 import type { StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "../component/apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "../component/apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("../component/apiMock")).mockApiModule(original));
 
 const PROTEIN = [{ value: "protein", label: "Protein" }];
-const OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B"],
-  samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] }, pairIdsBySample: {},
-  availableIdentifiers: [{ key: "workflow", label: "Protein" }], warnings: [],
-  availableDataSources: ["data"], defaultDataSource: "data",
-};
+const OPTIONS: StatisticalOptionsResponse = statisticalOptions();
 
 const PEPTIDE_OVERVIEW = {
   filename: "peptides.tsv", path: "peptides.tsv", rows: 10, columns: 4, columnNames: ["Sequence", "a1", "b1"],

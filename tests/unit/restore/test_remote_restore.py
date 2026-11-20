@@ -56,7 +56,10 @@ def test_remote_restore_requires_uploads_and_preserves_state_until_complete(clie
     assert restored.json()["ok"] and restored.json()["uiState"]["test"]
     dataset = client.get("/api/datasets/current").json()["protein"]
     assert dataset["filename"] == "replacement.csv"
-    assert dataset.get("sourcePath") is None
+    # The server's own copy of the upload is the source, as for any upload; the
+    # path the client named is never used.
+    assert dataset["sourcePath"] != str(forbidden)
+    assert Path(dataset["sourcePath"]).parent.name == "restore_uploads"
 
 
 @pytest.mark.parametrize("path", ["/etc/passwd", "../../secret.tsv", "C:/secret.tsv", "//server/share/secret.tsv"])

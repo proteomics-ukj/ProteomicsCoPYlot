@@ -1,10 +1,8 @@
 from __future__ import annotations
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import numpy as np
@@ -36,8 +34,63 @@ def coverage_data():
     return frame, meta
 
 
+def test_repeat_and_report_reuse_coverage_but_capture_each_notebook(coverage_data, monkeypatch):
+    from app.services import notebook_qc
+    from app.services.notebook_preprocessing import report_recipe_sink
+
+    first, first_token = render_qc("protein", dpi=90)
+    monkeypatch.setattr(notebook_qc, "dataframe_bytes", lambda _: pytest.fail("redrew cached coverage"))
+    repeat, repeat_token = render_qc("protein", dpi=90)
+    assert first == repeat and first_token != repeat_token
+    session = get_session_id()
+    original = snapshots.get(session, first_token)
+    assert original.resources == snapshots.get(session, repeat_token).resources
+
+    recipes = []
+    token = report_recipe_sink.set(recipes.append)
+    try:
+        assert render_qc("protein", dpi=90) == (first, "report-section")
+    finally:
+        report_recipe_sink.reset(token)
+    assert len(recipes) == 1 and recipes[0].resources == original.resources
+
+
+def test_preview_skips_serialization_and_preserves_figure(coverage_data, monkeypatch):
+    from app.services import notebook_qc
+    from app.services.plot_export import notebook_capture_allowed
+
+    expected, token = render_qc("protein", dpi=90)
+    assert token
+    monkeypatch.setattr(notebook_qc, "dataframe_bytes", lambda _: pytest.fail("serialized a preview"))
+    capture = notebook_capture_allowed.set(False)
+    try:
+        assert render_qc("protein", dpi=90) == (expected, "")
+    finally:
+        notebook_capture_allowed.reset(capture)
+
+
+def test_feature_cv_download_matches_rendered_and_live_data(coverage_data):
+    from app.api.plots_qc import qc_feature_cvs_route
+
+    _, token = render_qc("protein", plot="cv", dpi=90)
+    # Linear values: P1 A (1, 2) B (4, 16); P2 A (4) B (8, 32); P3 B (64).
+    expected = pd.DataFrame({
+        "ProteinNames": ["P1", "P2", "P3"],
+        "A mean log2": [0.5, 2.0, np.nan],
+        "A CV (%)": [100 * np.sqrt(0.5) / 1.5, np.nan, np.nan],
+        "B mean log2": [3.0, 4.0, 6.0],
+        "B CV (%)": [100 * np.sqrt(72) / 10, 100 * np.sqrt(288) / 20, np.nan],
+        "All samples mean log2": [1.75, 10 / 3, 6.0],
+        "All samples CV (%)": [100 * np.std([1, 2, 4, 16], ddof=1) / 5.75, 100 * np.std([4, 8, 32], ddof=1) / (44 / 3), np.nan],
+    })
+    for snapshot in ("", token):
+        response = qc_feature_cvs_route("protein", snapshot)
+        actual = pd.read_csv(io.BytesIO(response.body))
+        pd.testing.assert_frame_equal(actual, expected)
+
+
 @pytest.mark.parametrize("options", [
-    {}, {"include_id": True}, {"summary": True}, {"summary": True, "text": True},
+    {}, {"random_seed": 23}, {"include_id": True}, {"summary": True}, {"summary": True, "text": True},
     {"legend": False, "header": False, "reference_line": False},
     {"width_cm": 24, "height_cm": 12, "dpi": 90, "text": True},
     {"advanced": {"titleElement": {"text": "A custom title", "size": 17, "bold": True},
@@ -50,7 +103,7 @@ def test_portable_coverage_matches_ui_png_exactly(coverage_data, options):
     assert bytes(actual) == bytes(expected)
     recipe = snapshots.get(get_session_id(), token)
     assert recipe.resources["original.png"] == actual
-    assert recipe.settings["random_seed"] == options.get("random_seed", 187)
+    assert recipe.settings["random_seed"] == options.get("random_seed", 1)
     assert recipe.provenance["dataSource"] == "data"
     assert not recipe.uses_imputed_input
     expected_table = qc_coverage_table("protein", summary=options.get("summary", False))
@@ -75,12 +128,14 @@ def test_ui_notebook_runs_offline_and_reproduces_plot_and_table(coverage_data, t
         archive.extractall(tmp_path)
         notebook_name = next(name for name in archive.namelist() if name.endswith(".ipynb"))
     notebook = json.loads((tmp_path / notebook_name).read_text())
-    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    completed = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, '.');\n" + cells],
-                               cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    completed = replay_cells(cells, tmp_path, timeout=90)
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "reproduced.png").read_bytes() == original
+    if plot == "cv":
+        from app.api.plots_qc import qc_feature_cvs_route
+        assert (tmp_path / "reproduced_feature_cvs.csv").read_bytes() == qc_feature_cvs_route("protein", token).body
     if plot in {"coverage", "boxplot", "cv"}:
         table_options = {key: value for key, value in options.items() if key in {"summary", "mode"}}
         expected = getattr(table_functions, f"qc_{plot}_table")("protein", **table_options)
@@ -89,7 +144,8 @@ def test_ui_notebook_runs_offline_and_reproduces_plot_and_table(coverage_data, t
         assert not (tmp_path / "resources/table.parquet").exists()
 
 
-def test_coverage_download_route_is_frozen_and_session_owned(coverage_data, monkeypatch):
+@pytest.mark.parametrize("matrices", [False, True])
+def test_coverage_download_route_is_frozen_and_session_owned(coverage_data, monkeypatch, matrices):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.routes_plots import router
@@ -110,18 +166,21 @@ def test_coverage_download_route_is_frozen_and_session_owned(coverage_data, monk
         assert client.get(table_url).json() == original_table.json()
         assert client.get(table_url + "&summary=true").status_code == 409
         assert client.get(table_url.replace("/protein/", "/phospho/")).status_code == 409
-        download = client.get(f"/api/plots/notebooks/{token}.zip")
+        download_url = f"/api/plots/notebooks/{token}.zip?matrices={str(matrices).lower()}"
+        download = client.get(download_url)
         assert download.status_code == 200
         assert download.headers["cache-control"] == "no-store"
-        assert client.get(f"/api/plots/notebooks/{token}.zip").content == download.content
+        assert client.get(download_url).content == download.content
         with ZipFile(io.BytesIO(download.content)) as archive:
             assert b"GNU GENERAL PUBLIC LICENSE" in archive.read("LICENSE")
             assert archive.read("resources/original.png") == response.content
-            captured = pd.read_parquet(io.BytesIO(archive.read("resources/input.parquet")))
-            assert captured.iloc[0, 1] == 0.0
+            assert ("resources/input.parquet" in archive.namelist()) is matrices
+            if matrices:
+                captured = pd.read_parquet(io.BytesIO(archive.read("resources/input.parquet")))
+                assert captured.iloc[0, 1] == 0.0
         owner = set_session_id("another-session")
         try:
-            assert client.get(f"/api/plots/notebooks/{token}.zip").status_code == 404
+            assert client.get(download_url).status_code == 404
             assert client.get(table_url).status_code == 404
         finally:
             reset_session_id(owner)
@@ -180,6 +239,7 @@ def test_distribution_routes_use_matching_snapshot_tables(coverage_data, plot, p
     ("histogram", {}), ("histogram", {"header": False, "legend": False}),
     ("histogram", {"advanced": {"conditionColors": {"A": "#112277"}, "xTickLabelRotation": 20}}),
     ("abundance", {}), ("abundance", {"condition": "A", "legend": False}),
+    ("abundance", {"search": "P1", "top_high": 2, "top_low": 1, "highlight_labels": True}),
     ("abundance", {"advanced": {"conditionColors": {"B": "#770022"}, "titleElement": {"text": "Abundance"}}}),
     ("correlation", {}), ("correlation", {"method": "Ellipse", "include_id": True, "full_range": True}),
     ("correlation", {"advanced": {"titleElement": {"text": "Correlation"}, "xTickLabelRotation": 35}}),
@@ -221,6 +281,8 @@ def test_static_qc_edge_cases_retain_renderer_parity(coverage_data, case):
 
 @pytest.mark.parametrize("options", [
     {}, {"condition": "B", "legend": False},
+    {"search": "P1", "top_high": 2, "top_low": 1, "highlight_labels": True,
+     "advanced": {"abundanceHighlightColor": "#aa33bb", "conditionLabels": {"A": "Control"}}},
     {"advanced": {"conditionColors": {"A": "#BB2200"}, "conditionLabels": {"A": "Renamed"},
                   "titleElement": {"text": "Interactive test", "size": 20}, "xTickLabelRotation": 35}},
 ])
@@ -243,10 +305,9 @@ def test_interactive_abundance_matches_original_and_runs_offline(coverage_data, 
         archive.extractall(tmp_path)
         notebook_name = next(name for name in archive.namelist() if name.endswith(".ipynb"))
     notebook = json.loads((tmp_path / notebook_name).read_text())
-    cells = "\n".join("".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code")
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    completed = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, '.');\n" + cells],
-                               cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    completed = replay_cells(cells, tmp_path, timeout=90)
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "reproduced.html").read_text(encoding="utf-8") == html
 

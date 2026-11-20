@@ -1,8 +1,15 @@
 import { defineConfig } from '@playwright/test';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const localPython = '../backend/.venv/Scripts/python.exe';
 const python = process.env.COPYLOT_TEST_PYTHON ?? (existsSync(localPython) ? localPython : 'python');
+
+// Playwright can forcibly terminate its Python web server on Windows before
+// Python's TemporaryDirectory exits. The runner owns the enclosing directory.
+const serverTemp = mkdtempSync(join(tmpdir(), 'copylot-playwright-'));
+process.once('exit', () => rmSync(serverTemp, { recursive: true, force: true, maxRetries: 3 }));
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -17,6 +24,7 @@ export default defineConfig({
     trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: [
     { command: `"${python}" ../tests/browser_server.py`, url: 'http://127.0.0.1:8187/api/health',
+      env: { TEMP: serverTemp, TMP: serverTemp, TMPDIR: serverTemp },
       reuseExistingServer: false, timeout: 120_000 },
     { command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5187', url: 'http://127.0.0.1:5187',
       env: { VITE_PROXY_TARGET: 'http://127.0.0.1:8187' }, reuseExistingServer: false },

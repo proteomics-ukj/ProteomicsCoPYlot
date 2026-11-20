@@ -39,6 +39,24 @@ def clean_stores():
     reset_all_datasets()
 
 
+def test_named_packages_preserves_legacy_names_order_and_entries():
+    named = [{"name": value} for value in (" A ", "A", "a", None, 0, False)]
+    packages = [None, [], "ignored", {}, {"name": " \t"}, *named]
+    result = list(restore_state._named_packages(packages))
+    assert [name for name, _ in result] == ["A", "A", "a", "None", "0", "False"]
+    assert all(entry is original for (_, entry), original in zip(result, named))
+    assert named[0]["name"] == " A "
+
+
+def test_named_packages_reads_each_entry_when_its_turn_arrives():
+    packages = [{"name": "first"}, {"name": "old"}]
+    entries = iter(restore_state._named_packages(packages))
+    assert next(entries) == ("first", packages[0])
+    packages[1]["name"] = " updated "
+    packages.append({"name": "last"})
+    assert list(entries) == [("updated", packages[1]), ("last", packages[2])]
+
+
 def _export() -> dict:
     return json.loads(gzip.decompress(restore_state.export_state_blob()).decode("utf-8"))
 
@@ -87,7 +105,7 @@ def test_export_and_import_share_table_limits(monkeypatch, setting, limit):
 
 @pytest.mark.parametrize('expanded', [False, True])
 def test_export_and_import_share_byte_limits(monkeypatch, expanded):
-    payload = {'format': restore_state._STATE_FORMAT, 'uiState': {'label': '\u03b1' * 1000}}
+    payload = {'format': restore_state._STATE_FORMAT, 'formatVersion': restore_state._STATE_FORMAT_VERSION, 'uiState': {'label': '\u03b1' * 1000}}
     blob = restore_state._serialize_state_payload(payload)
     setting = 'COPYLOT_RESTORE_EXPANDED_MAX_BYTES' if expanded else 'COPYLOT_RESTORE_UPLOAD_MAX_BYTES'
     size = len(gzip.decompress(blob)) if expanded else len(blob)
@@ -153,7 +171,7 @@ def test_an_unreadable_imputation_record_keeps_the_matrix_and_warns(tmp_path):
     _save_protein(tmp_path, with_imputation=True)
     state = _export()
     entry = state["backend"]["packages"][0]["annotations"][0]
-    assert entry["imputedFrame"] is not None
+    assert entry["imputedSparse"] is not None
     entry["imputation"] = {"mode": "numerical", "applied": True, "seed": -5}  # fails validation (seed >= 0)
 
     reset_all_annotations()
@@ -413,11 +431,20 @@ def _save_filtered_with_imputation(tmp_path: Path, *, min_present: int) -> None:
     )
 
 
-def test_an_imputed_matrix_with_other_rows_than_the_filter_is_discarded_with_a_warning(tmp_path):
+def _as_full_matrix(entry: dict) -> None:
+    """The entry as saves before 1.0.0b2 wrote it: the whole imputed matrix."""
+    del entry["imputedSparse"]
+    entry["imputedFrame"] = restore_state._frame_to_payload(get_annotation("protein").imputed_data)
+
+
+@pytest.mark.parametrize("full_matrix", [False, True])
+def test_an_imputed_matrix_with_other_rows_than_the_filter_is_discarded_with_a_warning(tmp_path, full_matrix):
     _save_filtered_with_imputation(tmp_path, min_present=1)
     state = _export()
     entry = state["backend"]["packages"][0]["annotations"][0]
-    assert entry["imputedFrame"] is not None
+    assert entry["imputedSparse"] is not None and entry["imputedFrame"] is None
+    if full_matrix:
+        _as_full_matrix(entry)
     # Saved under one filter, restored under a stricter one: the filtered
     # matrix shrinks, the saved imputed matrix does not.
     entry["filter"]["minPresent"] = 2
@@ -430,11 +457,16 @@ def test_an_imputed_matrix_with_other_rows_than_the_filter_is_discarded_with_a_w
     assert annotation.imputation is not None and annotation.imputation.applied is False
 
 
-def test_an_imputed_matrix_one_row_short_is_discarded(tmp_path):
+@pytest.mark.parametrize("full_matrix", [False, True])
+def test_an_imputed_matrix_one_row_short_is_discarded(tmp_path, full_matrix):
     _save_filtered_with_imputation(tmp_path, min_present=1)
     state = _export()
     entry = state["backend"]["packages"][0]["annotations"][0]
-    entry["imputedFrame"]["data"] = entry["imputedFrame"]["data"][:-1]
+    if full_matrix:
+        _as_full_matrix(entry)
+        entry["imputedFrame"]["data"] = entry["imputedFrame"]["data"][:-1]
+    else:
+        entry["imputedSparse"]["rows"] -= 1
     reset_all_annotations()
     reset_all_datasets()
     result = restore_state.apply_restore_state(state, {})
@@ -442,15 +474,21 @@ def test_an_imputed_matrix_one_row_short_is_discarded(tmp_path):
     assert get_annotation("protein").imputed_data.empty
 
 
-def test_a_matching_imputed_matrix_is_kept_without_a_warning(tmp_path):
+@pytest.mark.parametrize("full_matrix", [False, True])
+def test_a_matching_imputed_matrix_is_kept_without_a_warning(tmp_path, full_matrix):
     _save_filtered_with_imputation(tmp_path, min_present=1)
     state = _export()
+    saved = get_annotation("protein").imputed_data.copy()
+    if full_matrix:
+        _as_full_matrix(state["backend"]["packages"][0]["annotations"][0])
     reset_all_annotations()
     reset_all_datasets()
     result = restore_state.apply_restore_state(state, {})
     assert not any("Discarded stale imputed data" in w for w in result.warnings), result.warnings
     annotation = get_annotation("protein")
     assert not annotation.imputed_data.empty and annotation.imputation.applied is True
+    if not full_matrix:
+        pd.testing.assert_frame_equal(annotation.imputed_data, saved)
 
 
 def test_restore_does_not_resurrect_imputed_rows_after_filter_excludes_everything(tmp_path):

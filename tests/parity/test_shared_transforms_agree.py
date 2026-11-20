@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -23,7 +22,6 @@ import pytest
 from app.services import copylot_core, functions as backend
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
 
 # Carried in both places with the same body (docstrings and annotations aside).
 SAME_DEFINITION = [

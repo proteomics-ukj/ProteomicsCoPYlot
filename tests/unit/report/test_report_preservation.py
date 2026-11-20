@@ -80,39 +80,63 @@ report = importlib.import_module('app.services.report_function')
 # stripping that one keyword from the recorded call reproduces every previous
 # hash (verified for all 18 cases). The option itself is covered by
 # tests/unit/stats/test_volcano_highlight_options.py.
+# 2026-10-30: Beta 2 changes default seeds to 1, retention-time defaults to
+# scatter/100 bins, and phosphosite coverage to separate condition-count and
+# localization plots. All 24 old fingerprints were reproduced against HEAD;
+# HTML and renderer-call diffs contain only these intended changes.
+# 2026-11-10: localization coverage now inherits the selected palette unless
+# explicit colors were saved. Reinstating only the two old color fallbacks
+# reproduces all 24 previous hashes; 12 phospho cases intentionally change.
+# Interactive volcano reports now forward both top-N selections, including
+# zeros. Removing only those two arguments reproduces all 24 previous hashes.
+# 2026-11-10: reviewed all 24 report variants: compact imputation prose,
+# localization title, and the STY section/renumbering. Existing renderer calls
+# are identical; only the STY renderer call is added.
+# 2026-11-11: every case moved. The contents are written from the section
+# headings (each a link to the heading's new `id`, group lines reading like the
+# level headings), level headings carry a class, a part that cannot be drawn is
+# left out of the report with its section instead of leaving a note, and each
+# volcano is drawn before its text is written. Renderer calls are the same set
+# in all 24 cases (compared against the previous code); the HTML differences
+# are those. Checked by test_report_contents.py and test_error_disclosure.py.
+# 2026-11-18: every case with a protein or phosphosite level moved, because the
+# coverage section now carries two tables: per sample (`summary=False`) and per
+# condition (`summary=True`), whatever the plot type. Before, one table followed
+# the plot's Summary Type. The second `qc_coverage_table` call and the fixed
+# `summary` argument of the first are the whole difference.
 SNAPSHOTS = {
-    'qc_custom:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'qc_custom:protein': '5393488d9a196b4ed576ba9a10614837b9a79ab19688f2fe758628a69de4b056',
-    'qc_custom:phospho': 'a9c2550163ee2d380d92c20ea13a4f92f96a7d94022fe94e771293b912c0de85',
-    'qc_custom:peptide,protein,phospho': '1a75d9b64edef24489bb7762413e3740a049b1835f1b9db174f7f73855e29bee',
-    'qc_invalid:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'qc_invalid:protein': '80db568f3a627bfb83926a71fc9bdc5336a73c5ac717f770fec3ce4483f90c15',
-    'qc_invalid:phospho': '361312300bbd784e361654146e5a896544d1e928a65dc12c31035edfd5b9bfbc',
-    'qc_invalid:peptide,protein,phospho': '4f33ac6ce87429780ae697be73b3e66f9a542caec68791e45352dc125316d0b7',
-    'default:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
+    'qc_custom:': '8bd0154e9fcd89a86057b270c8d9a5f469bfb7a1d9815912d55b898797d21eb5',
+    'qc_custom:protein': 'e53721a8e5de38c69f566d0778d0d9e6c1167ddbc7d89d0e22ec619410098cd8',
+    'qc_custom:phospho': '0dec21fa413f6173c06da41892a99b48693df7a2a25b125e4a7fa957088baca8',
+    'qc_custom:peptide,protein,phospho': '1e5373798477464dd85a32418bdacce6084d73635dd3db980fdcbde7d21d3bd7',
+    'qc_invalid:': '8bd0154e9fcd89a86057b270c8d9a5f469bfb7a1d9815912d55b898797d21eb5',
+    'qc_invalid:protein': 'bb4ac7a406bb5b24f6972fdeed7c71af0625ff340a6125e084a7847cc39928e9',
+    'qc_invalid:phospho': '2dfe058b303c08b03bd9bf61379cf2346e2807503c7e4d443e874f442ac77d30',
+    'qc_invalid:peptide,protein,phospho': '531b333a296b8c4f8387ed0940ea06a154a1e1ee40ec49fead71ac9cc9d28a93',
+    'default:': '8bd0154e9fcd89a86057b270c8d9a5f469bfb7a1d9815912d55b898797d21eb5',
     # The three `default` snapshots below changed when advanced mode stopped
     # gating the appearance settings: the case's custom PCA title now reaches
     # the PCA renderer with the panel closed, as it reaches the plot on screen.
     # That forwarded title is the whole difference.
-    'default:protein': '8bb5adbfe05c6f9640e414fe927a95190b194b0529caab6e6b734e08ba5b9fb5',
-    'default:phospho': '618b320057ba891536076a333c1309b22fb1f14641ce2e352633269f16f7bd2b',
-    'default:peptide,protein,phospho': '9c93928148b483816b46bb94f8c954a6150e0a702f0569ec3fbe18e83bd2b9c5',
-    'custom:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'custom:protein': 'e0bbebeb6d932c0b1ca6858b36867784a0868912d309aaba9e2a04fa99dd4436',
-    'custom:phospho': 'ea3579886e1ed732bbead102e4d7ea8e22a7e00857c90362d79c39d99f0d2d54',
-    'custom:peptide,protein,phospho': '2bf1c578f2408489d4672012ba9264fb4cd47ae89b0b1b2a9034af1e2c3ae98b',
-    'interactive:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'interactive:protein': 'f666e3cbfaa3afd3f545ff88ccbbe77a1f74029a05abddb80540410a5909d154',
-    'interactive:phospho': '890ebd244775f0a5d57e584af45da2c16b47b186ef664123968701895c40ff99',
-    'interactive:peptide,protein,phospho': '582766bae196aef0c58bc3436918538d81dd889e34548d688fd272d00480efa7',
-    'failure:': '31e9b3e4680befa02db2ec0566567663337d540546ff762cdaa8127b85e1d920',
-    'failure:protein': 'e817ef0c1b71ca8f2171bc713d4737dd7b605c14f2a1b806dab410e2eb8017df',
-    'failure:phospho': '73f9024c8137bab142058ca01f11ec2cfc9877a3f0f39a71257bbb0a35e79655',
-    'failure:peptide,protein,phospho': '8fc95bf45032c9ff92804b9769f65fe29ab1ad85e307a317cd4cc664bf216c9d',
+    'default:protein': 'a2135cca5c22f2efa3cad0b98515efe084cd5bd13ff038fdc5bb3fc1bb1119fa',
+    'default:phospho': '2ea7c57de111335def6c681918b2b232b1e7a4237ae3591f1059b6264bcb965d',
+    'default:peptide,protein,phospho': '59d9be73f10c41c1196421cf4359b92afa55443de478629b9bb4b9f1d9a07c1b',
+    'custom:': '8bd0154e9fcd89a86057b270c8d9a5f469bfb7a1d9815912d55b898797d21eb5',
+    'custom:protein': 'b30c49fddba1783a052cf2a6e225fb65f99cf859df6811fa163feaa1299470a8',
+    'custom:phospho': 'f3fd481e3a93029dac204fbc28bc21fe29aa3a792491816234e265222f86474f',
+    'custom:peptide,protein,phospho': 'b0f06d644ca8567ee53e81224395d243822ae30ef0846bc49be04a0e800f11f1',
+    'interactive:': '8bd0154e9fcd89a86057b270c8d9a5f469bfb7a1d9815912d55b898797d21eb5',
+    'interactive:protein': '3e384feb44ca88e485be9d9cd1ba72745b0b2f1050f090394ff82fa132683835',
+    'interactive:phospho': '7036e1f082174a13b9272be5e3abac2cf5e6ccb112900c8e9e9d9f8fd0f8bc62',
+    'interactive:peptide,protein,phospho': '1828cd54f8caa0311066800a3e86d7ba89cbd75f0b751bf34258fd02ff989b44',
+    'failure:': '8bd0154e9fcd89a86057b270c8d9a5f469bfb7a1d9815912d55b898797d21eb5',
+    'failure:protein': 'b4c9cdf6c417da9d0d1322f13d342869aad71f738f68b8a0835df358b725f743',
+    'failure:phospho': '297be7ffedf2f1db1ffe9d89d8f44ba1724f0f90108f8a9a15461c09dba0151a',
+    'failure:peptide,protein,phospho': '1bba5ddc2c72eacee9d18adcf8a965e6767817908a1c4e65bd44717690b13196',
 }
 
 
-def render_case(monkeypatch, kinds, mode, *, pca_scaling=None, selected_settings=False):
+def render_case(monkeypatch, kinds, mode, *, pca_scaling=None, selected_settings=False, workflow_settings=None):
     monkeypatch.setattr(report, 'datetime', SimpleNamespace(now=lambda: datetime(2026, 9, 9)))
     comments = {key: [f'{key} <general> & text'] for key in report.GENERAL_COMMENTS}
     monkeypatch.setattr(report, 'GENERAL_COMMENTS', comments)
@@ -147,7 +171,7 @@ def render_case(monkeypatch, kinds, mode, *, pca_scaling=None, selected_settings
 
     names = [name for name in vars(report) if name.startswith(('qc_', 'peptide_')) or
              name in ('completeness_missing_value_plot', 'completeness_missing_value_plot_peptide',
-                      'phospho_coverage_png', 'phosphosite_plot_png', 'volcano_html')]
+                      'phospho_coverage_png', 'phospho_sty_png', 'phosphosite_plot_png', 'volcano_html')]
     for name in names:
         if callable(getattr(report, name)):
             monkeypatch.setattr(report, name, renderer(name))
@@ -187,9 +211,11 @@ def render_case(monkeypatch, kinds, mode, *, pca_scaling=None, selected_settings
     if selected_settings:
         for kind in ('protein', 'phospho'):
             context.qcSettings[kind]['abundance'] = {'condition': 'B', 'type': 'Interactive' if mode == 'interactive' else 'Normal'}
-        context.qcSettings['peptide'] = {'coverage': {'quantityColumn': 'LFQ intensity'}}
+        context.qcSettings['peptide'] = {'coverage': {'quantityColumn': 'LFQ intensity', 'summary': True, 'text': True, 'randomSeed': 23}}
         context.completenessSettings = {'quantityColumn': 'LFQ intensity', 'binCount': 1, 'header': False,
             'text': False, 'textSize': 12, 'color': '#123456', 'widthCm': 25, 'heightCm': 15, 'dpi': 144}
+    if workflow_settings:
+        context.qcSettings, context.workflowPlotSettings = workflow_settings
     result = report.report_function(SummaryReportRequest(
         title='Report <title> & test', author='Author <name>', reportContext=context,
         textEntries={'Introduction': 'Intro <safe>\nsecond line', 'PCAProtAbove': 'Before <PCA>',
@@ -274,15 +300,16 @@ def test_report_retains_abundance_quantity_and_missingness(monkeypatch, mode):
         assert options.get('quantity_column') == ('LFQ intensity' if name.endswith('_peptide') else None)
     coverage = next(call for call in parsed if call[0] == 'qc_peptide_coverage_plot')
     assert coverage[2]['quantity_column'] == 'LFQ intensity'
+    assert coverage[2]['summary'] and coverage[2]['text'] and coverage[2]['random_seed'] == 23
     assert not result.warnings
 
 
-def test_selected_quantity_changes_real_missingness_bars_and_stale_selection_warns(monkeypatch):
+def test_saved_quantity_overrides_do_not_change_missingness_bars(monkeypatch):
     from app.services import completeness_tools, peptide_tools
     frame = pd.DataFrame({'File.Name': ['r1', 'r2', 'r1', 'r2'],
         'Stripped.Sequence': ['AAA', 'AAA', 'BBB', 'BBB'],
         'Precursor.Quantity': [1, 1, 1, 1], 'LFQ intensity': [1, 0, 0, 1]})
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame)
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame)
     monkeypatch.setattr(completeness_tools, '_peptide_sample_columns', lambda _: ['r1', 'r2'])
     seen = []
     def capture(fig, plt, **kwargs):
@@ -292,28 +319,67 @@ def test_selected_quantity_changes_real_missingness_bars_and_stale_selection_war
         return b'png'
     monkeypatch.setattr(completeness_tools, '_to_png_bytes', capture)
     report.completeness_missing_value_plot_peptide(**report._missing_plot_options({'quantityColumn': 'LFQ intensity'}, peptide=True))
-    assert seen[-1] == (['1'], [2])
+    assert seen[-1] == (['0'], [2])
     report.completeness_missing_value_plot_peptide()
     assert seen[-1] == (['0'], [2])
     warnings = []
     report._safe_png(renderer=lambda: report.completeness_missing_value_plot_peptide(quantity_column='Removed intensity'),
                      fallback_title='Missingness', warnings=warnings)
-    assert len(warnings) == 1 and 'Removed intensity' in warnings[0]
-    assert len(seen) == 2
+    assert not warnings
+    assert len(seen) == 3
 
 
 @pytest.mark.parametrize('render_type', ['Normal', 'Interactive'])
 def test_abundance_stale_condition_warns_without_expanding_scope(monkeypatch, render_type):
     from app.services import plot_images
-    monkeypatch.setattr(plot_images, '_abundance_mean_intensities', lambda _: (
+    monkeypatch.setattr(plot_images, '_abundance_mean_intensities', lambda _, **kwargs: (
         pd.DataFrame({'GeneNames': ['A'], 'B': [2.]}), ['B'], 'Protein', 'GeneNames'))
     warnings = []
     result = report._abundance_report('protein', {'condition': 'Removed', 'type': render_type}, None, warnings, 'Abundance')
     assert len(warnings) == 1 and 'Removed' in warnings[0]
-    assert 'Could not render' in result
+    assert result == ''
 
 
 @pytest.mark.parametrize('settings', [{'binCount': 1000000000}, {'widthCm': float('inf')}, {'dpi': 100000}, {'binCount': 1.5}])
 def test_missing_report_settings_reject_unsafe_render_sizes(settings):
     with pytest.raises(ValueError):
         report._missing_plot_options(settings)
+
+def test_report_uses_each_workflows_own_coverage_and_missingness_settings(monkeypatch):
+    levels = ("protein", "phospho", "peptide", "precursor")
+    qc = {kind: {"coverage": {"summary": kind == "protein", "text": kind == "protein"}}
+          for kind in levels}
+    appearance = {kind: {"qcAppearance": {"coverage": {"title": kind}},
+                         "missingPlot": {"binCount": i}, "completenessAppearance": {}}
+                  for i, kind in enumerate(levels)}
+    _, calls = render_case(monkeypatch, levels, "default", workflow_settings=(qc, appearance))
+    calls = [json.loads(call) for call in calls]
+    for kind in ("protein", "phospho", "peptide"):
+        options = next(kw for name, _, kw in calls
+                       if name in ("qc_coverage_plot", "qc_peptide_coverage_plot") and kw.get("kind", "peptide") == kind)
+        assert options["summary"] == options["text"] == (kind == "protein")
+        assert options["advanced"]["title"] == kind
+        missing = next(kw for name, _, kw in calls if name.startswith("completeness_missing_value_plot")
+                       and kw.get("kind", "peptide") == kind)
+        assert missing["bin_count"] == levels.index(kind)
+
+
+def test_sty_report_section_has_standard_text_and_both_comment_positions():
+    parts = []
+    report._append_plot_section(html_parts=parts, section_id="3.4", title="STY Plot", description=None,
+        general_comment_key="STYPhos", text_entries={"STYPhosAbove": "Before STY", "STYPhosBelow": "After STY"},
+        text_key="STYPhos", content_html="<img id='sty'>")
+    rendered = "".join(parts)
+    assert "serine (S)" in rendered and "threonine (T)" in rendered and "tyrosine (Y)" in rendered
+    assert rendered.index("Before STY") < rendered.index("<img") < rendered.index("After STY")
+
+
+def test_contaminant_report_uses_only_applied_category_names():
+    annotation = SimpleNamespace(filter_config=SimpleNamespace(contaminants=SimpleNamespace(enabled=True, categories=[1, 3])))
+    rendered = report._contaminant_categories_html(annotation)
+    assert "Laboratory proteins" in rendered
+    assert "Molecular weight markers/Standard proteins" in rendered
+    assert "Dust/contact proteins" not in rendered
+    assert "<td>1</td>" not in rendered and "<td>3</td>" not in rendered
+    annotation.filter_config.contaminants.enabled = False
+    assert report._contaminant_categories_html(annotation) == ""

@@ -237,6 +237,16 @@
       "Maintainer": "Dirk Eddelbuettel <edd@debian.org>",
       "Repository": "https://packagemanager.posit.co/cran/__linux__/noble/2026-09-15"
     },
+    "RcppTOML": {
+      "Package": "RcppTOML",
+      "Version": "0.2.3",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp",
+        "utils"
+      ]
+    },
     "S7": {
       "Package": "S7",
       "Version": "0.2.2",
@@ -1582,6 +1592,15 @@
       "Maintainer": "Thomas Lin Pedersen <thomas.pedersen@posit.co>",
       "Repository": "https://packagemanager.posit.co/cran/__linux__/noble/2026-09-15"
     },
+    "here": {
+      "Package": "here",
+      "Version": "1.0.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "rprojroot"
+      ]
+    },
     "hexbin": {
       "Package": "hexbin",
       "Version": "1.28.6",
@@ -2593,6 +2612,13 @@
       "Maintainer": "Carson Sievert <cpsievert1@gmail.com>",
       "Repository": "https://packagemanager.posit.co/cran/__linux__/noble/2026-09-15"
     },
+    "png": {
+      "Package": "png",
+      "Version": "0.1-9",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": []
+    },
     "praise": {
       "Package": "praise",
       "Version": "1.0.0",
@@ -2962,6 +2988,26 @@
       "Encoding": "UTF-8",
       "NeedsCompilation": "no",
       "Repository": "https://packagemanager.posit.co/cran/__linux__/noble/2026-09-15"
+    },
+    "reticulate": {
+      "Package": "reticulate",
+      "Version": "1.46.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Matrix",
+        "Rcpp",
+        "RcppTOML",
+        "graphics",
+        "here",
+        "jsonlite",
+        "methods",
+        "png",
+        "rappdirs",
+        "rlang",
+        "utils",
+        "withr"
+      ]
     },
     "rlang": {
       "Package": "rlang",

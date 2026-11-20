@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 
 def _checker():
@@ -90,3 +89,66 @@ def test_the_path_rule_tells_a_location_from_a_file_name(message: str, flagged: 
     source = f"def load(path, full_path, searched, candidate):\n    raise ValueError({message})\n"
     problems = _checker().check_service_module(source, "services/x.py")
     assert bool(problems) is flagged, problems
+
+
+@pytest.mark.parametrize("signature", [
+    "def route(*, logger: logging.Logger)",
+    "def route(logger: logging.Logger, /)",
+    "async def route(logger: logging.Logger)",
+])
+def test_the_route_rules_allow_a_typed_injected_logger(signature: str) -> None:
+    source = (
+        "import logging\nfrom fastapi import HTTPException\n"
+        f"{signature}:\n    try:\n        pass\n"
+        "    except Exception as exc:\n        logger.exception('Failed')\n"
+        "        raise HTTPException(status_code=500, detail='Failed.') from exc\n"
+    )
+    assert _checker().check_route_module(source, "helper.py") == []
+
+
+@pytest.mark.parametrize("parameter,body", [
+    ("logger", "        logger.exception('Failed')\n"),
+    ("logger: str", "        logger.exception('Failed')\n"),
+    ("logger: logging.Logger", "        pass\n"),
+    ("logger: logging.Logger", "        other.exception('Failed')\n"),
+    ("logger: logging.Logger", "        def later():\n            logger.exception('Failed')\n"),
+    ("LOGGER: logging.Logger", "        def later():\n            LOGGER.exception('Failed')\n"),
+])
+def test_injected_logger_must_be_typed_and_called_in_the_handler(parameter: str, body: str) -> None:
+    source = (
+        "import logging\nfrom fastapi import HTTPException\n"
+        f"def route({parameter}):\n    try:\n        pass\n    except Exception:\n"
+        + body + "        raise HTTPException(status_code=500, detail='Failed.')\n"
+    )
+    assert "unlogged-500" in {p.rule for p in _checker().check_route_module(source, "helper.py")}
+
+
+def test_injected_logger_must_precede_the_response() -> None:
+    source = (
+        "import logging\nfrom fastapi import HTTPException\n"
+        "def route(logger: logging.Logger):\n    try:\n        pass\n    except Exception:\n"
+        "        raise HTTPException(status_code=500, detail='Failed.')\n"
+        "        logger.exception('Too late')\n"
+    )
+    assert "unlogged-500" in {p.rule for p in _checker().check_route_module(source, "helper.py")}
+
+
+def test_a_typed_logger_in_another_function_does_not_authorize_logging() -> None:
+    source = (
+        "import logging\nfrom fastapi import HTTPException\n"
+        "def unrelated(logger: logging.Logger):\n    pass\n"
+        "def route(logger):\n    try:\n        pass\n    except Exception:\n"
+        "        logger.exception('Failed')\n"
+        "        raise HTTPException(status_code=500, detail='Failed.')\n"
+    )
+    assert "unlogged-500" in {p.rule for p in _checker().check_route_module(source, "helper.py")}
+
+
+def test_a_typed_logger_does_not_allow_exception_text_in_the_response() -> None:
+    source = (
+        "import logging\nfrom fastapi import HTTPException\n"
+        "def route(logger: logging.Logger):\n    try:\n        pass\n    except Exception as exc:\n"
+        "        logger.exception('Failed')\n"
+        "        raise HTTPException(status_code=500, detail=f'Failed: {exc}') from exc\n"
+    )
+    assert "exception-in-detail" in {p.rule for p in _checker().check_route_module(source, "helper.py")}

@@ -1,39 +1,19 @@
 """Volcano calculations and figures with explicit, frozen scientific inputs."""
 import ast
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_preprocessing import cached_notebook_render, capture_notebook
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.functions import effective_test_type, is_moderated_test_type
 
 
 @lru_cache(maxsize=2)
 def volcano_source(interactive=False):
     original = module_source("stats_tools.py")
-    calculation = function_definition(original, "_volcano_dataframe")
-    calculation = replace_once(calculation, "def _volcano_dataframe(\n    *,", "def calculate_table(data, metadata, imputation_mask=None, *,")
-    start = calculation.index("    if frame_override is None and metadata_override is None:")
-    end = calculation.index("    label_column =", start)
-    calculation = calculation[:start] + "    source_used = data_source\n    frame = data.copy()\n    metadata = metadata.copy()\n    warnings = []\n" + calculation[end:]
-    calculation = calculation.replace("    frame_override: pd.DataFrame | None = None,\n", "")
-    calculation = calculation.replace("    metadata_override: pd.DataFrame | None = None,\n", "")
-    calculation = replace_once(calculation,
-        "mask = _imputation_mask(kind, source_used, frame.loc[df.index], [c for cols in count_groups.values() for c in cols])",
-        "mask = imputation_mask")
-    # The protein comparison a corrected site change subtracts is a second
-    # calculate_table run on the frozen protein matrix (see render_volcano); the
-    # notebook never reaches into the app's annotation store for it.
-    start = calculation.index("        if protein_stats is None:\n            protein_stats = protein_comparison_stats(")
-    end = calculation.index("        corrected = _apply_protein_correction(", start)
-    calculation = calculation[:start] + (
-        "        if protein_stats is None:\n"
-        "            raise ValueError('Protein correction needs the protein comparison table (protein_stats).')\n"
-    ) + calculation[end:]
+    calculation = function_definition(original, "calculate_table")
     helpers = "\n\n".join(function_definition(original, name) for name in (
+        "_tested_volcano_table", "_volcano_groups", "_volcano_feature_frame", "_volcano_eligibility",
         "_first_available_column", "_workflow_label_candidates", "_gene_label_candidates", "_resolve_label_column",
         "_variance_and_count", "_volcano_untested_rows", "_apply_protein_correction", "_safe_neg_log10", "_correction_label", "_clean_feature_name", "_gene_tokens",
         "_normalize_highlight_token", "_volcano_condition_texts", "_volcano_marker_style", "_volcano_top_hits",
@@ -44,9 +24,7 @@ def volcano_source(interactive=False):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and any(
             isinstance(part, ast.Name) and part.id.startswith(("VOLCANO_", "_VOLCANO_", "_LABEL_", "CORRECTION_"))
             for part in ast.walk(node)))
-    styling = "\n".join(line for line in module_source("plot_styling.py").splitlines() if not line.startswith("from app."))
-    styling += "\n\n" + function_definition(module_source("plotting_common.py"), "get_plt")
-    styling += "\n\ndef _get_plt():\n    return get_plt()\n"
+    styling = portable_styling(include_matplotlib=True)
     styles = extract_notebook_source(styling, ("advanced_label", "advanced_optional_number", "advanced_size",
         "advanced_alpha", "advanced_text", "_advanced_bool", "resolve_marker_shape", "marker_area", "resolve_reference_line",
         "apply_advanced_axes", "advanced_number", "get_plt", "advanced_plotly_layout")).code
@@ -63,7 +41,7 @@ def volcano_source(interactive=False):
     portable_runtime = ("import shutil\n\ndef detect_r_runtime():\n"
         "    executable = shutil.which('Rscript')\n"
         "    return {'available': bool(executable), 'executable': executable}\n")
-    code = merge_source("import numpy as np\nimport pandas as pd\nfrom typing import Any", scientific, core,
+    code = merge_source("import re\nimport numpy as np\nimport pandas as pd\nfrom typing import Any", scientific, core,
                          styles, serialization, constants, limma, portable_runtime,
                          function_definition(module_source("notebook_preprocessing.py"), "limma_runtime_version").replace(
                              "    from app.services.r_runtime import detect_r_runtime\n", ""), helpers, calculation)
@@ -134,12 +112,13 @@ def frozen_protein_comparison(kind, protein_correction, calculation, source, mod
 
 @lru_cache(maxsize=2)
 def _volcano_module(interactive=False):
-    module = ModuleType(f"_copylot_portable_volcano_{'interactive' if interactive else 'static'}")
-    sys.modules[module.__name__] = module
-    exec(volcano_source(interactive).code, module.__dict__)
-    return module
+    return portable_module(
+        f"_copylot_portable_volcano_{'interactive' if interactive else 'static'}",
+        lambda: volcano_source(interactive),
+    )
 
 
+@cached_notebook_render
 def render_volcano(payload, *, interactive=False, **options):
     from app.services import stats_tools
     from app.services.annotation_store import get_annotation
@@ -157,7 +136,7 @@ def render_volcano(payload, *, interactive=False, **options):
     lineage, imputation, uses_imputed, imputation_text = input_history(kind, annotation, dataset, source=source)
     mask = stats_tools._imputation_mask(kind, source, data, metadata["sample"].astype(str).tolist())
     metadata = metadata[[column for column in ("sample", "condition", "pair_id") if column in metadata]].copy()
-    identifiers = ["GeneNames", "Gene_group", "ProteinNames", "PTM_Collapse_key", "UPD_seq",
+    identifiers = ["GeneNames", "Gene_group", "ProteinNames", "ProteinAccessions", "PTM_Collapse_key", "UPD_seq",
                    "Protein_group", "Phosphoprotein", "site_num", "PTM_Collapse_keys"]
     columns = list(dict.fromkeys(metadata["sample"].tolist() + identifiers))
     data = data[[column for column in columns if column in data]].copy()
@@ -182,9 +161,7 @@ def render_volcano(payload, *, interactive=False, **options):
     # The same warnings and untested rows a live run returns, so the table read
     # back from this snapshot is the table the page showed.
     warnings = [*warnings, *calculation_warnings]
-    bound = inspect.signature(stats_tools.volcano_html if interactive else stats_tools.volcano_png).bind(payload, **options)
-    bound.apply_defaults()
-    figure_settings = dict(bound.arguments)
+    figure_settings = bound_settings(stats_tools.volcano_html if interactive else stats_tools.volcano_png, payload, **options)
     figure_settings.pop("payload")
     figure_settings.update({key: value for key, value in calculation.items()
                            if key not in {"kind", "identifier", "test_type", "data_source", "protein_correction"}})
@@ -208,11 +185,8 @@ def render_volcano(payload, *, interactive=False, **options):
     else:
         figure, plt = module._volcano_png_figure(table, **figure_settings)
         fmt = plot_output_format.get()
-        format_token = module.plot_output_format.set(fmt)
-        try:
+        with portable_output_format(module, fmt):
             content = module.to_png_bytes(figure, plt, dpi=figure_settings["dpi"])
-        finally:
-            module.plot_output_format.reset(format_token)
         resources[f"original.{fmt}"] = bytes(content)
         render_code = (
             "from IPython.display import Image\n"
@@ -255,7 +229,12 @@ def render_volcano(payload, *, interactive=False, **options):
             "mask_path = RESOURCES / 'imputation_mask.parquet'\n"
             "imputation_mask = read_resource_table(mask_path) if mask_path.exists() else None\n"
             + PROTEIN_STATS_CODE +
-            "_, label_column, table, warnings = functions.calculate_table(data, metadata, imputation_mask, protein_stats=protein_stats, **settings['calculation'])\n"
+            "untested = []\n"
+            "_, label_column, table, warnings = functions.calculate_table(data, metadata, imputation_mask, protein_stats=protein_stats, untested_out=untested, **settings['calculation'])\n"
+            "untested_table = untested[0]\n"
+            "pd.testing.assert_frame_equal(untested_table, read_resource_table(RESOURCES / 'untested.parquet'), check_exact=True)\n"
+            "if not untested_table.empty:\n"
+            "    untested_table.to_csv('reproduced_not_tested.csv', index=False)\n    display(untested_table)\n"
             "pd.testing.assert_frame_equal(table, read_resource_table(RESOURCES / 'table.parquet'), check_exact=True)\n"
             "table.to_csv('reproduced_table.csv', index=False)\ndisplay(table)\n" + render_code,
     )

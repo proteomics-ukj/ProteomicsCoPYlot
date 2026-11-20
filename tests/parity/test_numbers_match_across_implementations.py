@@ -18,20 +18,18 @@ A component's sign is arbitrary, so PCA scores are compared up to sign.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from proteomicscopylot import notebook_functions as pip_package  # noqa: E402
 
 KINDS = ("protein", "phospho")
 
 
-from _r_runtime import RSCRIPT
 pytestmark = pytest.mark.usefixtures("example_project")
 requires_r = pytest.mark.requires_r()
 
@@ -129,7 +127,7 @@ def _app_single(kind, feature):
 
 @pytest.fixture(scope="module")
 def r_results(tmp_path_factory, require_r, example_project):
-    require_r()
+    rscript = require_r()
     out: dict[str, dict[str, pd.DataFrame]] = {}
     for kind in KINDS:
         directory = tmp_path_factory.mktemp(f"r_{kind}")
@@ -166,7 +164,7 @@ def r_results(tmp_path_factory, require_r, example_project):
           save(single_protein_values(single, read("single_meta"), feature), paste0("single_", make.names(feature)))
         }}
         """
-        completed = subprocess.run([RSCRIPT, "-e", script], capture_output=True, text=True, timeout=900)
+        completed = subprocess.run([rscript, "-e", script], capture_output=True, text=True, timeout=900)
         assert completed.returncode == 0, completed.stderr[-3000:]
         out[kind] = {path.stem.removeprefix("out_"): pd.read_csv(path) for path in directory.glob("out_*.csv")}
         out[kind]["_features"] = features

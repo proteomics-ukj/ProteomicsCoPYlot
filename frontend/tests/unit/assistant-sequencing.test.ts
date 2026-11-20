@@ -354,6 +354,21 @@ describe("runAssistant", () => {
     expect(result.answer).not.toMatch(/half-loaded/);
   });
 
+  it('a step with changes is planned again once a page that was still loading has settled', async () => {
+    // "volcano of the phosphosites, GRK vs WT": the dataset level was just changed and its
+    // condition fields were still loading while the model planned. Nothing of that plan was
+    // applied, so the step is asked again on the settled page instead of ending the request.
+    const controls = [{ id: 'c1', label: 'Condition 1', value: 'loading' }];
+    const applied: unknown[] = [];
+    const settle = () => { controls[0].value = 'WT'; };
+    const { calls } = await scenario([
+      { mutate: settle, actions: [{ type: 'set_control', target: 'c1', value: 'stale' }] },
+      { actions: [{ type: 'set_control', target: 'c1', value: 'GRK' }], finished: true }], { controls, applied });
+    expect(calls.length).toBe(2);
+    expect(applied).toEqual([{ type: 'set_control', target: 'c1', value: 'GRK' }]);
+    expect(controls[0].value).toBe('GRK');
+  });
+
   it('a view that never settles still ends with the change error', async () => {
     const controls = [{ id: 'tile', label: 'Tile', value: 0 }];
     const churn = { mutate: () => { controls[0].value += 1; }, answer: 'Stale.', evidence: [{ tool: 't', status: 'available', text: 'x' }] };

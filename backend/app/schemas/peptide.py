@@ -30,12 +30,6 @@ class PeptideOverviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class PeptideQuantityOptionsResponse(BaseModel):
-    columns: list[str] = Field(default_factory=list)
-    defaultColumn: str | None = None
-    requiresSelection: bool = False
-
-
 class PeptideMetadataGenerateRequest(BaseModel):
     conditions: list[ConditionAssignment] = Field(default_factory=list)
 

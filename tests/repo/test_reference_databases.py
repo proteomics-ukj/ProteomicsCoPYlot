@@ -12,11 +12,10 @@ import csv
 import importlib.util
 import json
 import shutil
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 MANIFEST = ROOT / "data" / "reference-sources" / "manifest.json"
 
 spec = importlib.util.spec_from_file_location("build_reference_databases", ROOT / "tools" / "build_reference_databases.py")

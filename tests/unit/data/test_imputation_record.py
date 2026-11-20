@@ -10,12 +10,10 @@ again, which is the thing the split exists to prevent.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.annotation import AnnotationImputationInfo
 from app.schemas.data_tools import ImputationRunRequest

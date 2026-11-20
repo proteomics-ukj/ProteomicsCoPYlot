@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.services import tool_access, viewer_portal
 from app.services.password_hashing import hash_password

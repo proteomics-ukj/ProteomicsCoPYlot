@@ -15,10 +15,10 @@ export const TEST_TYPE_OPTIONS: { value: StatsTestType; label: string }[] = [
   { value: "moderated_paired", label: "Paired moderated t (limma)" },
   { value: "moderated_robust_paired", label: "Paired moderated t (limma, robust)" },
 ];
-export const TEST_TYPE_VALUES = TEST_TYPE_OPTIONS.map((option) => option.value);
-export const MODERATED_TEST_TYPES: StatsTestType[] = ["moderated", "moderated_robust", "moderated_paired", "moderated_robust_paired"];
+const TEST_TYPE_VALUES = TEST_TYPE_OPTIONS.map((option) => option.value);
+const MODERATED_TEST_TYPES: StatsTestType[] = ["moderated", "moderated_robust", "moderated_paired", "moderated_robust_paired"];
 export const PAIRED_TEST_TYPES: StatsTestType[] = ["paired", "moderated_paired", "moderated_robust_paired"];
-export function isModeratedTestType(value: string): boolean {
+function isModeratedTestType(value: string): boolean {
   return (MODERATED_TEST_TYPES as string[]).includes(value);
 }
 export const CONTROL_TEST_TYPE_OPTIONS = [

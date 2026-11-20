@@ -1,20 +1,21 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 // Volcano panel: ordinary, paired and control-adjusted comparisons.
 
 import { SizeRow } from "../../components/PlotFields";
 import { restorePlotDimensionCm, restorePlotDpi } from "../../lib/plotLimits";
 import { coercePlotDownloadFormat, type PlotDownloadFormat } from "../../lib/plotDownload";
-import { AssistantTextarea } from "../../components/AssistantFields";
-import { useId, useEffect, useMemo, useState, type ReactNode } from "react";
+import { HighlightControls } from "../../components/HighlightTermsField";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import PairingEditor from "../../components/PairingEditor";
 import { buildPlotUrl, getStatisticalOptions, getVolcanoNotebookTable, isAbortError, pairingIsReady, runVolcanoAnalysis, runVolcanoControlAnalysis } from "../../lib/api";
 import type { RenderedNotebook } from "../../components/NotebookDownload";
 import { useDatasetRevision } from "../../lib/datasetAvailability";
-import { addVolcanoReportEntry, listVolcanoReportEntries, removeVolcanoReportEntry } from "../../lib/reportState";
-import { IS_VIEWER_MODE } from "../../lib/appMode";
+import ReportEntryControl from "../../components/ReportEntryControl";
+import { currentAdvancedAppearance } from "../../lib/reportState";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
 import { useDebouncedValue } from "../../lib/useDebouncedValue";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
-import type { ContextMode, AnnotationKind, StatsIdentifier, StatsTestType, VolcanoResultResponse, SummaryVolcanoEntry, DataSource, VolcanoRenderType, StatisticalOptionsResponse } from "../../lib/types";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
+import type { ContextMode, AnnotationKind, StatsIdentifier, StatsTestType, VolcanoResultResponse, ReportEntry, DataSource, VolcanoRenderType, StatisticalOptionsResponse } from "../../lib/types";
 import { VOLCANO_RENDER_TYPE_OPTIONS } from "../../lib/types";
 import { PROTEIN_CORRECTION_LABEL, useProteinCorrection } from "../../lib/proteinCorrection";
 import { useDataSourceChoice } from "../../lib/useDataSourceChoice";
@@ -28,50 +29,6 @@ import { ImageSection, InfoSection, Notice, PlotFrame, SummarySection, TableSect
 import { conditionOptions, isPairedTestType, removeSourceUsageWarnings, restorePValueThreshold, sanitizeFilenamePart } from "./statsHelpers";
 import LocalizationCutoffField from "../../components/LocalizationCutoffField";
 
-function TextareaField({
-  label,
-  value,
-  onChange,
-  rows = 3,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  rows?: number;
-  placeholder?: string;
-}) {
-  const fieldId = useId();
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  const commit = () => {
-    onChange(draft);
-  };
-
-  return (
-    <div>
-      <label htmlFor={fieldId} className="mb-2 block text-sm font-medium text-slate-700">{label}</label>
-      <AssistantTextarea id={fieldId} data-assistant-permission="view"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            commit();
-          }
-        }}
-        rows={rows}
-        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
-        placeholder={placeholder}
-      />
-    </div>
-  );
-}
 
 function volcanoExportFilename(
   sourceMode: "volcano" | "volcano_control",
@@ -86,7 +43,7 @@ function volcanoExportFilename(
   return `${prefix}_${kind}_${first}_vs_${second}.csv`;
 }
 
-export function VolcanoPanel({
+function VolcanoPanelView({
   kindOptions,
   onContextModeChange,
   advancedPlotOptions,
@@ -96,18 +53,9 @@ export function VolcanoPanel({
   advancedPlotOptions?: ReactNode;
 }) {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("stats.volcano.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("stats.volcano.v1", kind), [kind]);
   const revision = useDatasetRevision();
-  const [preferredKind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot" ? value : "protein";
-  });
-  const kind = (kindOptions.some((option) => option.value === preferredKind)
-    ? preferredKind
-    : kindOptions[0]?.value ?? preferredKind) as AnnotationKind;
   const [sourceMode, setSourceMode] = useState<"volcano" | "volcano_control">(() => {
     const value = String(persisted.sourceMode ?? "volcano").trim();
     return value === "volcano_control" ? "volcano_control" : "volcano";
@@ -167,8 +115,6 @@ export function VolcanoPanel({
     key: string;
     data: VolcanoResultResponse;
   } | null>(null);
-  const [reportLogMessage, setReportLogMessage] = useState<string | null>(null);
-  const [reportLogVersion, setReportLogVersion] = useState(0);
 
   const kindAvailable = kindOptions.some((option) => option.value === kind);
   const proteinCorrection = useProteinCorrection(
@@ -285,78 +231,36 @@ export function VolcanoPanel({
   const currentRequestKey = requestPayload ? JSON.stringify({ revision, ...requestPayload }) : "";
   const result = currentRequestKey && resultState?.key === currentRequestKey ? resultState.data : null;
 
-  const currentReportEntry = useMemo<SummaryVolcanoEntry>(
-    () => ({
+  // The plot as it is now, captured at the moment it is added, so two
+  // comparisons in one report can render differently.
+  function buildReportEntries(): ReportEntry[] {
+    if (!canRun || (kind !== "protein" && kind !== "phospho")) return [];
+    return [{
+      type: "volcano",
       kind,
-      control: sourceMode === "volcano_control",
-      dataSource,
-      condition1,
-      condition2,
-      condition1Control: sourceMode === "volcano_control" ? condition1Control : null,
-      condition2Control: sourceMode === "volcano_control" ? condition2Control : null,
-      identifier,
-      pValueThreshold,
-      log2fcThreshold,
-      testType,
-      useUncorrected,
-      proteinCorrection: proteinCorrection.active,
-      highlightTerms,
-      // Captured at the moment it is added, so two comparisons in one report
-      // can render differently -- the panel's current state is the intent.
-      renderType,
-      labelTopUp,
-      labelTopDown,
-      highlightOutline,
-      highlightLabels,
-    }),
-    [
-      renderType,
-      labelTopUp,
-      labelTopDown,
-      highlightOutline,
-      highlightLabels,
-      kind,
-      sourceMode,
-      dataSource,
-      condition1,
-      condition2,
-      condition1Control,
-      condition2Control,
-      identifier,
-      pValueThreshold,
-      log2fcThreshold,
-      testType,
-      useUncorrected,
-      proteinCorrection.active,
-      highlightTerms,
-    ]
-  );
-  const reportEntryCount = useMemo(
-    () => {
-      void reportLogVersion;
-      return listVolcanoReportEntries().filter(
-        (entry) => !entry.control && entry.kind === kind
-      ).length;
-    },
-    [kind, reportLogVersion]
-  );
-
-  function handleAddToReport() {
-    if (!canRun) {
-      setReportLogMessage("Please choose valid conditions before adding this volcano plot.");
-      return;
-    }
-    const added = addVolcanoReportEntry(currentReportEntry);
-    setReportLogVersion((value) => value + 1);
-    setReportLogMessage(
-      added
-        ? "Volcano plot added to report list."
-        : "This volcano configuration is already in the report list."
-    );
+      request: {
+        dataSource,
+        condition1,
+        condition2,
+        identifier,
+        pValueThreshold,
+        log2fcThreshold,
+        testType,
+        useUncorrected,
+        proteinCorrection: proteinCorrection.active,
+        highlightTerms,
+        labelTopUp,
+        labelTopDown,
+        highlightOutline,
+        highlightLabels,
+      },
+      render: { type: renderType, widthCm, heightCm, dpi },
+      advanced: currentAdvancedAppearance(),
+    }];
   }
 
   useEffect(() => {
-    writePersistedUiState("stats.volcano.v1", {
+    writeWorkflowState("stats.volcano.v1", {
       kind,
       sourceMode,
       dataSource,
@@ -407,16 +311,6 @@ export function VolcanoPanel({
     downloadFormat,
   ]);
 
-  function handleRemoveFromReport() {
-    const removed = removeVolcanoReportEntry(currentReportEntry);
-    setReportLogVersion((value) => value + 1);
-    setReportLogMessage(
-      removed > 0
-        ? `Removed ${removed} volcano entr${removed === 1 ? "y" : "ies"} from report list.`
-        : "No matching volcano entry found in report list."
-    );
-  }
-
   useEffect(() => {
     if (!debouncedRequestPayload) {
       return;
@@ -426,35 +320,10 @@ export function VolcanoPanel({
 
     const run = async () => {
       try {
-        const response = debouncedRequestPayload.source === "volcano_control"
-          ? await runVolcanoControlAnalysis({
-            kind: debouncedRequestPayload.kind,
-              dataSource: debouncedRequestPayload.dataSource,
-              condition1: debouncedRequestPayload.condition1,
-              condition2: debouncedRequestPayload.condition2,
-              condition1Control: debouncedRequestPayload.condition1Control,
-              condition2Control: debouncedRequestPayload.condition2Control,
-              identifier: debouncedRequestPayload.identifier,
-              pValueThreshold: debouncedRequestPayload.pValueThreshold,
-              log2fcThreshold: debouncedRequestPayload.log2fcThreshold,
-              testType: debouncedRequestPayload.testType,
-              useUncorrected: debouncedRequestPayload.useUncorrected,
-              proteinCorrection: debouncedRequestPayload.proteinCorrection,
-              highlightTerms: debouncedRequestPayload.highlightTerms,
-            }, { signal: controller.signal })
-          : await runVolcanoAnalysis({
-              kind: debouncedRequestPayload.kind,
-              dataSource: debouncedRequestPayload.dataSource,
-              condition1: debouncedRequestPayload.condition1,
-              condition2: debouncedRequestPayload.condition2,
-              identifier: debouncedRequestPayload.identifier,
-              pValueThreshold: debouncedRequestPayload.pValueThreshold,
-              log2fcThreshold: debouncedRequestPayload.log2fcThreshold,
-              testType: debouncedRequestPayload.testType,
-              useUncorrected: debouncedRequestPayload.useUncorrected,
-              proteinCorrection: debouncedRequestPayload.proteinCorrection,
-              highlightTerms: debouncedRequestPayload.highlightTerms,
-            }, { signal: controller.signal });
+        const { source, condition1Control, condition2Control, ...request } = debouncedRequestPayload;
+        const response = source === "volcano_control"
+          ? await runVolcanoControlAnalysis({ ...request, condition1Control, condition2Control }, { signal: controller.signal })
+          : await runVolcanoAnalysis(request, { signal: controller.signal });
         if (controller.signal.aborted) return;
         setResultState({ key: JSON.stringify({ revision, ...debouncedRequestPayload }), data: response });
         setError(null);
@@ -497,7 +366,8 @@ export function VolcanoPanel({
       proteinCorrection: debouncedRequestPayload.proteinCorrection,
       highlightTerms: debouncedRequestPayload.highlightTerms.join(","),
       highlightOutline,
-      ...(isStatic ? { labelTopUp, labelTopDown, highlightLabels, widthCm, heightCm, dpi } : {}),
+      labelTopUp, labelTopDown,
+      ...(isStatic ? { highlightLabels, widthCm, heightCm, dpi } : {}),
     };
     if (debouncedRequestPayload.source === "volcano_control") {
       return buildPlotUrl(
@@ -547,7 +417,7 @@ export function VolcanoPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="Volcano Plot">
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={kindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>
@@ -619,39 +489,13 @@ export function VolcanoPanel({
           </div>
         </div>
 
-        {renderType === "Normal" ? (
-          <div className="mt-4">
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              <NumberField
-                label="Label top up-regulated"
-                value={labelTopUp}
-                onChange={(value) => setLabelTopUp(Math.max(0, Math.round(value)))}
-                step={1}
-              />
-              <NumberField
-                label="Label top down-regulated"
-                value={labelTopDown}
-                onChange={(value) => setLabelTopDown(Math.max(0, Math.round(value)))}
-                step={1}
-              />
-            </div>
-            <p className="mt-2 text-sm text-slate-600">
-              Ranked by significance. A label that cannot be placed without
-              covering another one is left off rather than drawn over it.
-            </p>
-          </div>
-        ) : null}
-
-        <div className="mt-4 max-w-3xl" data-assistant-appearance="true">
-          <TextareaField label="Highlight terms" value={highlightText} onChange={setHighlightText} rows={3} placeholder="Space-separated labels to highlight" />
-          {highlightTerms.length ? (
-            <div className="mt-2 grid gap-4 sm:grid-cols-2">
-              <CheckboxField label="Outline highlighted points" checked={highlightOutline} onChange={setHighlightOutline} />
-              {renderType === "Normal" ? (
-                <CheckboxField label="Label highlighted points (static plot)" checked={highlightLabels} onChange={setHighlightLabels} />
-              ) : null}
-            </div>
-          ) : null}
+        <div className="mt-4">
+          <HighlightControls terms={highlightText} onTerms={setHighlightText}
+            topFirst={labelTopUp} topSecond={labelTopDown}
+            firstLabel="Highlight top N up-regulated" secondLabel="Highlight top N down-regulated"
+            onFirst={setLabelTopUp} onSecond={setLabelTopDown}
+            outline={highlightOutline} onOutline={setHighlightOutline}
+            labels={highlightLabels} onLabels={setHighlightLabels} interactive={renderType === "Interactive"} />
         </div>
         {renderType === "Normal" ? (
           <div className="mt-4 max-w-3xl">
@@ -666,39 +510,16 @@ export function VolcanoPanel({
           </div>
         ) : null}
 
-        {sourceMode === "volcano" && !IS_VIEWER_MODE && kind === "phosprot" ? (
-          // The report has no phosphoprotein section (it covers protein and
-          // phospho); rather than accept an entry it would then drop in
-          // silence, the panel says so and offers nothing to click.
-          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            Phosphoprotein volcano plots cannot be added to the report.
-          </div>
-        ) : null}
-        {sourceMode === "volcano" && !IS_VIEWER_MODE && kind !== "phosprot" ? (
-          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleAddToReport}
-                className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                Add Volcano To Report
-              </button>
-              <button
-                type="button"
-                onClick={handleRemoveFromReport}
-                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-              >
-                Remove Volcano From Report
-              </button>
-              <span className="text-sm text-slate-600">
-                Saved entries for {kindOptions.find((option) => option.value === kind)?.label ?? kind}: {reportEntryCount}
-              </span>
-            </div>
-            {reportLogMessage ? (
-              <div className="mt-3 text-sm text-slate-700">{reportLogMessage}</div>
-            ) : null}
-          </div>
+        {sourceMode === "volcano" ? (
+          <ReportEntryControl
+            type="volcano"
+            kind={kind}
+            kindLabel={kindOptions.find((option) => option.value === kind)?.label ?? kind}
+            title="Volcano"
+            noun="volcano plot"
+            buildEntries={buildReportEntries}
+            invalidMessage="Please choose valid conditions before adding this volcano plot."
+          />
         ) : null}
 
       <Notice error={error} warnings={removeSourceUsageWarnings(options?.warnings)} />
@@ -709,7 +530,7 @@ export function VolcanoPanel({
       ) : null}
       {canRun && result && displayedResult ? (
         <>
-          <SummarySection items={[{ label: "Rows", value: String(displayedResult.totalRows) }, { label: "Upregulated", value: String(displayedResult.upregulatedCount) }, { label: "Downregulated", value: String(displayedResult.downregulatedCount) }, { label: "Not Significant", value: String(displayedResult.notSignificantCount) }, { label: "No p-value", value: String(displayedResult.unavailableCount ?? 0) }]} />
+          <SummarySection items={[{ label: "Rows", value: String(displayedResult.totalRows) }, { label: "Upregulated", value: String(displayedResult.upregulatedCount) }, { label: "Downregulated", value: String(displayedResult.downregulatedCount) }, { label: "Not Significant", value: String(displayedResult.notSignificantCount) }]} />
           {renderType === "Normal" ? (
             <ImageSection
               title="Volcano Plot"
@@ -734,10 +555,12 @@ export function VolcanoPanel({
             notebook={capturedTable ? { url: capturedTable.url, token: capturedTable.token } : null}
             filename={volcanoExportFilename(sourceMode, kind, condition1, condition2)}
           />
-          {result.untestedRows && result.untestedRows.length > 0 ? (
+          {displayedResult.untestedRows && displayedResult.untestedRows.length > 0 ? (
             <TableSection
               title="Rows not tested"
-              rows={result.untestedRows}
+              rows={displayedResult.untestedRows}
+              plotUrl={plotUrl}
+              notebook={capturedTable ? { url: capturedTable.url, token: capturedTable.token } : null}
               filename={volcanoExportFilename(sourceMode, kind, condition1, condition2).replace(/\.csv$/, "_not_tested.csv")}
             />
           ) : null}
@@ -746,3 +569,5 @@ export function VolcanoPanel({
     </div>
   );
 }
+
+export const VolcanoPanel = withWorkflowSettings("stats.volcano.v1", VolcanoPanelView, props => props.kindOptions);

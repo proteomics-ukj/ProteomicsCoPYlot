@@ -18,11 +18,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT))
 
-from _r_runtime import RSCRIPT  # noqa: E402
 from app.services import r_limma  # noqa: E402
 from app.services.stats_tools import _simulation_dataframe, _volcano_dataframe  # noqa: E402
 from app.schemas.stats import SimulationRequest  # noqa: E402
@@ -108,7 +107,7 @@ def test_app_and_pip_agree(test_type, control) -> None:
     assert (app.loc[on_changed, "log2FC"].abs() > 1).sum() < 5
 
 
-def _run_r(tmp_path: Path, sites, proteins, script: str) -> None:
+def _run_r(tmp_path: Path, sites, proteins, script: str, rscript) -> None:
     sites.to_csv(tmp_path / "site.csv", index=False)
     proteins.to_csv(tmp_path / "prot.csv", index=False)
     META.to_csv(tmp_path / "meta.csv", index=False)
@@ -119,12 +118,12 @@ def _run_r(tmp_path: Path, sites, proteins, script: str) -> None:
       prot <- read.csv(file.path(d, "prot.csv"), check.names = FALSE)
       meta <- read.csv(file.path(d, "meta.csv"), check.names = FALSE)
     '''
-    run = subprocess.run([RSCRIPT, "-e", preamble + script], cwd=ROOT, capture_output=True, text=True, timeout=600)
+    run = subprocess.run([rscript, "-e", preamble + script], cwd=ROOT, capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stderr
 
 
 @pytest.mark.requires_r()
-def test_ambiguous_correction_is_independent_of_protein_row_order(tmp_path) -> None:
+def test_ambiguous_correction_is_independent_of_protein_row_order(tmp_path, rscript) -> None:
     sites, proteins = _fixture()
     app, _ = _app(sites, proteins, "unpaired", False)
     reversed_app, _ = _app(sites, proteins.iloc[::-1], "unpaired", False)
@@ -143,32 +142,32 @@ def test_ambiguous_correction_is_independent_of_protein_row_order(tmp_path) -> N
         })
       stopifnot(warned)
       write.csv(result, file.path(d, "reversed.csv"), row.names = FALSE)
-    ''')
+    ''', rscript)
     _same(app, pd.read_csv(tmp_path / "reversed.csv").set_index("PTM_Collapse_key"))
 
 
 @pytest.mark.requires_r()
 @pytest.mark.parametrize("test_type,control", DESIGNS)
-def test_r_agrees(tmp_path, test_type, control) -> None:
+def test_r_agrees(tmp_path, test_type, control, rscript) -> None:
     sites, proteins = _fixture()
     call = (f'volcano_data_f_control(site, meta, "A", "B", "C", "D", workflow = "Phosphosite", test_type = "{test_type}", '
             'protein_data = prot, protein_meta = meta)' if control else
             f'volcano_data_f(site, meta, "A", "B", workflow = "Phosphosite", test_type = "{test_type}", '
             'protein_data = prot, protein_meta = meta)')
-    _run_r(tmp_path, sites, proteins, f'write.csv({call}, file.path(d, "r.csv"), row.names = FALSE)')
+    _run_r(tmp_path, sites, proteins, f'write.csv({call}, file.path(d, "r.csv"), row.names = FALSE)', rscript)
     r_table = pd.read_csv(tmp_path / "r.csv").set_index("PTM_Collapse_key")
     _same(_pip(sites, proteins, test_type, control), r_table)
 
 
 @pytest.mark.requires_r("limma")
 @pytest.mark.parametrize("test_type", ["moderated", "moderated_robust_paired"])
-def test_moderated_tests_agree_in_all_three(tmp_path, test_type) -> None:
+def test_moderated_tests_agree_in_all_three(tmp_path, test_type, rscript) -> None:
     r_limma.clear_limma_availability_cache()
     sites, proteins = _fixture()
     app, _ = _app(sites, proteins, test_type, False)
     _run_r(tmp_path, sites, proteins,
            f'write.csv(volcano_data_f(site, meta, "A", "B", workflow = "Phosphosite", test_type = "{test_type}", '
-           'protein_data = prot, protein_meta = meta), file.path(d, "r.csv"), row.names = FALSE)')
+           'protein_data = prot, protein_meta = meta), file.path(d, "r.csv"), row.names = FALSE)', rscript)
     r_table = pd.read_csv(tmp_path / "r.csv").set_index("PTM_Collapse_key")
     _same(app, r_table, columns=["log2FC", "pval", "adj_pval", "se", "dof", "protein_log2FC"])
     with pytest.raises(ValueError, match="Bioconductor limma"):
@@ -176,7 +175,7 @@ def test_moderated_tests_agree_in_all_three(tmp_path, test_type) -> None:
 
 
 @pytest.mark.requires_r()
-def test_ksea_regulation_and_simulation_tables_agree(tmp_path) -> None:
+def test_ksea_regulation_and_simulation_tables_agree(tmp_path, rscript) -> None:
     sites, proteins = _fixture()
     _run_r(tmp_path, sites, proteins, '''
       write.csv(kinase_library_data_f(site, meta, "A", "B", test_type = "unpaired", protein_data = prot, protein_meta = meta),
@@ -187,7 +186,7 @@ def test_ksea_regulation_and_simulation_tables_agree(tmp_path) -> None:
       sim <- protein_correct_site_results(.volcano_sim_table(site, meta, "A", "B", "Phosphosite", 1, 6),
                                           .volcano_sim_table(prot, meta, "A", "B", "Protein", 1, 6), 0.05, 1, FALSE)
       write.csv(sim[, c("Feature", "log2FC", "pval")], file.path(d, "sim.csv"), row.names = FALSE)
-    ''')
+    ''', rscript)
     ksea = pkg.kinase_library_data_f(sites, META, "A", "B", test_type="unpaired", protein_data=proteins, protein_meta=META)
     r_ksea = pd.read_csv(tmp_path / "ksea.csv")
     assert np.allclose(ksea["log2FC"], r_ksea["log2FC"]) and np.allclose(ksea["pval"], r_ksea["pval"], equal_nan=True)

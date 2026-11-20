@@ -34,6 +34,7 @@ BLOCKED = frozenset({
     ('DELETE', '/api/peptide/metadata/current'),
     ('POST', '/api/peptide/metadata/generate'),
     ('GET', '/api/plots/notebooks/{token}.zip'),
+    ('GET', '/api/plots/imputation/{kind}/applied-notebook'),
     ('POST', '/api/restore/export'),
     ('POST', '/api/restore/import'),
 })

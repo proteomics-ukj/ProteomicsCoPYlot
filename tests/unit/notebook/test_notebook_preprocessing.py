@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from notebook_replay_support import notebook_code
 from app.api.routes_annotations import generate_annotation
 from app.schemas.annotation import AnnotationGenerateRequest, AnnotationFilterConfig
 from app.services.dataset_reader import read_dataframe
@@ -55,7 +56,7 @@ def test_original_upload_replay(tmp_path, normalization, log2):
         archive.extractall(tmp_path)
         notebook_name = next(n for n in archive.namelist() if n.endswith('.ipynb'))
     notebook = json.loads((tmp_path / notebook_name).read_text())
-    code = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code')
+    code = notebook_code(notebook)
     code = code.replace("Path('YOUR_ORIGINAL_DATA_FILE')", "Path('original.tsv')")
     run = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + code],
         cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=90)

@@ -41,6 +41,21 @@ def _title(monkeypatch: pytest.MonkeyPatch, keys: list[str], *, header: bool = T
 TWO_SITES_ONE_PEPTIDE = ["PEP~GENE_S1_1", "PEP~GENE_T5_1"]
 
 
+def test_notebook_bars_match_gui_counts_for_ambiguous_and_short_keys(monkeypatch):
+    from matplotlib import pyplot as plt
+    from proteomicscopylot import notebook_functions as nb
+
+    frame = pd.DataFrame({"PTM_Collapse_key": ["P~GENE_T1_S2_M1", "S3", "Y4", None]})
+    monkeypatch.setattr(phospho_tools, "_phospho_context", lambda: (frame, pd.DataFrame(), []))
+    table = phospho_tools.phospho_sty_table()
+    fig = nb.sty_plot(frame)
+    try:
+        assert table["Count"].tolist() == [2, 0, 1, 1]
+        assert [bar.get_height() for bar in fig.axes[0].patches] == table["Count"].tolist()
+    finally:
+        plt.close(fig)
+
+
 def test_the_title_says_sites_not_peptides(monkeypatch: pytest.MonkeyPatch) -> None:
     title = _title(monkeypatch, TWO_SITES_ONE_PEPTIDE)
     assert title == "Modified S/T/Y site counts"

@@ -113,6 +113,17 @@ def entity_labels_for_kind(kind) -> tuple[str, str]:
     return ENTITY_LABELS_BY_KIND.get(key, ENTITY_LABELS_BY_KIND["protein"])
 
 
+def sample_display_labels(
+    frame: pd.DataFrame, *, index_column: str, include_id: bool = False, id_separator: str = "\n",
+) -> pd.Series:
+    """Format existing sample counters, retaining row-wise null and empty-input behavior."""
+    if include_id:
+        return frame.apply(
+            lambda row: f"{row['condition']}_{row[index_column]}{id_separator}({row['id']})", axis=1,
+        )
+    return frame.apply(lambda row: f"{row['condition']}_{row[index_column]}", axis=1)
+
+
 def condition_sample_labels(frame: pd.DataFrame) -> pd.Series:
     """``condition_N`` per row: N is the sample's 1-based place inside its condition.
 
@@ -501,6 +512,19 @@ def _median_center(values: pd.DataFrame, fit_rows: pd.Index | None = None) -> pd
     return values.sub(medians, axis=1).add(grand_median)
 
 
+def _interp_extrapolate(x, xs, ys):
+    """Interpolate within the fit and preserve the nearest endpoint offset outside it."""
+    x = np.asarray(x, dtype=float)
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    out = np.interp(x, xs, ys)
+    low = x < xs[0]
+    high = x > xs[-1]
+    out[low] = x[low] + (ys[0] - xs[0])
+    out[high] = x[high] + (ys[-1] - xs[-1])
+    return out
+
+
 def _quantile_normalize(values: pd.DataFrame, fit_rows: pd.Index | None = None) -> pd.DataFrame:
     """Force every sample onto a common intensity distribution.
 
@@ -517,7 +541,7 @@ def _quantile_normalize(values: pd.DataFrame, fit_rows: pd.Index | None = None) 
     """
     from scipy.stats import rankdata
 
-    numeric = values.apply(pd.to_numeric, errors="coerce")
+    numeric = values.apply(pd.to_numeric, errors="coerce").astype(float)
     reference_frame = numeric if fit_rows is None else numeric.loc[fit_rows]
     row_count = int(reference_frame.shape[0])
     if row_count == 0:
@@ -559,7 +583,7 @@ def _quantile_normalize(values: pd.DataFrame, fit_rows: pd.Index | None = None) 
         ys_unique = ys[first]
         mask = numeric[column].notna().to_numpy()
         column_values = numeric[column].to_numpy(dtype=float)[mask]
-        out.loc[mask, column] = np.interp(column_values, xs_unique, ys_unique)
+        out.loc[mask, column] = _interp_extrapolate(column_values, xs_unique, ys_unique)
     return out
 
 
@@ -676,7 +700,9 @@ def normalize_data(
 
         if linear_source is not None:
             linear = linear_source[present].apply(pd.to_numeric, errors="coerce")
-            linear = linear.mask(linear == 0)
+            # Zero and negative linear intensities are missing, as in every other
+            # path and as the annotation warning states; vsn's glog would accept them.
+            linear = linear.mask(linear <= 0)
         else:
             linear = pd.DataFrame(
                 np.power(2.0, numeric.to_numpy(dtype=float)),
@@ -924,7 +950,7 @@ def impute_values_with_diagnostics(
     sample_columns: list[str],
     q: float = 0.01,
     adj_std: float = 0.3,
-    seed: int = 1337,
+    seed: int = 1,
     sample_wise: bool = True,
     method="quantile",
     down_shift=1.8,
@@ -1329,7 +1355,7 @@ the plot the user sees and the sentence that describes it cannot disagree.
 def qqnorm_plot_data(
     values: np.ndarray,
     max_points: int = QQ_MAX_POINTS,
-    seed: int = 187,
+    seed: int = 1,
 ) -> dict[str, list[tuple[float, float]]]:
     """Sample quantiles against normal quantiles, on whatever scale is passed.
 

@@ -13,9 +13,8 @@ as deliberately fixed.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 ROUTES = sorted((ROOT / "backend" / "app" / "api").glob("plots_*.py"))  # one module per URL prefix
 

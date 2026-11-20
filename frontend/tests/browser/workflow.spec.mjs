@@ -22,15 +22,22 @@ const signalingProteins = ['ProteinNames,GeneNames,' + samples.join(','), ...sig
 const field = (page, label, tag = 'select') => page.getByLabel(label, { exact: true }).or(
   page.locator('label:not(:has(input, select, textarea))').filter({ hasText: new RegExp(`^\\s*${label}\\s*$`) }).locator('..').locator(tag));
 const tab = (page, name) => page.getByRole('button', { name, exact: true });
+const uploadCsv = (locator, name, text) => locator.setInputFiles({ name, mimeType: 'text/csv', buffer: Buffer.from(text) });
 
-test('distribution and imputation diagnostics are display-only while imputed CSV remains available', async ({ page }) => {
+test('distribution exports its notebook while imputation diagnostics and imputed CSV remain available', async ({ page }) => {
   await annotated(page);
   await tab(page, 'Distribution').click();
   const qq = page.getByRole('img', { name: 'QQ norm plot', exact: true });
   await expect(qq).toBeVisible();
   await expect.poll(() => qq.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
   await expect(page.getByRole('link', { name: 'Download Plot', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Export notebook', exact: true })).toHaveCount(0);
+  const notebook = page.getByRole('button', { name: 'Export notebook', exact: true });
+  await expect(notebook).toBeEnabled();
+  const notebookReady = page.waitForEvent('download');
+  await notebook.click();
+  const notebookDownload = await notebookReady;
+  expect(notebookDownload.suggestedFilename()).toBe('QQ_Plot.zip');
+  expect((await readFile(await notebookDownload.path())).subarray(0, 2).toString()).toBe('PK');
   await tab(page, 'Imputation').click();
   for (const name of ['Before: With vs Without Missing Values', 'Overall Distribution with Normal Fit', 'After: Non-Imputed vs Imputed Values']) {
     const plot = page.getByRole('img', { name, exact: true });
@@ -86,7 +93,7 @@ test('completeness plots export their rendered notebook and summary calculations
   const unavailable = page.getByRole('button', { name: 'Export notebook', exact: true });
   await expect(unavailable).toHaveCount(3);
   for (const index of [0, 1, 2]) await expect(unavailable.nth(index)).toBeDisabled();
-  await expect(page.getByRole('link', { name: 'Download CSV', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download table (.xlsx)', exact: true }).first()).toBeVisible();
 });
 
 for (const [plot, title, toggle] of [['boxplot', 'Boxplot', 'Toggle Sample n'], ['lineplot', 'Lineplot', 'Toggle ID'], ['heatmap', 'Heatmap', 'Toggle ID']]) {
@@ -119,7 +126,7 @@ test(`single ${plot} and summary export the same notebook snapshot`, async ({ pa
   await checkbox.setChecked(!(await checkbox.isChecked()));
   await expect(buttons.nth(0)).toBeDisabled();
   await expect(buttons.nth(1)).toBeDisabled();
-  await expect(page.getByRole('link', { name: 'Download CSV', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download table (.xlsx)', exact: true })).toBeVisible();
 });
 }
 
@@ -240,6 +247,29 @@ test('Venn condition sets can require a minimum number of values', async ({ page
   await minimum.press('Enter');
   await table;
   await expect(totalA).toContainText('22');
+});
+
+test('coverage table switches independently and exports an Excel workbook', async ({ page }) => {
+  await annotated(page);
+  await tab(page, 'QC Pipeline').click();
+  const notebooks = page.getByRole('button', { name: 'Export notebook', exact: true });
+  await expect(notebooks.nth(1)).toBeEnabled();
+  await page.getByRole('button', { name: 'Next coverage table', exact: true }).click();
+  await expect(page.getByRole('columnheader', { name: 'Median', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Summary Type', { exact: true })).not.toBeChecked();
+  await expect(notebooks.nth(0)).toBeEnabled();
+  await expect(notebooks.nth(1)).toBeDisabled();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Download table (.xlsx)', exact: true }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe('qc_coverage_phospho_per_condition.xlsx');
+  const workbook = await readFile(await download.path());
+  expect(workbook.subarray(0, 2).toString()).toBe('PK');
+  expect(workbook.toString('utf8')).toContain('>All samples</t>');
+  expect(workbook.toString('utf8')).toContain('<v>23.5</v>');
+  await page.getByRole('button', { name: 'Previous coverage table', exact: true }).click();
+  await expect(page.getByRole('columnheader', { name: 'Identified features (n)', exact: true })).toBeVisible();
+  await expect(notebooks.nth(1)).toBeEnabled();
 });
 
 test('coverage plot and processed table download the same notebook snapshot', async ({ page }) => {
@@ -466,7 +496,7 @@ test('static volcano plot and result table download the same reproducible notebo
     archives.push(await readFile(await download.path()));
   }
   expect(archives[0].equals(archives[1])).toBe(true);
-  const labels = page.getByLabel('Label top up-regulated', { exact: true });
+  const labels = page.getByLabel('Highlight top N up-regulated', { exact: true });
   await labels.fill('2');
   await labels.press('Enter');
   await expect(buttons.nth(1)).toBeEnabled();
@@ -623,7 +653,7 @@ test('committed number fields show the accepted rounded or clamped value', async
   await tab(page, 'Volcano Plot').click();
   await field(page, 'Condition 2').selectOption('B');
   await field(page, 'Type').selectOption('Normal');
-  const labels = page.getByLabel('Label top up-regulated', { exact: true });
+  const labels = page.getByLabel('Highlight top N up-regulated', { exact: true });
   const download = page.getByRole('link', { name: 'Download Plot', exact: true });
   await expect(labels).toHaveValue('0');
   for (const [draft, accepted, key] of [
@@ -919,14 +949,16 @@ test('volcano lists the rows it could not test and offers them for download', as
   await expect(section).toBeVisible();
   await expect(section.getByText('fewer than 2 values in A').first()).toBeVisible();
   const pending = page.waitForEvent('download');
-  await section.getByRole('link', { name: 'Download CSV', exact: true }).click();
+  await section.getByRole('link', { name: 'Download table (.xlsx)', exact: true }).click();
   const download = await pending;
-  expect(download.suggestedFilename()).toMatch(/_not_tested\.csv$/);
-  const csv = (await readFile(await download.path())).toString('utf8');
-  expect(csv.split('\n')[0]).toContain('n_A');
-  expect(csv).toContain('K0');
-  expect(csv).toContain('K1');
-  expect(csv).not.toContain('K2,');
+  expect(download.suggestedFilename()).toMatch(/_not_tested\.xlsx$/);
+  const workbook = await readFile(await download.path());
+  expect(workbook.subarray(0, 2).toString()).toBe('PK');
+  const xml = workbook.toString('utf8'); // the workbook stores its XML parts without compression
+  expect(xml).toContain('>n_A</t>');
+  expect(xml).toContain('>K0</t>');
+  expect(xml).toContain('>K1</t>');
+  expect(xml).not.toContain('>K2</t>');
 });
 
 test('scientific assistant can set multiline volcano highlight terms', { tag: '@ai' }, async ({ page }) => {
@@ -1017,7 +1049,7 @@ for (const destination of ['stats.simulation', 'data.distribution', 'phospho.kse
         const mode = view.mode;
         expect(mode.kind).toBe('phospho');
         if (destination === 'analysis.canvas') expect(Array.isArray(mode.tiles)).toBe(true);
-        if (destination === 'data.distribution') expect(mode.randomSeed).toBe(187);
+        if (destination === 'data.distribution') expect(mode.randomSeed).toBe(1);
         if (destination === 'phospho.ksea') expect(mode.source).toBe('volcano');
         if (destination === 'stats.simulation') expect(mode.status === 'incomplete_parameters' || mode.source === 'volcano').toBe(true);
       }
@@ -1065,8 +1097,7 @@ test('end-to-end evidence reads uploaded Kinase Library values and preserves ren
   await page.getByRole('combobox', { name: 'Condition 1', exact: true }).selectOption('A');
   await page.getByRole('combobox', { name: 'Condition 2', exact: true }).selectOption('B');
   for (const label of ['Serine/Threonine Result File', 'Tyrosine/Non-canonical Result File']) {
-    await page.getByLabel(label).setInputFiles({ name: 'synthetic.csv', mimeType: 'text/csv',
-      buffer: Buffer.from('Kinase,Frequency Factor,Adjusted p-value\nAKT1,4,0.02\n') });
+    await uploadCsv(page.getByLabel(label), 'synthetic.csv', 'Kinase,Frequency Factor,Adjusted p-value\nAKT1,4,0.02\n');
   }
   const rendered = page.waitForResponse(r => r.url().endsWith('/api/plots/phospho/ksea-volcano.html'));
   await tab(page, 'Generate Kinase Library Volcano').click();
@@ -1092,8 +1123,14 @@ test('end-to-end evidence reads uploaded Kinase Library values and preserves ren
   const regenerated = await tabRequest(page).post('/api/annotations/generate', { data: annotation.sent });
   expect(regenerated.ok(), await regenerated.text()).toBeTruthy();
   const stale = await askForRealEvidence(page);
-  expect(stale.evidence).toHaveLength(1);
-  expect(stale.evidence[0].status).toBe('unavailable');
+  const uploadedResults = stale.evidence.filter(item => item.tool === 'Uploaded Kinase Library results');
+  expect(uploadedResults).toHaveLength(1);
+  expect(uploadedResults[0].status).toBe('unavailable');
+  expect(uploadedResults[0].text).toContain('Render or run that result again');
+  // Method guidance can remain available after the calculated result expires.
+  expect(stale.evidence.every(item => item.status === 'unavailable'
+    || item.tool === 'result_status' || item.tool.startsWith('method:'))).toBe(true);
+  expect(JSON.stringify(stale.evidence)).not.toContain('log2ff=2');
 });
 
 test('end-to-end evidence follows canvas contrast and p-value changes', { tag: '@ai' }, async ({ page }) => {
@@ -1551,14 +1588,21 @@ test('end-to-end evidence follows completed ORA results and clearing', { tag: '@
   expect(tile.text).toContain(`termId=${actual.terms[0].termId}`);
   expect(Number(tile.text.match(/\|adjPValue=([^|\n]+)/)[1])).toBe(actual.terms[0].adjPValue);
   expect(first.request.view.mode.tileEvidence[0].token).toBe(actual.evidenceToken);
-  const exportLink = page.getByRole('link', { name: 'Download Terms CSV', exact: true });
-  const originalExport = await exportLink.getAttribute('href');
+  const exportLink = page.getByRole('link', { name: 'Download terms (.xlsx)', exact: true });
+  async function downloadedTable() {
+    const pending = page.waitForEvent('download');
+    await exportLink.click();
+    const download = await pending;
+    expect(download.suggestedFilename()).toBe('ora_terms.xlsx');
+    return readFile(await download.path());
+  }
+  const originalExport = await downloadedTable();
   await page.getByPlaceholder('Paste genes separated by comma, space, or newline').fill('TP53');
   await field(canvas, 'Adj p-value cutoff', 'input').fill('0.5');
   await field(canvas, 'Min term size', 'input').fill('10');
   await field(canvas, 'Max term size', 'input').fill('400');
   await field(canvas, 'Top terms', 'input').fill('5');
-  await expect(exportLink).toHaveAttribute('href', originalExport);
+  expect((await downloadedTable()).equals(originalExport)).toBe(true);
   await canvas.getByRole('button', { name: 'Collapse tile', exact: true }).click();
   await expect(exportLink).toBeHidden();
   await tab(page, 'QC Pipeline').click();
@@ -1570,7 +1614,7 @@ test('end-to-end evidence follows completed ORA results and clearing', { tag: '@
   await expect(field(canvas, 'Min term size', 'input')).toHaveValue('10');
   await expect(field(canvas, 'Max term size', 'input')).toHaveValue('400');
   await expect(field(canvas, 'Top terms', 'input')).toHaveValue('5');
-  await expect(exportLink).toHaveAttribute('href', originalExport);
+  expect((await downloadedTable()).equals(originalExport)).toBe(true);
   const edited = await askForRealEvidence(page);
   expect(edited.evidence).toEqual(first.evidence);
   expect(runs).toBe(1);
@@ -1830,9 +1874,7 @@ test('static retention-time notebooks follow the rendered method and recover aft
   await page.getByLabel('Dataset type', { exact: true }).selectOption('peptide');
   const csv = 'File.Name,Stripped.Sequence,Predicted.RT,RT\n' +
     Array.from({ length: 100 }, (_, i) => `run1,PEP${i},${10 + i / 3},${11 + i / 3 + Math.sin(i)}`).join('\n');
-  await page.locator('input[type=file]').setInputFiles({
-    name: 'retention.csv', mimeType: 'text/csv', buffer: Buffer.from(csv),
-  });
+  await uploadCsv(page.locator('input[type=file]'), 'retention.csv', csv);
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/datasets/peptide-file'));
   await tab(page, 'Upload').last().click();
   expect((await uploaded).ok()).toBeTruthy();
@@ -1862,23 +1904,8 @@ test('static retention-time notebooks follow the rendered method and recover aft
   await page.unroute('**/api/plots/peptide/rt.png*');
   await page.getByLabel('Add Line', { exact: true }).uncheck();
   await expect(button).toBeEnabled();
-  await field(page, 'Type').selectOption('Interactive');
-  await expect(button).toBeEnabled();
-  await expect(page.getByRole('link', { name: 'Open Interactive Plot', exact: true })).toBeVisible();
-  const interactiveReady = page.waitForEvent('download');
-  await button.click();
-  expect((await interactiveReady).suggestedFilename()).toBe('Interactive_Peptide_Retention_Time.zip');
-  await expect(page.frameLocator('iframe[title="Retention Time Plot interactive"]').locator('.js-plotly-plot')).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('interactive-retention-notebook.png'), fullPage: true });
-  await page.route('**/api/plots/peptide/rt-interactive.html*', route => route.fulfill({
-    status: 400, contentType: 'application/json', body: JSON.stringify({ detail: 'Test interactive RT unavailable' }),
-  }));
-  await page.getByLabel('Add Line', { exact: true }).check();
-  await expect(page.getByText('Test interactive RT unavailable', { exact: false })).toBeVisible();
-  await expect(button).toBeDisabled();
-  await page.unroute('**/api/plots/peptide/rt-interactive.html*');
-  await page.getByLabel('Add Line', { exact: true }).uncheck();
-  await expect(button).toBeEnabled();
+  await expect(page.getByLabel('Type', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Interactive Plot', exact: true })).toHaveCount(0);
 });
 
 test('peptide modification and missed-cleavage notebooks follow rendered settings and recover from failure', async ({ page }, testInfo) => {
@@ -1887,9 +1914,7 @@ test('peptide modification and missed-cleavage notebooks follow rendered setting
   const csv = 'File.Name,Modified.Sequence,Stripped.Sequence,Precursor.Quantity\n' +
     'r1,AC(UniMod:4)M(UniMod:35),AKPAK,10\nr1,(UniMod:1)PEPTIDE,PEPTIDE,0\n' +
     'r2,AC(UniMod:4)M(UniMod:35),AKPAK,20\nr2,(UniMod:1)PEPTIDE,PEPTIDE,30\n';
-  await page.locator('input[type=file]').setInputFiles({
-    name: 'modifications.csv', mimeType: 'text/csv', buffer: Buffer.from(csv),
-  });
+  await uploadCsv(page.locator('input[type=file]'), 'modifications.csv', csv);
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/datasets/peptide-file'));
   await tab(page, 'Upload').last().click();
   expect((await uploaded).ok()).toBeTruthy();
@@ -1949,8 +1974,7 @@ test('peptide modification and missed-cleavage notebooks follow rendered setting
 test('sequence coverage TXT and notebook share the captured result', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByLabel('Dataset type', { exact: true }).selectOption('peptide');
-  await page.locator('input[type=file]').setInputFiles({ name: 'sequence.csv', mimeType: 'text/csv',
-    buffer: Buffer.from('File.Name,ProteinNames,Stripped.Sequence\nr1,P53_HUMAN,MEEPQSDPSV\nr1,P53_HUMAN,EPPLSQETF\nr1,P53_HUMAN,NOTAMATCH\n') });
+  await uploadCsv(page.locator('input[type=file]'), 'sequence.csv', 'File.Name,ProteinNames,Stripped.Sequence\nr1,P53_HUMAN,MEEPQSDPSV\nr1,P53_HUMAN,EPPLSQETF\nr1,P53_HUMAN,NOTAMATCH\n');
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/datasets/peptide-file'));
   await tab(page, 'Upload').last().click();
   expect((await uploaded).ok()).toBeTruthy();
@@ -1983,15 +2007,120 @@ test('sequence coverage TXT and notebook share the captured result', async ({ pa
   await expect(button).toBeEnabled();
 });
 
+test('comparison, statistics and canvas controls restore by workflow', async ({ page }) => {
+  await annotated(page, '3', { kind: 'protein', table: signalingProteins });
+  await tab(page, 'Upload').first().click();
+  await annotated(page, '3', { fresh: false });
+  const level = page.getByRole('combobox', {name:'Dataset level', exact:true});
+  await tab(page, 'Comparison').click();
+  await tab(page, 'Venn Diagram').click();
+  await level.selectOption('protein');
+  const alias = page.getByRole('textbox', {name:'Alias 1 (optional)', exact:true});
+  await expect(page.locator('main img[src^="blob:"]').first()).toBeVisible();
+  await alias.fill('Protein comparison');
+  await level.selectOption('phospho');
+  await expect(alias).toBeVisible();
+  await expect(alias).not.toHaveValue('Protein comparison');
+  await expect(page.locator('main img[src^="blob:"]').first()).toBeVisible();
+  await level.selectOption('protein');
+  await expect(alias).toHaveValue('Protein comparison');
+
+  await tab(page, 'Statistical Analysis').click();
+  await tab(page, 'One-way ANOVA').click();
+  await level.selectOption('protein');
+  const uncorrected = page.getByLabel('Use uncorrected p-values', {exact:true});
+  await uncorrected.check();
+  await level.selectOption('phospho');
+  await expect(uncorrected).not.toBeChecked();
+  await level.selectOption('protein');
+  await expect(uncorrected).toBeChecked();
+
+  await tab(page, 'Analysis').click();
+  await level.selectOption('protein');
+  await tab(page, '+ Add Plot').click();
+  const tiles = page.locator('[data-assistant-tile]');
+  await expect(tiles).toHaveCount(1);
+  await level.selectOption('phospho');
+  await expect(tiles).toHaveCount(0);
+  await level.selectOption('protein');
+  await expect(tiles).toHaveCount(1);
+});
+
+test('coverage remembers independent workflow settings and supplies the report with them', async ({ page }) => {
+  test.setTimeout(180_000);
+  const coverageImages = {};
+  await annotated(page, '3', { kind: 'protein', table: signalingProteins });
+  await tab(page, 'Upload').first().click();
+  await annotated(page, '3', { fresh: false });
+  expect((await tabRequest(page).post('/api/annotations/phosprot/aggregate', { data: { mode: 'robust_site_median', source: 'non_imputed' } })).ok()).toBeTruthy();
+  await tab(page, 'Upload').first().click();
+  await field(page, 'Dataset type').selectOption('peptide');
+  await uploadCsv(page.locator('input[type=file]'), 'workflow-peptides.csv', 'File.Name,Stripped.Sequence,Precursor.Id,Precursor.Quantity,Modified.Sequence,Predicted.RT,RT\n' + samples.map((r, i) => r + ',AAA,AAA2,4,AAA,' + (10+i) + ',' + (11+i)).join('\n'));
+  await actionResponse(page, '/api/datasets/peptide-file', () => tab(page, 'Upload').last().click());
+  await tab(page, 'QC Pipeline').click();
+  const level = field(page, 'Dataset level');
+  const summary = page.getByLabel('Summary Type', { exact: true });
+  const text = page.getByLabel('Toggle Text', { exact: true });
+  const ready = () => expect(page.getByRole('button', {name: 'Export notebook', exact:true}).first()).toBeEnabled({timeout:30000});
+  await level.selectOption('protein');
+  await ready(); await summary.check(); await ready(); await text.check(); await ready();
+  await level.selectOption('phospho');
+  await expect(summary).not.toBeChecked(); await expect(text).not.toBeChecked(); await ready();
+  await level.selectOption('phosprot');
+  await expect(summary).not.toBeChecked(); await expect(text).not.toBeChecked(); await ready();
+  await level.selectOption('peptide');
+  await expect(text).not.toBeChecked(); await text.check(); await ready();
+  await level.selectOption('precursor');
+  await expect(text).not.toBeChecked(); await summary.check(); await ready();
+  for (const [kind, wantSummary, wantText] of [
+    ['protein', true, true], ['phospho', false, false], ['phosprot', false, false], ['peptide', false, true], ['precursor', true, false],
+  ]) {
+    const rendered = page.waitForResponse(r => r.url().includes(`/api/plots/qc/${kind}/coverage.png`) && r.ok());
+    await level.selectOption(kind);
+    await rendered; await ready();
+    await expect(summary).toBeChecked({ checked: wantSummary });
+    await expect(text).toBeChecked({ checked: wantText });
+    const settings = await page.evaluate(async k => (await import('/src/lib/reportState.ts')).getSummaryReportContext().qcSettings[k].coverage, kind);
+    expect(settings.summary).toBe(wantSummary);
+    expect(settings.text).toBe(wantText);
+    if (kind === 'protein' || kind === 'phospho') {
+      await expect(page.getByRole('button', {name: 'Export notebook', exact: true}).first()).toBeEnabled();
+      coverageImages[kind] = await page.locator('main img[src^="blob:"]').first().evaluate(async img => {
+        const blob = await (await fetch(img.src)).blob();
+        return new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+      });
+    }
+  }
+  await tab(page, 'Completeness').click();
+  for (const [kind, bins] of [['protein', '3'], ['peptide', '2'], ['precursor', '1']]) {
+    await level.selectOption(kind);
+    const binInput = page.getByLabel('Bin missing values', {exact:true});
+    await binInput.fill(bins);
+    await binInput.press('Tab');
+    await ready();
+  }
+  for (const [kind, bins] of [['phospho', '0'], ['protein', '3'], ['peptide', '2'], ['precursor', '1']]) {
+    await level.selectOption(kind);
+    await expect(page.getByLabel('Bin missing values', {exact:true})).toHaveValue(bins);
+    await ready();
+  }
+  await tab(page, 'Summary').click();
+  await tab(page, 'Report').click();
+  const generated = page.waitForResponse(r => r.url().endsWith('/api/summary/report') && r.request().method() === 'POST', { timeout: 120000 });
+  await tab(page, 'Generate HTML Report').click();
+  const response = await generated;
+  expect(response.ok(), response.ok() ? undefined : await response.text()).toBeTruthy();
+  const report = await response.json();
+  for (const image of Object.values(coverageImages)) expect(report.html.includes(image)).toBe(true);
+});
+
 test('peptide upload offers peptide and precursor coverage and missing-value plots', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('Dataset type', { exact: true }).selectOption('peptide');
   const csv = 'File.Name,Stripped.Sequence,Precursor.Id,Precursor.Quantity\n' +
     'r1,PEPA,PEPA_2,10\nr1,PEPA,PEPA_3,20\nr1,PEPB,PEPB_2,0\n' +
     'r2,PEPA,PEPA_2,0\nr2,PEPA,PEPA_3,30\nr2,PEPB,PEPB_2,5\n';
-  await page.locator('input[type=file]').setInputFiles({
-    name: 'synthetic-peptides.csv', mimeType: 'text/csv', buffer: Buffer.from(csv),
-  });
+  await uploadCsv(page.locator('input[type=file]'), 'synthetic-peptides.csv', csv);
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/datasets/peptide-file'));
   await tab(page, 'Upload').last().click();
   expect((await uploaded).ok()).toBeTruthy();
@@ -2010,6 +2139,22 @@ test('peptide upload offers peptide and precursor coverage and missing-value plo
       const plot = page.locator('main img').first();
       await expect(page.getByRole('link', { name: 'Download Plot', exact: true })).toHaveAttribute('href', new RegExp(`/api/plots/${path}/${level}/`));
       await expect.poll(() => plot.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+      const imageDigest = () => plot.evaluate(async img => {
+        const bytes = await (await fetch(img.src)).arrayBuffer();
+        return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).join(',');
+      });
+      const toggleAndCheck = async label => {
+        const previous = await imageDigest();
+        await page.getByLabel(label, { exact: true }).click();
+        await expect.poll(imageDigest).not.toBe(previous);
+      };
+      if (section === 'QC Pipeline') {
+        await toggleAndCheck('Summary Type');
+        await toggleAndCheck('Toggle Text');
+      } else {
+        await toggleAndCheck('Toggle Text');
+        await expect(page.getByLabel('Bin missing values', { exact: true })).toBeVisible();
+      }
       {
         const button = page.getByRole('button', { name: 'Export notebook', exact: true });
         await expect(button).toBeEnabled();
@@ -2321,6 +2466,47 @@ for (const change of ['settings', 'revision']) {
   });
 }
 
+for (const tileType of ['volcano', 'oraList']) {
+  test(`canvas waits for dataset discovery before adding a ${tileType} tile to the resolved workflow`, async ({ page }) => {
+    await annotated(page);
+    let release;
+    let requested;
+    const gate = new Promise(resolve => { release = resolve; });
+    const ready = new Promise(resolve => { requested = resolve; });
+    await page.route('**/api/datasets/current', async route => {
+      requested();
+      await gate;
+      await route.continue();
+    });
+    try {
+      await tab(page, 'Analysis').click();
+      await ready;
+      await expect(tab(page, '+ Add Plot')).toBeDisabled();
+      await expect(page.getByRole('combobox', { name: 'New tile type', exact: true })).toBeDisabled();
+      await expect(page.getByText('No plots yet.', { exact: false })).toBeVisible();
+    } finally {
+      release();
+    }
+    await page.getByRole('combobox', { name: 'New tile type', exact: true }).selectOption(tileType);
+    await tab(page, '+ Add Plot').click();
+    await expect(field(page, 'Dataset level')).toHaveValue('phospho');
+    if (tileType === 'volcano') {
+      await expect(page.getByRole('combobox', { name: 'Condition 1', exact: true }).locator('option')).toHaveText(['A', 'B']);
+    } else {
+      await expect(page.getByPlaceholder('Paste genes separated by comma, space, or newline')).toBeVisible();
+    }
+    await expect(page.getByText('No plots yet.', { exact: false })).toHaveCount(0);
+  });
+}
+
+test('an empty project can still add a canvas tile after dataset discovery', async ({ page }) => {
+  await page.goto('/');
+  await tab(page, 'Analysis').click();
+  await tab(page, '+ Add Plot').click();
+  await expect(page.getByRole('combobox', { name: 'Condition 1', exact: true })).toBeVisible();
+  await expect(page.getByText('No plots yet.', { exact: false })).toHaveCount(0);
+});
+
 for (const consumer of ['volcano', 'ksea', 'ora', 'analysis']) {
   test(`saved valid-to-valid pairing refreshes ${consumer} results`, async ({ page }) => {
     await annotated(page);
@@ -2475,8 +2661,7 @@ test('uploaded hostile kinase labels stay inert and interactive plots cannot acc
   await page.getByRole('combobox', { name: 'Condition 1', exact: true }).selectOption('A');
   await page.getByRole('combobox', { name: 'Condition 2', exact: true }).selectOption('B');
   for (const label of ['Serine/Threonine Result File', 'Tyrosine/Non-canonical Result File']) {
-    await page.getByLabel(label).setInputFiles({ name: 'synthetic.csv', mimeType: 'text/csv',
-      buffer: Buffer.from(label === 'Serine/Threonine Result File' ? table : rawTable) });
+    await uploadCsv(page.getByLabel(label), 'synthetic.csv', label === 'Serine/Threonine Result File' ? table : rawTable);
   }
   await page.getByLabel('Annotate Hits', { exact: true }).check();
   const rendered = page.waitForResponse(r => r.url().endsWith('/api/plots/phospho/ksea-volcano.html'));
@@ -2613,7 +2798,7 @@ test('portable save restores through required replacement upload without changin
   expect((await tabRequest(page).get('/api/annotations/current/phospho')).status()).toBe(404);
   await expect(tab(page, 'Restore').last()).toBeDisabled();
   const replacements = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Missing Files' }) });
-  await replacements.locator('input[type=file]').setInputFiles({ name: 'synthetic-sites.csv', mimeType: 'text/csv', buffer: Buffer.from(sites) });
+  await uploadCsv(replacements.locator('input[type=file]'), 'synthetic-sites.csv', sites);
   const restored = await actionResponse(page, '/api/restore/import', () => tab(page, 'Restore').last().click());
   expect(restored.body.ok).toBe(true);
   await expect(page.getByText(/Restore complete\./)).toBeVisible();
@@ -2635,13 +2820,13 @@ async function actionResponse(page, path, action) {
 async function annotated(page, minimum = '3', { fresh = true, table = sites, meta = metadata, kind = 'phospho', expectedRows } = {}) {
   if (fresh) await page.goto('/');
   await field(page, 'Dataset type').selectOption(kind);
-  await page.locator('input[type=file]').setInputFiles({ name: 'synthetic-sites.csv', mimeType: 'text/csv', buffer: Buffer.from(table) });
+  await uploadCsv(page.locator('input[type=file]'), 'synthetic-sites.csv', table);
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/datasets/upload') && r.request().method() === 'POST');
   await tab(page, 'Upload').last().click();
   expect((await uploaded).ok()).toBeTruthy();
   await tab(page, 'Annotation').click();
   await field(page, 'Dataset level').selectOption(kind);
-  await field(page, 'Metadata file', 'input').setInputFiles({ name: 'synthetic-meta.csv', mimeType: 'text/csv', buffer: Buffer.from(meta) });
+  await uploadCsv(field(page, 'Metadata file', 'input'), 'synthetic-meta.csv', meta);
   const metadataResponse = page.waitForResponse(r => r.url().endsWith('/api/annotations/metadata/upload') && r.request().method() === 'POST');
   await tab(page, 'Upload Metadata').click();
   expect((await metadataResponse).ok()).toBeTruthy();
@@ -2683,7 +2868,7 @@ for (const source of ['non_imputed', 'imputed']) {
     expect(row[headers.indexOf('A1')] === '').toBe(source === 'non_imputed');
     await tab(page, 'Imputation').click();
     await expect(field(page, 'Dataset level').locator('option[value=phosprot]')).toHaveCount(0);
-    await expect(page.getByText('Phosphoproteins cannot be imputed directly.', { exact: false })).toBeVisible();
+    await expect(field(page, 'Dataset level')).toHaveValue('phospho');
     const statsResponse = page.waitForResponse(r => {
       if (!r.url().endsWith('/api/stats/volcano/run')) return false;
       const payload = r.request().postDataJSON();
@@ -2823,6 +3008,12 @@ async function verifyScopeStatistics(page, first, second, rows) {
   const response = await pending;
   expect(response.ok(), await response.text()).toBeTruthy();
   const result = await response.json();
+  // Browser responses use the compact transport; retain row-level scope checks.
+  if (response.headers()['content-type']?.includes('application/vnd.copylot.stats+json') &&
+      Array.isArray(result.rows?.columns) && Array.isArray(result.rows.values)) {
+    const { columns, values } = result.rows;
+    result.rows = values.map(row => Object.fromEntries(columns.map((name, i) => [name, row[i]])));
+  }
   expect(result.totalRows).toBe(rows);
   await expect(page.getByText('Result Table', { exact: true })).toBeVisible();
   await tab(page, 'Data').click();
@@ -2907,7 +3098,7 @@ test('metadata switching ignores a delayed previous-profile annotation', async (
   await actionResponse(page, '/api/datasets/metadata/profiles/create', () => tab(page, 'Create').click());
   await expect(field(page, 'Selected metadata')).toHaveValue('Alternative');
   await expect(field(page, 'Selected metadata')).toBeEnabled();
-  await field(page, 'Metadata file', 'input').setInputFiles({ name: 'alternate.csv', mimeType: 'text/csv', buffer: Buffer.from(alternateMetadata) });
+  await uploadCsv(field(page, 'Metadata file', 'input'), 'alternate.csv', alternateMetadata);
   const uploaded = page.waitForResponse(r => r.url().endsWith('/api/annotations/metadata/upload') && r.request().method() === 'POST');
   await tab(page, 'Upload Metadata').click();
   expect((await uploaded).ok()).toBeTruthy();
@@ -3008,7 +3199,7 @@ test('save download and UI restore preserve analysis and settings; invalid resto
   expect((await tabRequest(page).get('/api/annotations/current/phosprot')).status()).toBe(404);
   await expect(tab(page, 'Restore').last()).toBeDisabled();
   const replacements = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Missing Files' }) });
-  await replacements.locator('input[type=file]').setInputFiles({ name: 'synthetic-sites.csv', mimeType: 'text/csv', buffer: Buffer.from(sites) });
+  await uploadCsv(replacements.locator('input[type=file]'), 'synthetic-sites.csv', sites);
   const restored = await actionResponse(page, '/api/restore/import', () => tab(page, 'Restore').last().click());
   expect(restored.body.ok).toBe(true);
   await expect(page.getByText(/Restore complete\./)).toBeVisible();
@@ -3113,4 +3304,55 @@ test('canvas restored protein correction is inactive without a protein dataset',
   expect(response.request().postDataJSON().proteinCorrection).toBe(false);
   expect(response.ok(), await response.text()).toBeTruthy();
   await expect(page.getByRole('checkbox', { name: 'Correct site changes for protein abundance' })).toHaveCount(0);
+});
+
+test('abundance and volcano share mouse-name highlighting, genes and top-N controls', async ({ page }, testInfo) => {
+  await annotated(page, '3', { table: signalingProteins.replace('P0,TP53,', 'GFRP_MOUSE,Gfrp,'), kind: 'protein' });
+  await tab(page, 'QC Pipeline').click();
+  await tab(page, 'Abundance Plot').click();
+  await field(page, 'Dataset level').selectOption('protein');
+  await expect(field(page, 'Label column').locator('option[value=genes]')).toHaveText('Gene Names');
+  const high = page.getByLabel('Highlight top N highest abundance', { exact: true });
+  const low = page.getByLabel('Highlight top N lowest abundance', { exact: true });
+  const boxes = await Promise.all([high.boundingBox(), low.boundingBox()]);
+  expect(Math.abs(boxes[0].y - boxes[1].y)).toBeLessThan(2);
+  await page.getByLabel('Highlight terms', { exact: true }).fill('GFRP');
+  await page.getByLabel('Highlight terms', { exact: true }).press('Tab');
+  await expect(page.getByLabel('Label highlighted points', { exact: true })).toBeVisible();
+  const termsBox = await page.getByLabel('Highlight terms', { exact: true }).boundingBox();
+  const sizeBox = await page.getByLabel('Width (cm)', { exact: true }).boundingBox();
+  expect(sizeBox.y).toBeGreaterThan(termsBox.y + termsBox.height);
+  await field(page, 'Type').selectOption('Interactive');
+  await expect(page.getByLabel('Label highlighted points', { exact: true })).toHaveCount(0);
+  const abundance = page.frameLocator('iframe[title="Abundance Plot interactive plot"]').locator('.js-plotly-plot');
+  await expect.poll(() => abundance.evaluate(plot => plot.data.filter(trace => trace.name.includes('Highlighted') && trace.legendgroup !== '_copylot_highlight_legend').length)).toBe(2);
+  const rings = await abundance.evaluate(plot => plot.data.filter(trace => trace.name.includes('Highlighted') && trace.legendgroup !== '_copylot_highlight_legend').map(trace => ({
+    mode: trace.mode, size: trace.marker.size,
+    baseSize: plot.data.find(base => base.legendgroup === trace.legendgroup && !base.name.includes('Highlighted')).marker.size,
+    labels: trace.customdata.map(row => row[0]),
+  })));
+  expect(rings.every(ring => ring.mode === 'markers' && ring.size === ring.baseSize && ring.labels.includes('GFRP_MOUSE'))).toBe(true);
+  await field(page, 'Label column').selectOption('genes');
+  await expect.poll(() => abundance.evaluate(plot => plot.data.filter(trace => trace.name.includes('Highlighted') && trace.legendgroup !== '_copylot_highlight_legend').flatMap(trace => trace.customdata.map(row => row[0])))).toEqual(['Gfrp', 'Gfrp']);
+  await expect.poll(() => abundance.evaluate(plot => plot._fullData.filter(trace => trace.showlegend && trace.name.includes('Highlighted')).map(trace => trace.name))).toEqual(['Highlighted']);
+  await page.frameLocator('iframe[title="Abundance Plot interactive plot"]').locator('.traces').filter({ has: page.frameLocator('iframe[title="Abundance Plot interactive plot"]').locator('.legendtext').filter({ hasText: /^A$/ }) }).locator('.legendtoggle').click();
+  await expect.poll(() => abundance.evaluate(plot => plot._fullData.filter(trace => trace.legendgroup === 'A').every(trace => trace.visible === 'legendonly'))).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('abundance-highlighting.png'), fullPage: true });
+  await tab(page, 'Statistical Analysis').click();
+  await tab(page, 'Volcano Plot').click();
+  await field(page, 'Dataset level').selectOption('protein');
+  await field(page, 'Condition 2').selectOption('B');
+  await field(page, 'Type').selectOption('Interactive');
+  const top = page.getByLabel('Highlight top N up-regulated', { exact: true });
+  await top.fill('2');
+  await top.press('Enter');
+  await expect(page.getByLabel('Outline highlighted points', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Label highlighted points', { exact: true })).toHaveCount(0);
+  const volcano = page.frameLocator('iframe[title="Volcano Plot"]').locator('.js-plotly-plot');
+  await expect.poll(() => volcano.evaluate(plot => plot._fullData.filter(trace => trace.name.includes('Highlighted') && trace.legendgroup !== '_copylot_highlight_legend').reduce((n, trace) => n + trace.x.length, 0))).toBe(2);
+  await expect.poll(() => volcano.evaluate(plot => plot._fullData.filter(trace => trace.showlegend && trace.name.includes('Highlighted')).map(trace => trace.name))).toEqual(['Highlighted']);
+  await page.frameLocator('iframe[title="Volcano Plot"]').locator('.traces').filter({ has: page.frameLocator('iframe[title="Volcano Plot"]').locator('.legendtext').filter({ hasText: /^Upregulated$/ }) }).locator('.legendtoggle').click();
+  await expect.poll(() => volcano.evaluate(plot => plot._fullData.filter(trace => trace.legendgroup === 'Upregulated').every(trace => trace.visible === 'legendonly'))).toBe(true);
+  await page.getByLabel('Outline highlighted points', { exact: true }).uncheck();
+  await expect.poll(() => volcano.evaluate(plot => plot.data.filter(trace => trace.name.includes('Highlighted') && trace.legendgroup !== '_copylot_highlight_legend').length)).toBe(0);
 });

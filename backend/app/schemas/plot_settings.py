@@ -70,11 +70,17 @@ class AdvancedPlotSettings(BaseModel):
     # itself chose.
     # Moved out of every page's options row, where "Toggle Header" appeared at 20
     # call sites under three different labels for one setting.
+    distributionNoteVisible: bool | None = None
+    distributionNoteText: str | None = None
+    distributionNoteXOffset: float | None = None
+    distributionNoteYOffset: float | None = None
     titleVisible: bool | None = None
     legendVisible: bool | None = None
     legendTitle: str | None = None
     legendTextColor: str | None = None
     legendFrame: bool | None = None
+    # Where a plot that offers the choice puts its legend (the single-protein line plot).
+    legendPlacement: Literal["below", "right"] | None = None
     xTickLabelColor: str | None = None
     yTickLabelColor: str | None = None
     referenceLineColor: str | None = None
@@ -132,12 +138,20 @@ class AdvancedPlotSettings(BaseModel):
     volcanoNsSize: float | None = None
     volcanoNsAlpha: float | None = None
     volcanoNsColor: str | None = None
-    volcanoHighlightSize: float | None = None
+    volcanoHighlightWidth: float | None = None
     volcanoHighlightColor: str | None = None
     # The highlight ring's own legend entry (default on) and its text.
     volcanoHighlightLegend: bool | None = None
     volcanoHighlightLegendLabel: str | None = None
+    volcanoLabelConnector: bool | None = None
+    volcanoLabelConnectorColor: str | None = None
+    volcanoLabelConnectorWidth: float | None = None
     volcanoLabelSize: float | None = None
+    abundanceHighlightWidth: float | None = None
+    abundanceHighlightColor: str | None = None
+    abundanceHighlightLegend: bool | None = None
+    abundanceHighlightLegendLabel: str | None = None
+    abundanceLabelSize: float | None = None
     # Colours that used to be pickers in a plot's own options row.
     barColor: str | None = None
     classIColor: str | None = None

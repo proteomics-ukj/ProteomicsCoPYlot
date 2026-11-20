@@ -24,11 +24,10 @@ import importlib
 import inspect
 import json
 import subprocess
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 R_SOURCE = ROOT / "proteomicscopylot" / "notebook_functions.R"
 
 BACKEND_MODULE = "app.services.functions"
@@ -36,7 +35,7 @@ STATS_TOOLS_MODULE = "app.services.stats_tools"
 PIP_MODULE = "proteomicscopylot.notebook_functions"
 # How the app (app.services.copylot_core), the package and a file-loaded
 # notebook_functions.py name the shared core module.
-SHARED_CORE_MODULES = ("copylot_shared_core", "proteomicscopylot._core", "_copylot_core")
+SHARED_CORE_MODULES = ("copylot_shared_core", "proteomicscopylot._core", "_copylot_core", "proteomicscopylot.notebook_tables")
 
 
 def _normalise(name: str) -> str:
@@ -83,7 +82,7 @@ env <- new.env()
 sys.source(commandArgs(TRUE)[1], envir = env)
 names <- ls(env, all.names = TRUE)
 names <- Filter(function(name) is.function(get(name, envir = env)), names)
-formals_of <- function(name) as.character(names(formals(get(name, envir = env))))
+formals_of <- function(name) setdiff(as.character(names(formals(get(name, envir = env)))), "...")
 cat(jsonlite::toJSON(lapply(setNames(names, names), formals_of)))
 """
 
@@ -117,6 +116,7 @@ BACKEND_ONLY_ANALYSIS_NAMES = (
     "effective_test_type",
     "sample_label_frame",  # Plot/report display labels, not a statistical method.
     "condition_sample_labels",  # The "condition_N" axis label rule behind sample_label_frame.
+    "sample_display_labels",  # Formats existing counters for display; not a separate analysis method.
     "entity_labels_for_kind",  # Entity nouns for report/UI prose, not a method.
     "intensity_unit_label",  # UI units for stored phosphoprotein provenance.
     "parse_selection_list",  # JSON/legacy HTTP selection transport.
@@ -129,13 +129,14 @@ BACKEND_ONLY_ANALYSIS_NAMES = (
     "histogram",
     "normal_fit_curve",
     "qqnorm_plot_data",
-    "condition_cvs",  # the CV plot and table share it; the packages compute CVs inside cov_plot.
     "filter_mask",  # the filter's row decision on the original index, for the normalization fit; the packages pass `filtered.index` / `rownames(filtered)`.
     "unpaired_samples_note",  # the GUI line naming samples a paired test left out; the packages have no warning list.
     "is_moderated_test_type",  # gates the R-only moderated tests in routes and exports; the packages resolve the type directly.
 )
 
 PIP_ONLY_NAMES = (
+    "copylot_colors",  # R stores .copylot_colors as a vector and repeats it with .plot_colors; outputs checked in test_abundance_palette_parity.py.
+    "resolve_plot_colors",  # R uses .plot_colors for the same named/custom palette resolution (tested in test_category_palettes.py).
     "contaminant_mask",  # Shared Python row mask; R computes it inside filter_contaminants (results checked in test_notebook_contaminants.py).
     "adjust_finite_pvalues",  # R adjusts finite p-values inline in volcano calculations.
     "refuse_moderated",  # the moderated tests run in R limma; R runs them, this package refuses them (as it does VSN).
@@ -150,6 +151,8 @@ PIP_ONLY_NAMES = (
 )
 
 R_ONLY_NAMES = (
+    "gui_table",  # Converts R arguments and GUI table results at the reticulate boundary.
+    "qc_box_summary", "qc_group_summaries",  # Base R helpers for the native QC summary functions.
     "%||%",  # R's null-default operator; Python spells it `x if x is not None else y`.
     "localization_keep",  # row mask behind filter_localization, so R can narrow an aligned matrix by position.
     "fit_row_mask",  # turns `fit_rows` (row names or a logical) into a mask; Python indexes with `.loc` directly.
@@ -301,6 +304,16 @@ def test_the_inventories_find_a_plausible_number_of_functions(functions) -> None
 
 KNOWN_PARAMETER_RENAMES: dict[tuple[str, int], tuple[str, str]] = {}
 
+# Private helpers can adapt language-native representations. Pin both signatures
+# so this exception cannot silently hide a later interface change; compare their
+# behavior in test_abundance_palette_parity.py. Public notebook calls stay checked.
+PRIVATE_REPRESENTATION_SIGNATURES = {
+    "abundance_selection": (
+        ["frame", "search", "top_high", "top_low"],
+        ["features", "values", "search", "top_high", "top_low"],
+    ),
+}
+
 
 @pytest.mark.requires_r("jsonlite")
 def test_positional_arguments_mean_the_same_thing_in_both_packages(
@@ -310,6 +323,9 @@ def test_positional_arguments_mean_the_same_thing_in_both_packages(
     problems: list[str] = []
     for name in sorted(set(pip_params) & set(r_signatures)):
         left, right = pip_params[name], r_signatures[name]
+        if name in PRIVATE_REPRESENTATION_SIGNATURES:
+            assert (left, right) == PRIVATE_REPRESENTATION_SIGNATURES[name]
+            continue
         for index in range(min(len(left), len(right))):
             if left[index] == right[index]:
                 continue

@@ -26,7 +26,13 @@ ROUTE_MODULES = (plots_stats, plots_peptide, plots_data, plots_qc, plots_single_
 
 
 @router.get("/notebooks/{token}.zip")
-def download_plot_notebook(token: str) -> Response:
+def download_plot_notebook(token: str, matrices: bool = False, imputed: bool = False) -> Response:
+    """One export as a ZIP.
+
+    `matrices` ships the data matrices of deterministic steps, `imputed` the full
+    imputed matrix. Both are off unless the user turned them on in Settings: the
+    export then holds only what cannot be recomputed from the original file.
+    """
     from app.services.notebook_snapshots import snapshots
     from app.services.notebook_archive import build_notebook_archive
     from app.services.session_context import get_session_id
@@ -42,7 +48,7 @@ def download_plot_notebook(token: str) -> Response:
         # Says what stands in the way (e.g. regenerate annotations, install R/vsn).
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        filename, content = build_notebook_archive(recipe)
+        filename, content = build_notebook_archive(recipe, ship_matrices=matrices, ship_imputed=imputed)
     except (ValueError, ModuleNotFoundError) as exc:
         LOGGER.exception("Could not build notebook export")
         raise HTTPException(status_code=409, detail="This notebook could not be packaged reproducibly. Render the plot again or contact the maintainer.") from exc

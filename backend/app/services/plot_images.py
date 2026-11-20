@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 
 from app.services.peptide_quantity import resolve_peptide_quantity_column
 from app.services.plot_export import (
@@ -11,6 +15,8 @@ from app.services.plot_export import (
     cm_to_px as _cm_to_px,
 )
 
+from app.services.abundance_highlights import abundance_static_highlights, abundance_interactive_highlights
+
 import math
 import re
 from typing import Any
@@ -21,6 +27,7 @@ import pandas as pd
 from app.schemas.annotation import AnnotationKind
 from app.services.data_tools import _get_sample_columns, metadata_for_kind as _metadata_for_kind, linear_qc_frame, log2_qc_frame
 from app.services.functions import (
+    sample_display_labels,
     intensity_unit_label,
     resolve_feature_scaling,
     abundance_axis_label,
@@ -91,7 +98,7 @@ def peptide_precursor_column(frame: pd.DataFrame) -> str:
         normalized = re.sub(r"[^a-z0-9]+", "", str(column).strip().lower())
         if "precursor" in normalized and "id" in normalized:
             return str(column)
-    raise ValueError("Peptide dataset is missing a precursor-id column.")
+    raise ValueError("Precursor plots require a precursor ID or both FG.LabeledSequence and FG.Charge in the Spectronaut report.")
 
 
 def _peptide_coverage_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
@@ -234,8 +241,8 @@ def imputation_before_plot(
     down_shift=1.8,
     width=0.3,
     advanced: dict[str, Any] | None = None,
+    plot_colors=None,
 ) -> bytes:
-    plt = _get_plt()
     _, frame = _imputation_source(kind)
     sample_columns = _get_sample_columns(kind, frame)
     diagnostics = impute_values_with_diagnostics(
@@ -249,6 +256,14 @@ def imputation_before_plot(
         down_shift=down_shift,
         width=width,
     )
+    return render_imputation_before(diagnostics, phosprot_values_are_centred(kind), advanced, plot_colors)
+
+
+
+def render_imputation_before(diagnostics, centered, advanced,
+    plot_colors=None,
+):
+    plt = _get_plt()
 
     fig, ax = _make_fig(plt, 20, 10)  # the common 20 x 10 cm canvas (2026-10-09)
     ax.hist(
@@ -257,14 +272,16 @@ def imputation_before_plot(
         density=True,
         alpha=0.6,
         histtype="stepfilled",
+        color=resolve_plot_colors(2, plot_colors),
         label=["Without Missing Values", "With Missing Values"],
     )
     ax.legend()
     ax.set_title("Overall distribution of data with and without missing values")
-    ax.set_xlabel(intensity_unit_label(phosprot_values_are_centred(kind)))
+    ax.set_xlabel(intensity_unit_label(centered))
     ax.set_ylabel("Density")
     apply_advanced_axes(ax, advanced)
     return _to_png_bytes(fig, plt, dpi=300)
+
 
 
 def _imputation_histogram_bin_edges(
@@ -289,7 +306,6 @@ def imputation_overall_fit_plot(
     width=0.3,
     advanced: dict[str, Any] | None = None,
 ) -> bytes:
-    plt = _get_plt()
     _, frame = _imputation_source(kind)
     sample_columns = _get_sample_columns(kind, frame)
     diagnostics = impute_values_with_diagnostics(
@@ -303,6 +319,11 @@ def imputation_overall_fit_plot(
         down_shift=down_shift,
         width=width,
     )
+    return render_imputation_fit(diagnostics, phosprot_values_are_centred(kind), advanced, method, show_imputation_draw)
+
+
+def render_imputation_fit(diagnostics, centered, advanced, method, show_imputation_draw):
+    plt = _get_plt()
 
     values = diagnostics.overall_observed
     if values.size == 0:
@@ -361,7 +382,7 @@ def imputation_overall_fit_plot(
 
     method_label = "Numerical" if str(method).strip().lower() == "numerical" else "Quantile"
     ax.set_title(f"Overall data distribution and norm fit ({method_label})")
-    ax.set_xlabel(intensity_unit_label(phosprot_values_are_centred(kind)))
+    ax.set_xlabel(intensity_unit_label(centered))
     ax.set_ylabel("Density")
     apply_advanced_axes(ax, advanced)
     return _to_png_bytes(fig, plt, dpi=300)
@@ -378,8 +399,8 @@ def imputation_after_plot(
     down_shift=1.8,
     width=0.3,
     advanced: dict[str, Any] | None = None,
+    plot_colors=None,
 ) -> bytes:
-    plt = _get_plt()
     _, frame = _imputation_source(kind)
     sample_columns = _get_sample_columns(kind, frame)
     diagnostics = impute_values_with_diagnostics(
@@ -393,6 +414,14 @@ def imputation_after_plot(
         down_shift=down_shift,
         width=width,
     )
+    return render_imputation_after(diagnostics, phosprot_values_are_centred(kind), advanced, method, normalization, plot_colors)
+
+
+
+def render_imputation_after(diagnostics, centered, advanced, method, normalization,
+    plot_colors=None,
+):
+    plt = _get_plt()
 
     non_imputed = diagnostics.after_non_imputed
     imputed = diagnostics.after_imputed
@@ -409,15 +438,17 @@ def imputation_after_plot(
         weights=weights,
         alpha=0.6,
         histtype="stepfilled",
+        color=resolve_plot_colors(2, plot_colors),
         label=["Non-Imputed Values", "Imputed Values"],
     )
     ax.legend()
     method_label = "Numerical" if str(method).strip().lower() == "numerical" else "Quantile"
     ax.set_title(f"Distribution of data after {method_label.lower()} imputation")
-    ax.set_xlabel(intensity_unit_label(phosprot_values_are_centred(kind)))
+    ax.set_xlabel(intensity_unit_label(centered))
     ax.set_ylabel("Density")
     apply_advanced_axes(ax, advanced)
     return _to_png_bytes(fig, plt, dpi=300)
+
 
 
 def _imputation_density_histogram_spec(
@@ -463,8 +494,9 @@ def _imputation_density_histogram_spec(
 
 def distribution_qqnorm_plot(
     kind: AnnotationKind,
-    random_seed: int = 187,
+    random_seed: int = 1,
     advanced: dict[str, Any] | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     frame = log2_qc_frame(kind)
@@ -489,7 +521,7 @@ def distribution_qqnorm_plot(
     y = [pt[1] for pt in points]
 
     fig, ax = _make_fig(plt, 20, 10)  # the common 20 x 10 cm canvas (2026-10-09)
-    ax.scatter(x, y, **marker_style(advanced, size=2.5, alpha=0.5, color_default="black"))
+    ax.scatter(x, y, **marker_style(advanced, size=2.5, alpha=0.5, color_default=resolve_plot_colors(1, plot_colors)[0]))
     line = resolve_reference_line(advanced, color="red", style="solid", width=2.0)
     if len(fit_line) >= 2 and line.visible:
         fx = [fit_line[0][0], fit_line[1][0]]
@@ -502,6 +534,7 @@ def distribution_qqnorm_plot(
     return _to_png_bytes(fig, plt, dpi=300)
 
 
+
 def qc_coverage_plot(
     kind: AnnotationKind,
     include_id: bool = False,
@@ -510,7 +543,7 @@ def qc_coverage_plot(
     summary: bool = False,
     text: bool = False,
     text_size: int = 9,
-    random_seed: int = 187,
+    random_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 10,
     dpi: int = 300,
@@ -533,22 +566,25 @@ def qc_coverage_plot(
     meta = _grouped_meta_order(_metadata_for_kind(kind, frame, sample_columns).copy())
     meta["id"] = meta["sample"].astype(str).apply(_extract_id_or_number)
     meta["sample_index"] = meta.groupby("condition").cumcount() + 1
-    if include_id:
-        meta["label"] = meta.apply(lambda row: f"{row['condition']}_{row['sample_index']}\n({row['id']})", axis=1)
-    else:
-        meta["label"] = meta.apply(lambda row: f"{row['condition']}_{row['sample_index']}", axis=1)
+    meta['label'] = sample_display_labels(meta, index_column="sample_index", include_id=include_id)
     meta["count"] = [int(numeric[col].notna().sum()) for col in meta["sample"].tolist()]
 
     title, y_label, red_line_value, _ = _feature_context(frame, sample_columns)
 
-    if summary:
-
-        # The bars are condition means, not samples.
-
-        title = title.replace("per sample", "per condition")
     conditions = meta["condition"].astype(str).dropna().unique().tolist()
     color_map = advanced_condition_colors(kind, plt, conditions, advanced)
+    fig = _coverage_figure(plt, meta, color_map, title, y_label, red_line_value,
+                           header, legend, summary, text, text_size, random_seed,
+                           width_cm, height_cm, advanced, reference_line)
+    return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
 
+
+def _coverage_figure(plt, meta, color_map, title, y_label, red_line_value,
+                     header, legend, summary, text, text_size, random_seed,
+                     width_cm, height_cm, advanced, reference_line):
+    conditions = meta["condition"].astype(str).dropna().unique().tolist()
+    if summary:
+        title = title.replace("per sample", "per condition")
     fig, ax = _make_fig(plt, width_cm, height_cm)
     if summary:
         sample_summary = meta[["label", "condition", "count"]].rename(columns={"label": "Sample", "count": "Value"})
@@ -691,7 +727,7 @@ def qc_coverage_plot(
     if ymax > 0:
         ax.set_ylim(0, ymax * headroom)
 
-    return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+    return fig
 
 
 def qc_intensity_histogram_plot(
@@ -766,33 +802,37 @@ def qc_intensity_histogram_plot(
     return _to_png_bytes(fig, plt, dpi=dpi)
 
 
-def _peptide_coverage_data(include_id=False, quantity_column=None, level="peptide"):
-    from app.services.peptide_tools import (
-        _sample_rename_map,
-        get_peptide_frame,
-    )
+def peptide_detection_matrix(level):
+    """Run-indexed detections shared by coverage, completeness, and notebook capture."""
+    from app.services.peptide_preparation_cache import cached_peptide_preparation
+    from app.services.peptide_tools import get_peptide_frame
 
     if level not in {"peptide", "precursor"}:
-        raise ValueError("Coverage level must be peptide or precursor.")
-    frame = get_peptide_frame()
-    file_col = peptide_file_column(frame)
-    if level == "precursor":
-        seq_col = peptide_precursor_column(frame)
-    else:
-        seq_col = peptide_sequence_column(frame)
-    quantity_col = resolve_peptide_quantity_column(frame, requested=quantity_column)
-    meta = _peptide_coverage_metadata(frame, include_id=include_id)
+        raise ValueError("Choose peptide or precursor coverage/completeness.")
 
-    pivot = frame.pivot_table(
-        index=seq_col,
-        columns=file_col,
-        values=quantity_col,
-        aggfunc="max",
-    )
+    def prepare():
+        frame = get_peptide_frame(detection_only=True)
+        file_col = peptide_file_column(frame)
+        feature_col = peptide_precursor_column(frame) if level == "precursor" else peptide_sequence_column(frame)
+        quantity_col = resolve_peptide_quantity_column(frame)
+        if not pd.api.types.is_numeric_dtype(frame[quantity_col]):
+            frame[quantity_col] = pd.to_numeric(frame[quantity_col], errors="coerce")
+        pivot = frame.pivot_table(index=feature_col, columns=file_col, values=quantity_col, aggfunc="max")
+        matrix = raw_zero_to_nan(pivot, list(pivot.columns))
+        matrix.attrs.update(feature_column=feature_col, quantity_column=quantity_col)
+        return matrix, frame[[file_col]].drop_duplicates()
+
+    return cached_peptide_preparation("detection-matrix", (level,), prepare)
+
+
+def _peptide_coverage_data(include_id=False, quantity_column=None, level="peptide"):
+    from app.services.peptide_tools import _sample_rename_map
+
+    pivot, runs = peptide_detection_matrix(level)
     if pivot.empty:
         raise ValueError("No peptide entries are available for coverage plotting.")
-
-    pivot = raw_zero_to_nan(pivot, list(pivot.columns))
+    seq_col = pivot.attrs["feature_column"]
+    meta = _peptide_coverage_metadata(runs, include_id=include_id)
     labels = meta["label"].astype(str).tolist()
     rename_map = _sample_rename_map(
         pivot.columns, meta.rename(columns={"label": "new_sample"}), seq_col
@@ -803,8 +843,6 @@ def _peptide_coverage_data(include_id=False, quantity_column=None, level="peptid
         raise ValueError("Peptide metadata does not match peptide sample columns.")
 
     data_filtered = pivot[selected].copy()
-    data_filtered.attrs["quantity_column"] = quantity_col
-    data_filtered.attrs["feature_column"] = seq_col
     return data_filtered, meta
 
 
@@ -838,48 +876,23 @@ def qc_peptide_coverage_plot(
     quantity_column: str | None = None,
     level: str = "peptide",
     reference_line: bool = True,
+    summary: bool = False,
+    text: bool = False,
+    text_size: int = 9,
+    random_seed: int = 1,
 ) -> bytes:
-    from matplotlib.patches import Rectangle
-
     plt = _get_plt()
-    summary, peptides_count, meta = _peptide_coverage_summary(include_id, quantity_column, level)
-    selected = summary["Sample"].astype(str).tolist()
-
-    conditions = meta["condition"].astype(str).dropna().tolist()
-    ordered_conditions = list(dict.fromkeys(conditions))
-    color_map = advanced_condition_colors("protein", plt, ordered_conditions, advanced)
-    sample_to_condition = dict(zip(meta["label"].astype(str), meta["condition"].astype(str)))
-    bar_colors = [
-        color_map.get(sample_to_condition.get(str(sample), ""), "#1f77b4")
-        for sample in summary["Sample"].astype(str).tolist()
-    ]
-
-    fig, ax = _make_fig(plt, width_cm, height_cm)
-    ax.bar(range(len(summary)), summary["Value"].to_numpy(dtype=float), color=bar_colors)
-    line = resolve_reference_line(advanced, color="red")
-    if reference_line and line.visible:
-        ax.axhline(y=peptides_count, **line.matplotlib())
-    if header:
-        ax.set_title(f"{level.capitalize()}s per sample")
-    ax.set_ylabel(f"Number of {level}s")
-    ax.set_xlabel("Sample")
-    ax.set_xticks(range(len(summary)))
-    ax.set_xticklabels(
-        [
-            advanced_label(sample, advanced, "sampleLabels", raw_sample)
-            for sample, raw_sample in zip(summary["Sample"].astype(str).tolist(), selected)
-        ],
-        rotation=90,
-    )
-
-    if legend and ordered_conditions:
-        handles = [Rectangle((0, 0), 1, 1, color=color_map[condition]) for condition in ordered_conditions]
-        labels = [advanced_label(condition, advanced, "conditionLabels") for condition in ordered_conditions]
-        ax.legend(handles, labels, title="Condition", bbox_to_anchor=advanced_anchor(ax, advanced, 1.05, 1), loc="upper left")
-
-    apply_advanced_axes(ax, advanced)
-    fig.tight_layout()
-    return _to_png_bytes(fig, plt, dpi=dpi)
+    counts, red_line_value, meta = _peptide_coverage_summary(include_id, quantity_column, level)
+    meta = meta.merge(counts.rename(columns={"Sample": "label", "Value": "count"}), on="label")
+    meta = _grouped_meta_order(meta)
+    conditions = meta["condition"].astype(str).dropna().unique().tolist()
+    color_map = advanced_condition_colors("protein", plt, conditions, advanced)
+    title = f"{level.capitalize()}s per sample"
+    y_label = f"Number of {level}s"
+    fig = _coverage_figure(plt, meta, color_map, title, y_label, red_line_value,
+                           header, legend, summary, text, text_size, random_seed,
+                           width_cm, height_cm, advanced, reference_line)
+    return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
 
 
 def _median_label_y(ax, median: float) -> float:
@@ -945,13 +958,7 @@ def qc_boxplot_plot(
     if str(mode).lower() == "single":
         meta["id"] = meta["sample"].astype(str).apply(_extract_id_or_number)
         meta["sample_index"] = meta.groupby("condition").cumcount() + 1
-        if include_id:
-            meta["new_sample"] = meta.apply(
-                lambda row: f"{row['condition']}_{row['sample_index']} ({row['id']})",
-                axis=1,
-            )
-        else:
-            meta["new_sample"] = meta.apply(lambda row: f"{row['condition']}_{row['sample_index']}", axis=1)
+        meta['new_sample'] = sample_display_labels(meta, index_column="sample_index", include_id=include_id, id_separator=" ")
 
         rename_dict = dict(zip(meta["sample"], meta["new_sample"]))
         renamed = numeric.rename(columns=rename_dict)
@@ -1258,7 +1265,7 @@ def qc_pca_feature_summary(
     umap_min_dist: float = 0.1,
     tsne_perplexity: float = 30.0,
     tsne_learning_rate: float = 200.0,
-    random_state: int = 42,
+    random_state: int = 1,
 ) -> dict[str, object]:
     """How many features the PCA projection is actually built from.
 
@@ -1357,7 +1364,7 @@ def _pca_projection(
     umap_min_dist: float = 0.1,
     tsne_perplexity: float = 30.0,
     tsne_learning_rate: float = 200.0,
-    random_state: int = 42,
+    random_state: int = 1,
     scaling: str = "auto",
 ) -> tuple[pd.DataFrame, np.ndarray | None, str]:
     _, frame, _ = select_matrix(kind, data_source)
@@ -1507,7 +1514,7 @@ def _compute_cluster_labels(
     cluster_count: int = 3,
     dbscan_eps_factor: float = 0.5,
     dbscan_min_samples: int = 2,
-    random_state: int = 42,
+    random_state: int = 1,
 ) -> np.ndarray | None:
     method_key = resolve_cluster_method(cluster_method)
     if method_key in {"none", "", "off"}:
@@ -1633,7 +1640,7 @@ def qc_pca_plot(
     tsne_learning_rate: float = 200.0,
     dbscan_eps_factor: float = 0.5,
     dbscan_min_samples: int = 2,
-    random_state: int = 42,
+    random_state: int = 1,
     scaling: str = "auto",
     width_cm: float = 20,
     height_cm: float = 10,
@@ -1796,7 +1803,7 @@ def qc_pca_interactive_html(
     tsne_learning_rate: float = 200.0,
     dbscan_eps_factor: float = 0.5,
     dbscan_min_samples: int = 2,
-    random_state: int = 42,
+    random_state: int = 1,
     scaling: str = "auto",
     width_cm: float = 20,
     height_cm: float = 10,
@@ -2010,6 +2017,7 @@ def _abundance_key_column(frame: pd.DataFrame, workflow: str, kind: AnnotationKi
 
 def _abundance_mean_intensities(
     kind: AnnotationKind,
+    identifier: str = "workflow",
 ) -> tuple[pd.DataFrame, list[str], str, str]:
     frame = linear_qc_frame(kind)
     sample_columns = _get_sample_columns(kind, frame)
@@ -2020,6 +2028,16 @@ def _abundance_mean_intensities(
     if workflow == "Feature":
         workflow = "Protein" if kind == "protein" else "Phosphosite"
     key_col = _abundance_key_column(frame, workflow, kind)
+    if identifier == "genes":
+        candidates = ("Gene_group", "GeneNames") if kind == "phosprot" else ("GeneNames", "Gene_group")
+        gene_col = next((column for column in candidates if column in frame.columns), None)
+        if gene_col is None:
+            raise ValueError("Gene names are not available for this dataset.")
+        frame = frame.copy()
+        frame[gene_col] = frame[gene_col].replace(r"^\s*$", np.nan, regex=True).fillna(frame[key_col])
+        key_col = gene_col
+    elif identifier != "workflow":
+        raise ValueError("Unknown abundance label column.")
     sample_columns = [column for column in sample_columns if column in frame.columns and column != key_col]
     if not sample_columns:
         raise ValueError("No sample columns available for abundance plot.")
@@ -2063,8 +2081,8 @@ def _abundance_mean_intensities(
     return mean_intensities, valid_conditions, workflow, key_col
 
 
-def _abundance_rank_frame(kind: AnnotationKind) -> tuple[pd.DataFrame, list[str], str]:
-    mean_intensities, unique_conditions, workflow, key_col = _abundance_mean_intensities(kind)
+def _abundance_rank_frame(kind: AnnotationKind, identifier: str = "workflow") -> tuple[pd.DataFrame, list[str], str]:
+    mean_intensities, unique_conditions, workflow, key_col = _abundance_mean_intensities(kind, identifier=identifier)
 
     long_intensities = mean_intensities.melt(
         id_vars=[key_col], var_name="Condition", value_name="log10Intensity"
@@ -2087,9 +2105,15 @@ def qc_abundance_plot(
     height_cm: float = 10,
     dpi: int = 300,
     advanced: dict[str, Any] | None = None,
+    search: str = "",
+    top_high: int = 0,
+    top_low: int = 0,
+    highlight_outline: bool = True,
+    highlight_labels: bool = False,
+    identifier: str = "workflow",
 ) -> bytes:
     plt = _get_plt()
-    mean_intensities, unique_conditions, workflow, key_col = _abundance_mean_intensities(kind)
+    mean_intensities, unique_conditions, workflow, key_col = _abundance_mean_intensities(kind, identifier=identifier)
 
     color_map = advanced_condition_colors(kind, plt, unique_conditions, advanced)
     fig, ax = _make_fig(plt, width_cm, height_cm)
@@ -2115,7 +2139,7 @@ def qc_abundance_plot(
     else:
         if condition not in unique_conditions:
             raise ValueError(f"Condition '{condition}' not found.")
-        values = mean_intensities[condition].dropna().sort_values(ascending=False).reset_index(drop=True)
+        values = mean_intensities[condition].dropna().sort_values(ascending=False, kind="stable").reset_index(drop=True)
         ranks = np.arange(1, len(values) + 1)
         ax.scatter(
             ranks,
@@ -2137,6 +2161,16 @@ def qc_abundance_plot(
     else:
         ax.set_title("")
 
+    highlight_frame = mean_intensities.melt(id_vars=[key_col], var_name="Condition", value_name="log10Intensity").dropna(subset=["log10Intensity"])
+    if condition != "All Conditions":
+        highlight_frame = highlight_frame.loc[highlight_frame["Condition"] == condition].sort_values("log10Intensity", ascending=False, kind="stable")
+    highlight_frame = highlight_frame.reset_index(drop=True)
+    highlight_frame["Rank"] = highlight_frame.groupby("Condition")["log10Intensity"].rank(ascending=False, method="first")
+    highlight_frame["Feature"] = highlight_frame[key_col].astype(str)
+    names = {cond: advanced_label(cond, advanced, "conditionLabels") for cond in unique_conditions}
+    abundance_static_highlights(fig, ax, highlight_frame, color_map, names, search, top_high, top_low,
+                                highlight_outline, False, advanced, legend)
+
     if legend:
         ax.legend(title="Condition", bbox_to_anchor=advanced_anchor(ax, advanced, 1.05, 1), loc="upper left")
         apply_advanced_axes(ax, advanced)
@@ -2148,6 +2182,8 @@ def qc_abundance_plot(
         apply_advanced_axes(ax, advanced)
         fig.tight_layout()
 
+    abundance_static_highlights(fig, ax, highlight_frame, color_map, names, search, top_high, top_low,
+                                False, highlight_labels, advanced, legend)
     return _to_png_bytes(fig, plt, dpi=dpi)
 
 
@@ -2159,9 +2195,15 @@ def qc_abundance_interactive_html(
     width_cm: float = 20,
     height_cm: float = 10,
     advanced: dict[str, Any] | None = None,
+    search: str = "",
+    top_high: int = 0,
+    top_low: int = 0,
+    highlight_outline: bool = True,
+    highlight_labels: bool = False,
+    identifier: str = "workflow",
 ) -> str:
     px, _ = _get_plotly()
-    long_intensities, unique_conditions, workflow = _abundance_rank_frame(kind)
+    long_intensities, unique_conditions, workflow = _abundance_rank_frame(kind, identifier=identifier)
     height_px = _cm_to_px(height_cm)
 
     if condition != "All Conditions":
@@ -2209,6 +2251,9 @@ def qc_abundance_interactive_html(
         yaxis_title=abundance_axis_label(workflow, phosprot_values_are_centred(kind)),
     )
     fig.update_layout(**advanced_plotly_layout(advanced, width_px=_cm_to_px(width_cm), height_px=height_px))
+    abundance_interactive_highlights(fig, long_intensities, color_map,
+        {cond: advanced_label(cond, advanced, "conditionLabels") for cond in visible_conditions},
+        search, top_high, top_low, highlight_outline, highlight_labels, advanced)
     return _plotly_html(fig)
 
 
@@ -2272,16 +2317,7 @@ def qc_correlation_plot(
     meta["sample"] = meta["sample"].astype(str)
     meta["id"] = meta["sample"].astype(str).apply(_extract_id_or_number)
     meta["new_sample"] = meta.groupby("condition").cumcount() + 1
-    if include_id:
-        meta["new_sample"] = meta.apply(
-            lambda row: f"{row['condition']}_{row['new_sample']} ({row['id']})",
-            axis=1,
-        )
-    else:
-        meta["new_sample"] = meta.apply(
-            lambda row: f"{row['condition']}_{row['new_sample']}",
-            axis=1,
-        )
+    meta['new_sample'] = sample_display_labels(meta, index_column="new_sample", include_id=include_id, id_separator=" ")
 
     rename_map = dict(zip(meta["sample"], meta["new_sample"]))
     original_by_label = {str(label): str(sample) for sample, label in rename_map.items()}
@@ -2429,6 +2465,10 @@ def qc_correlation_plot(
 # single_protein_tools already did. These were cached one layer up, by a facade
 # in functions.py that forwarded to them; the facade is gone and the cache
 # stays where the work is.
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['imputation_before_plot', 'imputation_after_plot', 'distribution_qqnorm_plot'], kind='protein')
+
+
 apply_cached_wrappers(
     globals(),
     [

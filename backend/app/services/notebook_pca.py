@@ -1,14 +1,11 @@
 """Dimensionality-reduction code and frozen coordinates for exact visual replay."""
 from functools import lru_cache
-import inspect
 import json
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import cached_notebook_render, capture_notebook, notebook_capture_requested
 from app.services.notebook_qc import qc_source
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_provenance import input_history
 
 PROJECTION_OPTIONS = ("data_source", "plot_dim", "method", "umap_n_neighbors", "umap_min_dist",
@@ -86,14 +83,15 @@ def pca_source(interactive=False, method="pca"):
 
 @lru_cache(maxsize=6)
 def _pca_module(interactive=False, method="pca"):
-    module = ModuleType(f"_copylot_portable_projection_{method}_{interactive}")
-    sys.modules[module.__name__] = module
-    exec(pca_source(interactive, method).code, module.__dict__)
-    return module
+    return portable_module(
+        f"_copylot_portable_projection_{method}_{interactive}",
+        lambda: pca_source(interactive, method),
+    )
 
 
 
 
+@cached_notebook_render
 def render_pca(kind: str, *, interactive=False, **options) -> tuple[bytes | str, str]:
     from app.services.annotation_store import get_annotation
     from app.services.dataset_store import get_current_dataset
@@ -116,9 +114,7 @@ def render_pca(kind: str, *, interactive=False, **options) -> tuple[bytes | str,
     source, data, _ = select_matrix(kind, options.get("data_source", "data"))
     metadata = metadata_for_kind(kind, data, _get_sample_columns(kind, data)).copy(deep=True)
     lineage, imputation, uses_imputed_input, imputation_text = input_history(kind, annotation, dataset, source)
-    bound = inspect.signature(qc_pca_interactive_html if interactive else qc_pca_plot).bind(kind, **options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(qc_pca_interactive_html if interactive else qc_pca_plot, kind, **options)
     settings.pop("kind")
     module = _pca_module(interactive, method)
     scores, explained, prefix = module.project(data, metadata, **{key: settings[key] for key in PROJECTION_OPTIONS})
@@ -134,11 +130,10 @@ def render_pca(kind: str, *, interactive=False, **options) -> tuple[bytes | str,
     if interactive:
         content = module.plotly_html(figure)
     else:
-        format_token = module.plot_output_format.set(fmt)
-        try:
+        with portable_output_format(module, fmt):
             content = module.to_png_bytes(figure, module.get_plt(), dpi=settings["dpi"])
-        finally:
-            module.plot_output_format.reset(format_token)
+    if not notebook_capture_requested():
+        return content, ""
     output_resources = {"original.html": content.encode(), "figure.json": figure.to_json().encode()} if interactive else {f"original.{fmt}": bytes(content)}
     replay_output = (
         "assert json.loads(figure.to_json()) == json.loads((RESOURCES / 'figure.json').read_text())\n"
@@ -167,13 +162,26 @@ def render_pca(kind: str, *, interactive=False, **options) -> tuple[bytes | str,
             **output_resources},
         uses_imputed_input=uses_imputed_input, imputation_recipe=imputation_text,
         calculation="from IPython.display import Image, IFrame, display\n"
-            "# The original calculation code is included for inspection/recalculation:\n"
-            f"# projection_options = {{key: settings[key] for key in {PROJECTION_OPTIONS!r}}}\n"
-            "# scores, explained, prefix = functions.project(data, metadata, **projection_options)\n"
-            f"# cluster_options = {{key: settings[key] for key in {CLUSTER_OPTIONS!r}}}\n"
-            "# components = [f'{prefix}{i + 1}' for i in range(3 if settings['plot_dim'] == '3D' else 2)]\n"
-            "# labels = functions._compute_cluster_labels(scores[components].to_numpy(dtype=float), **cluster_options)\n"
-            "# Replay captured coordinates: SVD signs, stochastic embeddings and clustering can vary across platforms.\n"
+            "# How the projection was calculated. It is run and shown here; its result is not used below,\n"
+            "# because component signs, stochastic embeddings and clustering can differ between machines.\n"
+            "try:\n"
+            f"    projection_options = {{key: settings[key] for key in {PROJECTION_OPTIONS!r}}}\n"
+            "    recalculated_scores, recalculated_explained, prefix = functions.project(data, metadata, **projection_options)\n"
+            f"    cluster_options = {{key: settings[key] for key in {CLUSTER_OPTIONS!r}}}\n"
+            "    components = [f'{prefix}{i + 1}' for i in range(3 if settings['plot_dim'] == '3D' else 2)]\n"
+            "    recalculated_labels = functions._compute_cluster_labels(recalculated_scores[components].to_numpy(dtype=float), **cluster_options)\n"
+            "    recalculated = functions.plot_figure(recalculated_scores, recalculated_explained, recalculated_labels, **settings)\n"
+            + ("    Path('recalculated.html').write_text(functions.plotly_html(recalculated), encoding='utf-8', newline='')\n"
+               "    display(IFrame('recalculated.html', width='100%', height=600))\n" if interactive else
+               "    recalculated_image = functions.to_png_bytes(recalculated, functions.get_plt(), dpi=settings['dpi'])\n"
+               "    Path('recalculated.png').write_bytes(recalculated_image)\n    display(Image(data=recalculated_image))\n") +
+            "    used = read_resource_table(RESOURCES / 'scores.parquet')\n"
+            "    same = all(abs(abs(recalculated_scores[c].to_numpy(dtype=float)) - abs(used[c].to_numpy(dtype=float))).max() < 1e-9 for c in components)\n"
+            "    print('Recalculated coordinates ' + ('match the ones CoPYlot used (up to the sign of a component).' if same\n"
+            "          else 'differ from the ones CoPYlot used; the figure below is drawn from the ones it used.'))\n"
+            "except Exception as error:\n"
+            "    print('The projection could not be recalculated here:', error)\n\n"
+            "# The figure as CoPYlot showed it, from the coordinates and cluster labels it used.\n"
             "scores = read_resource_table(RESOURCES / 'scores.parquet')\n"
             "projection = json.loads((RESOURCES / 'projection.json').read_text())\n"
             "figure = functions.plot_figure(scores, projection['explained'], projection['clusterLabels'], **settings)\n"

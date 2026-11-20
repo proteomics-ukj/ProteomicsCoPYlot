@@ -1,4 +1,4 @@
-import { collectColumns } from "../../lib/tableData";
+import { collectColumns, formatCellValue } from "../../lib/tableData";
 import NotebookDownload from "../../components/NotebookDownload";
 import { useEffect, useId, useMemo, useState } from "react";
 import {
@@ -25,6 +25,8 @@ type SummaryEditorState = {
   showEntries?: unknown;
   reportTitle?: unknown;
   reportAuthor?: unknown;
+  includeSampleLabels?: unknown;
+  sampleLabels?: Record<string, unknown>;
 };
 
 const peptideTextKeys = ["CoveragePep", "MissingValuePep", "RT", "Modification", "MissedCleavage"] as const;
@@ -37,12 +39,18 @@ const proteinTextKeys = [
   "PCAProt",
   "AbundanceProt",
   "CorrelationProt",
+  "PearsonProt",
+  "VennProt",
   "VolcanoProt",
+  "AnovaProt",
+  "OraProt",
+  "SingleProt",
 ] as const;
 const phosphoTextKeys = [
   "Phossite",
   "Coverage(Number)Phos",
   "Coverage(Quality)Phos",
+  "STYPhos",
   "MissingValuePhos",
   "HistogramIntPhos",
   "BoxplotIntPhos",
@@ -50,7 +58,11 @@ const phosphoTextKeys = [
   "PCAPhos",
   "AbundancePhos",
   "CorrelationPhos",
+  "PearsonPhos",
+  "VennPhos",
   "VolcanoPhos",
+  "AnovaPhos",
+  "SinglePhos",
 ] as const;
 
 type Props = {
@@ -61,6 +73,7 @@ const SUMMARY_EDITOR_STATE_KEY = "summary.editor.v1";
 
 const plotTextLabels: Record<string, string> = {
   Introduction: "Introduction",
+  SampleTable: "Sample table",
   CoveragePep: "Coverage Plot - Peptide Level",
   MissingValuePep: "Missing Value Plot - Peptide Level",
   RT: "Retention Time Plot",
@@ -74,10 +87,16 @@ const plotTextLabels: Record<string, string> = {
   PCAProt: "PCA Plot - Protein Level",
   AbundanceProt: "Abundance Plot - Protein Level",
   CorrelationProt: "Correlation Plot - Protein Level",
+  PearsonProt: "Pearson Correlation - Protein Level",
+  VennProt: "Venn Diagram - Protein Level",
   VolcanoProt: "Volcano Plot - Protein Level",
+  AnovaProt: "One-way ANOVA - Protein Level",
+  OraProt: "GO Enrichment (ORA) - Protein Level",
+  SingleProt: "Single Protein - Protein Level",
   Phossite: "Overview Phosphosites",
-  "Coverage(Number)Phos": "Coverage Plot (per sample) - Phosphosite Level",
-  "Coverage(Quality)Phos": "Coverage Plot (per condition) - Phosphosite Level",
+  "Coverage(Number)Phos": "Coverage Plot (per condition) - Phosphosite Level",
+  "Coverage(Quality)Phos": "Coverage Plot (localization probability) - Phosphosite Level",
+  STYPhos: "STY Plot - Phosphosite Level",
   MissingValuePhos: "Missing Value Plot - Phosphosite Level",
   HistogramIntPhos: "Histogram Intensity - Phosphosite Level",
   BoxplotIntPhos: "Boxplot Intensity - Phosphosite Level",
@@ -85,7 +104,11 @@ const plotTextLabels: Record<string, string> = {
   PCAPhos: "PCA Plot - Phosphosite Level",
   AbundancePhos: "Abundance Plot - Phosphosite Level",
   CorrelationPhos: "Correlation Plot - Phosphosite Level",
+  PearsonPhos: "Pearson Correlation - Phosphosite Level",
+  VennPhos: "Venn Diagram - Phosphosite Level",
   VolcanoPhos: "Volcano Plot - Phosphosite Level",
+  AnovaPhos: "One-way ANOVA - Phosphosite Level",
+  SinglePhos: "Single Phosphosite - Phosphosite Level",
 };
 
 function plotTextLabel(key: string): string {
@@ -111,21 +134,25 @@ export default function SummaryPage({ activeTab }: Props) {
     []
   );
   const [tables, setTables] = useState<SummaryTablesResponse | null>(null);
-  const [tablesLoading, setTablesLoading] = useState(false);
+  const [tablesLoading, setTablesLoading] = useState(true);
   const [tablesError, setTablesError] = useState<string | null>(null);
+  const [includeSampleLabels, setIncludeSampleLabels] = useState(() => persisted.includeSampleLabels === true);
+  const [sampleLabels, setSampleLabels] = useState(() => asStringRecord(persisted.sampleLabels));
   const [tableDownloadBusyKey, setTableDownloadBusyKey] = useState<string | null>(null);
 
-  const [textEntries, setTextEntries] = useState<Record<string, string>>(() =>
-    asStringRecord(persisted.textEntries)
-  );
-  const [selectedPlot, setSelectedPlot] = useState(() =>
+  const [textEntries, setTextEntries] = useState<Record<string, string>>(() => {
+    const entries = asStringRecord(persisted.textEntries);
+    const plot = String(persisted.selectedPlot ?? "Introduction");
+    const key = plot === "Introduction" ? plot : `${plot}${asTextPosition(persisted.position)}`;
+    // Recover a draft saved by the previous editor before Add / Update was pressed.
+    if (typeof persisted.editorValue === "string") entries[key] = persisted.editorValue;
+    return entries;
+  });
+  const [requestedPlot, setSelectedPlot] = useState(() =>
     String(persisted.selectedPlot ?? "Introduction")
   );
   const [position, setPosition] = useState<TextPosition>(() =>
     asTextPosition(persisted.position)
-  );
-  const [editorValue, setEditorValue] = useState(() =>
-    String(persisted.editorValue ?? "")
   );
   const [showEntries, setShowEntries] = useState(() =>
     Boolean(persisted.showEntries ?? false)
@@ -144,62 +171,53 @@ export default function SummaryPage({ activeTab }: Props) {
   const { datasets } = useCurrentDatasetsSnapshot();
 
   const plotOptions = useMemo(() => {
-    const options = ["Introduction"];
+    const options = ["Introduction", "SampleTable"];
     if (datasets?.peptide) options.push(...peptideTextKeys);
     if (datasets?.protein) options.push(...proteinTextKeys);
     if (datasets?.phospho) options.push(...phosphoTextKeys);
     return options;
   }, [datasets]);
+  const selectedPlot = plotOptions.includes(requestedPlot) ? requestedPlot : "Introduction";
 
   const currentTextKey = useMemo(() => {
     if (selectedPlot === "Introduction") return "Introduction";
     return `${selectedPlot}${position}`;
   }, [selectedPlot, position]);
-
-  useEffect(() => {
-    if (!plotOptions.includes(selectedPlot)) {
-      setSelectedPlot(plotOptions[0] ?? "Introduction");
-    }
-  }, [plotOptions, selectedPlot]);
-
-  useEffect(() => {
-    setEditorValue(textEntries[currentTextKey] ?? "");
-  }, [currentTextKey, textEntries]);
+  const editorValue = textEntries[currentTextKey] ?? "";
+  const storedTextEntries = Object.entries(textEntries).filter(([, text]) => text.trim());
 
   useEffect(() => {
     writePersistedUiState(SUMMARY_EDITOR_STATE_KEY, {
       textEntries,
-      selectedPlot,
+      includeSampleLabels,
+      sampleLabels,
+      selectedPlot: requestedPlot,
       position,
-      editorValue,
       showEntries,
       reportTitle,
       reportAuthor,
     });
-  }, [textEntries, selectedPlot, position, editorValue, showEntries, reportTitle, reportAuthor]);
-
-  async function loadTables() {
-    try {
-      setTablesLoading(true);
-      setTablesError(null);
-      const payload = await getSummaryTables();
-      setTables(payload);
-    } catch (err) {
-      setTablesError(err instanceof Error ? err.message : "Failed to load summary tables");
-      setTables(null);
-    } finally {
-      setTablesLoading(false);
-    }
-  }
+  }, [textEntries, requestedPlot, position, showEntries, reportTitle, reportAuthor, includeSampleLabels, sampleLabels]);
 
   useEffect(() => {
-    loadTables();
+    let active = true;
+    getSummaryTables().then(
+      (payload) => {
+        if (!active) return;
+        setTables(payload);
+        setTablesLoading(false);
+      },
+      (err: unknown) => {
+        if (!active) return;
+        setTablesError(err instanceof Error ? err.message : "Failed to load summary tables");
+        setTablesLoading(false);
+      }
+    );
+    return () => { active = false; };
   }, []);
 
-  function saveCurrentText() {
-    const trimmed = editorValue.trim();
-    if (!trimmed) return;
-    setTextEntries((prev) => ({ ...prev, [currentTextKey]: trimmed }));
+  function saveCurrentText(value: string) {
+    setTextEntries((prev) => ({ ...prev, [currentTextKey]: value }));
   }
 
   function deleteCurrentText() {
@@ -208,7 +226,6 @@ export default function SummaryPage({ activeTab }: Props) {
       delete next[currentTextKey];
       return next;
     });
-    setEditorValue("");
   }
 
   async function createReport() {
@@ -219,6 +236,8 @@ export default function SummaryPage({ activeTab }: Props) {
         title: reportTitle,
         author: reportAuthor,
         textEntries,
+        includeSampleLabels,
+        sampleLabels,
         reportContext: getSummaryReportContext(),
       });
       setReportResult(response);
@@ -230,16 +249,21 @@ export default function SummaryPage({ activeTab }: Props) {
     }
   }
 
-  const downloadHref = useMemo(() => {
-    if (!reportResult) return null;
-    return `data:text/html;charset=utf-8,${encodeURIComponent(reportResult.html)}`;
-  }, [reportResult]);
+  const reportFile = useMemo(
+    () => (reportResult ? new Blob([reportResult.html], { type: "text/html;charset=utf-8" }) : null),
+    [reportResult]
+  );
+  const downloadHref = useMemo(() => (reportFile ? URL.createObjectURL(reportFile) : null), [reportFile]);
+  useEffect(() => {
+    if (!downloadHref) return;
+    return () => URL.revokeObjectURL(downloadHref);
+  }, [downloadHref]);
 
-  async function handleDownloadMetadata(kind: SummaryMetadataTable["kind"]) {
+  async function handleDownloadMetadata(kind: SummaryMetadataTable["kind"], scope: "selected" | "all" = "selected") {
     try {
       setTableDownloadBusyKey(kind);
       setTablesError(null);
-      const { blob, filename } = await downloadCurrentAnnotationMetadataData(kind);
+      const { blob, filename } = await downloadCurrentAnnotationMetadataData(kind, scope);
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -277,18 +301,20 @@ export default function SummaryPage({ activeTab }: Props) {
           <MetadataTableCard
             title="Protein Metadata"
             table={tables?.protein ?? null}
-            downloadLabel="Download Protein Metadata"
+            downloadLabel="Download selected profile (CSV)"
             downloading={tableDownloadBusyKey === "protein"}
             downloadDisabled={tableDownloadBusyKey !== null}
             onDownload={() => handleDownloadMetadata("protein")}
+            onDownloadAll={() => handleDownloadMetadata("protein", "all")}
           />
           <MetadataTableCard
             title="Phospho Metadata"
             table={tables?.phospho ?? null}
-            downloadLabel="Download Phospho Metadata"
+            downloadLabel="Download selected profile (CSV)"
             downloading={tableDownloadBusyKey === "phospho"}
             downloadDisabled={tableDownloadBusyKey !== null}
             onDownload={() => handleDownloadMetadata("phospho")}
+            onDownloadAll={() => handleDownloadMetadata("phospho", "all")}
           />
         </div>
       ) : null}
@@ -297,9 +323,7 @@ export default function SummaryPage({ activeTab }: Props) {
         <div className="space-y-6">
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900">Report Text Blocks</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Add optional text above or below report plots. These entries are used when generating the HTML report.
-            </p>
+
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               <div>
@@ -317,7 +341,7 @@ export default function SummaryPage({ activeTab }: Props) {
                   ))}
                 </select>
               </div>
-              {selectedPlot !== "Introduction" ? (
+              {selectedPlot !== "Introduction" && selectedPlot !== "SampleTable" ? (
                 <div>
                   {/* A pair of buttons, not a field: named as a group. */}
                   <span id={positionLabelId} className="mb-2 block text-sm font-medium text-slate-700">Position</span>
@@ -337,6 +361,31 @@ export default function SummaryPage({ activeTab }: Props) {
               ) : null}
             </div>
 
+            {selectedPlot === "SampleTable" ? (
+              <div className="mt-4 space-y-4">
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={includeSampleLabels} onChange={(event) => setIncludeSampleLabels(event.target.checked)} />
+                  Add custom labels to report sample tables
+                </label>
+                {tablesLoading ? <p>Loading samples…</p> : tablesError ? <p role="alert">{tablesError}</p> : !tables?.sampleNames?.length ? (
+                  <p className="text-sm text-slate-500">No annotated samples available yet.</p>
+                ) : (
+                  <div className="max-h-[28rem] overflow-auto">
+                    <table className="w-full border-collapse text-sm">
+                      <thead><tr><th className="p-2 text-left">Original sample name</th><th className="p-2 text-left">Custom label</th></tr></thead>
+                      <tbody>{tables.sampleNames.map((sample) => (
+                        <tr key={sample}>
+                          <td className="break-all border-t p-2">{sample}</td>
+                          <td className="border-t p-2"><input type="text" aria-label={`Custom label for ${sample}`} value={Object.hasOwn(sampleLabels, sample) ? sampleLabels[sample] : ""}
+                            onChange={(event) => setSampleLabels((previous) => ({ ...previous, [sample]: event.target.value }))}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2" /></td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ) : <>
             <div className="mt-4">
               <label htmlFor={textFieldId} className="mb-2 block text-sm font-medium text-slate-700">
                 {selectedPlot === "Introduction" ? "Introduction Text" : "Text"}
@@ -344,7 +393,7 @@ export default function SummaryPage({ activeTab }: Props) {
               <textarea
                 id={textFieldId}
                 value={editorValue}
-                onChange={(event) => setEditorValue(event.target.value)}
+                onChange={(event) => saveCurrentText(event.target.value)}
                 rows={8}
                 // The browser's own en-US spell checker underlines typos in the
                 // report prose; it is the browser's dictionary, so names such as
@@ -358,19 +407,13 @@ export default function SummaryPage({ activeTab }: Props) {
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={saveCurrentText}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                Add / Update
-              </button>
-              <button
-                type="button"
                 onClick={deleteCurrentText}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
               >
                 Delete
               </button>
             </div>
+            </>}
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -384,12 +427,22 @@ export default function SummaryPage({ activeTab }: Props) {
             </label>
             {showEntries ? (
               <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                {Object.keys(textEntries).length === 0 ? (
+                {storedTextEntries.length === 0 ? (
                   <div className="text-sm text-slate-500">No stored entries yet.</div>
                 ) : (
-                  <pre className="overflow-auto whitespace-pre-wrap text-xs text-slate-700">
-                    {JSON.stringify(textEntries, null, 2)}
-                  </pre>
+                  <div className="space-y-4">
+                    {storedTextEntries.map(([key, text]) => {
+                      const placement = key.endsWith("Above") ? "Above" : key.endsWith("Below") ? "Below" : null;
+                      const plot = placement ? key.slice(0, -placement.length) : key;
+                      return (
+                        <article key={key} className="rounded-lg border border-slate-200 bg-white p-4">
+                          <h4 className="font-medium text-slate-900">{plotTextLabel(plot)}</h4>
+                          {placement ? <p className="mt-1 text-sm text-slate-500">{placement} the plot</p> : null}
+                          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-700">{text}</p>
+                        </article>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             ) : null}
@@ -443,16 +496,14 @@ export default function SummaryPage({ activeTab }: Props) {
                   </a>
                   <NotebookDownload key={reportResult.notebookToken ?? 'unavailable'} plotUrl={downloadHref} outputLabel="report"
                     rendered={{ url: downloadHref, token: reportResult.notebookToken ?? null }} />
+                  {reportFile ? (
+                    <span className="text-sm text-slate-600">{(reportFile.size / (1024 * 1024)).toFixed(1)} MB</span>
+                  ) : null}
                 </>
               ) : null}
             </div>
             {reportResult?.notebookError ? (
               <p role="alert" className="mt-3 text-sm text-amber-700">{reportResult.notebookError}</p>
-            ) : null}
-            {reportResult?.notebookToken && reportResult.notebookOmitted?.length ? (
-              <p role="status" className="mt-3 text-sm text-amber-700">
-                The notebook leaves out {reportResult.notebookOmitted.join("; ")}: their export could not be prepared.
-              </p>
             ) : null}
 
             {reportError ? (
@@ -525,6 +576,7 @@ function MetadataTableCard({
   downloading,
   downloadDisabled,
   onDownload,
+  onDownloadAll,
 }: {
   title: string;
   table: SummaryMetadataTable | null;
@@ -532,6 +584,7 @@ function MetadataTableCard({
   downloading: boolean;
   downloadDisabled: boolean;
   onDownload: () => void;
+  onDownloadAll: () => void;
 }) {
   const rows = useMemo(() => table?.table ?? [], [table?.table]);
   const columns = useMemo(() => collectColumns(rows), [rows]);
@@ -556,6 +609,10 @@ function MetadataTableCard({
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
             >
               {downloading ? "Downloading..." : downloadLabel}
+            </button>
+            <button type="button" onClick={onDownloadAll} disabled={downloadDisabled}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">
+              {downloading ? "Downloading..." : "Download all profiles (Excel)"}
             </button>
           </div>
           <div className="mt-4">
@@ -586,7 +643,7 @@ function MetadataTableCard({
                             key={`${rowIndex}-${column}`}
                             className="border-b border-slate-100 px-3 py-2 text-slate-600"
                           >
-                            {formatCell(row[column])}
+                            {formatCellValue(row[column])}
                           </td>
                         ))}
                       </tr>
@@ -600,15 +657,4 @@ function MetadataTableCard({
       )}
     </section>
   );
-}
-
-
-function formatCell(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "number") {
-    return Number.isInteger(value) ? String(value) : value.toFixed(4);
-  }
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }

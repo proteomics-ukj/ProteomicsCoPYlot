@@ -433,14 +433,13 @@ def _store_phosprot_annotation(
     return store_prepared_annotation(stored)
 
 
-def aggregate_from_phospho(
+def collapse_phospho_annotation(
+    phospho_annotation,
     mode: PhosprotAggregationMode,
     source: PhosprotAggregationSource = "non_imputed",
     localization_cutoff: float = 0.0,
-) -> object:
-    from app.schemas.annotation import PhosprotLineage
-    from app.app_version import APP_VERSION
-    phospho_annotation = _shared_phospho_annotation()
+) -> tuple[pd.DataFrame, dict]:
+    """The collapsed phosphoprotein table of one phospho annotation, without storing it."""
     sample_columns = phospho_annotation.metadata["sample"].astype(str).tolist()
     filtered_source = getattr(phospho_annotation, "filtered_data", None)
     # Validate the observed source before looking up imputed values: filtering
@@ -465,7 +464,7 @@ def aggregate_from_phospho(
     coverage_source = log2_source.copy()
     if source == "imputed":
         # All sites here; the collapse applies its own localization cutoff below.
-        _, log2_source, _ = _select_matrix_all_rows("phospho", "imputed")
+        _, log2_source, _ = _select_matrix_all_rows("phospho", "imputed", annotation=phospho_annotation)
         source_label = "stored, verified imputed phospho data"
 
     # Only sites at or above the collapse's own localization cutoff are collapsed.
@@ -488,6 +487,26 @@ def aggregate_from_phospho(
         data_scale="log2",
         coverage_data=coverage_source,
     )
+    return phosprot, {
+        "selectedSource": selected_source, "sourceLabel": source_label,
+        "upstreamNormalization": upstream_normalization, "localizationCutoff": localization_cutoff,
+        "siteCount": len(log2_source), "sampleCount": len(sample_columns),
+    }
+
+
+def aggregate_from_phospho(
+    mode: PhosprotAggregationMode,
+    source: PhosprotAggregationSource = "non_imputed",
+    localization_cutoff: float = 0.0,
+) -> object:
+    from app.schemas.annotation import PhosprotLineage
+    from app.app_version import APP_VERSION
+    phospho_annotation = _shared_phospho_annotation()
+    phosprot, collapse = collapse_phospho_annotation(phospho_annotation, mode, source, localization_cutoff)
+    selected_source = collapse["selectedSource"]
+    source_label = collapse["sourceLabel"]
+    upstream_normalization = collapse["upstreamNormalization"]
+    localization_cutoff = collapse["localizationCutoff"]
     # transform_phosprot now returns log2 for every mode, so the frame stored
     # here, the table exported from it and the notebook packages are all on the
     # same scale.
@@ -548,7 +567,7 @@ def aggregate_from_phospho(
             coverageSource=selected_source, filter=phospho_annotation.filter_config.model_copy(deep=True),
             imputation=phospho_annotation.imputation.model_copy(deep=True)
                 if source == "imputed" and phospho_annotation.imputation else None,
-            siteCount=len(log2_source), sampleCount=len(sample_columns),
+            siteCount=collapse["siteCount"], sampleCount=collapse["sampleCount"],
             robustMinFraction=ROBUST_SITE_MIN_FRACTION if mode == "robust_site_median" else None,
             localizationCutoff=localization_cutoff,
         ),

@@ -4,8 +4,7 @@ import type { ReactNode } from "react";
  * The options block above a plot: fields in a grid, a row of toggles and the size row.
  *
  * One layout for every plot page. `order` keeps each page's established
- * arrangement (QC pages put their toggles first; the peptide page puts the size
- * row before its toggles).
+ * arrangement (for example, QC pages put their toggles first).
  */
 export default function OptionsLayout({
   fields = [], toggles = [], size = null, columns = 3, order = "fields-toggles-size",
@@ -14,7 +13,7 @@ export default function OptionsLayout({
   toggles?: ReactNode[];
   size?: ReactNode | null;
   columns?: 2 | 3;
-  order?: "fields-toggles-size" | "toggles-fields-size" | "fields-size-toggles";
+  order?: "fields-toggles-size" | "toggles-fields-size";
 }) {
   const parts: Record<string, ReactNode> = {
     fields: fields.length > 0

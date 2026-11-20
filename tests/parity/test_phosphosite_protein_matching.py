@@ -1,6 +1,5 @@
 """Python and R heatmaps select whole protein-group members, never substrings."""
 import json
-from pathlib import Path
 import subprocess
 
 import matplotlib.pyplot as plt
@@ -9,7 +8,7 @@ import pytest
 
 from proteomicscopylot import notebook_functions as nb
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 GROUPS = ['P12345', ' Q67890 ; p12345 ', 'AP12345X', 'P12345-2', None, '',
           'P.123', 'PX123', 'P[123]', ' ; P12345 ; ', 'Q67890']
 CASES = [('P12345', [0, 1, 9]), (' \t p12345 \t ', [0, 1, 9]),

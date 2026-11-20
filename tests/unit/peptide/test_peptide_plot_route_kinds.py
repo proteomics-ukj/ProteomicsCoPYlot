@@ -40,13 +40,17 @@ def test_peptide_plot_levels_reach_their_renderers(
         monkeypatch.setattr(notebook_completeness, "render_peptide_missing_values",
                             lambda level, **kwargs: (render(level=level, **kwargs), ""))
     with TestClient(app) as client:
-        response = client.get(path, params={"quantityColumn": "LFQ intensity"})
+        response = client.get(path, params={"quantityColumn": "LFQ intensity", "summary": True, "text": True, "textSize": 13, "randomSeed": 27, "binCount": 2})
 
     assert response.status_code == 200
     assert response.content == b"png"
     assert received["quantity_column"] == "LFQ intensity"
     if renderer_name == "qc_peptide_coverage_plot":
         assert received["level"] == path.split("/")[4]
+        assert received["summary"] is True and received["random_seed"] == 27
+    else:
+        assert received["bin_count"] == 2
+    assert received["text"] is True and received["text_size"] == 13
 
 
 @pytest.mark.parametrize('level', ['peptide', 'precursor'])
@@ -72,7 +76,7 @@ def test_completeness_honors_coverage_annotation_selection(monkeypatch, level, c
     protein_loaded = case in {'protein_precedence', 'unmatched', 'protein_unannotated'}
     protein_meta = metadata(['other9'] if case == 'unmatched' else ['r1'])
     peptide_meta = metadata(['r2', 'absent9'] if case == 'partial_overlap' else ['r2'])
-    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda: frame)
+    monkeypatch.setattr(peptide_tools, 'get_peptide_frame', lambda **kwargs: frame)
     monkeypatch.setattr(peptide_tools, 'get_current_dataset', lambda _: object() if protein_loaded else None)
     monkeypatch.setattr(peptide_tools, 'get_annotation', lambda _: None if case == 'protein_unannotated' else SimpleNamespace(metadata=protein_meta))
     monkeypatch.setattr(peptide_tools, 'get_peptide_metadata', lambda: None if case == 'peptide_unannotated' else SimpleNamespace(frame=peptide_meta))

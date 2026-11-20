@@ -130,6 +130,10 @@ export default defineConfig([
     rules: {
       'no-empty': ['error', { allowEmptyCatch: true }],
       'react-hooks/set-state-in-effect': 'warn',
+      'react-refresh/only-export-components': ['error', {
+        allowConstantExport: true,
+        extraHOCs: ['withWorkflowSettings'],
+      }],
       'no-restricted-syntax': restricted(SIZE_RULES, GLOBAL_RULES),
     },
   },

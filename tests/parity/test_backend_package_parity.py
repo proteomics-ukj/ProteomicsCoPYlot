@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
 
 from app.services import functions as backend
 from proteomicscopylot import notebook_functions as notebook

@@ -78,3 +78,6 @@ viewer_data/projects/
 .DS_Store
 frontend/test-results/
 frontend/playwright-report/
+
+# Generated offline architecture map
+/docs/architecture/

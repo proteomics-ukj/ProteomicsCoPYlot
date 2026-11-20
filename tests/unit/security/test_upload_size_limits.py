@@ -4,11 +4,9 @@ Split out of test_small_bugs.py (2026-10-02)."""
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services import upload_limits
 
@@ -26,15 +24,15 @@ def test_upload_and_restore_limit_parsing_preserves_boundaries(monkeypatch, raw,
         (upload_limits.upload_max_cells, 'COPYLOT_UPLOAD_MAX_CELLS', 10_000_000_000),
         (upload_limits.upload_max_columns, 'COPYLOT_UPLOAD_MAX_COLUMNS', 20_000),
         (upload_limits.upload_max_frame_bytes, 'COPYLOT_UPLOAD_MAX_FRAME_BYTES', 8 * 1024**3),
-        (restore_state.restore_upload_max_bytes, 'COPYLOT_RESTORE_UPLOAD_MAX_BYTES', 64 * 1024**2),
-        (restore_state.restore_expanded_max_bytes, 'COPYLOT_RESTORE_EXPANDED_MAX_BYTES', 256 * 1024**2),
-        (restore_state.restore_replacement_max_bytes, 'COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES', 64 * 1024**3),
-        (restore_state.restore_replacements_total_max_bytes, 'COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES', 128 * 1024**3),
-        (restore_state.restore_table_max_rows, 'COPYLOT_RESTORE_TABLE_MAX_ROWS', 5_000_000),
-        (restore_state.restore_table_max_columns, 'COPYLOT_RESTORE_TABLE_MAX_COLUMNS', 50_000),
-        (restore_state.restore_table_max_cells, 'COPYLOT_RESTORE_TABLE_MAX_CELLS', 50_000_000),
-        (restore_state.restore_replacement_max_files, 'COPYLOT_RESTORE_REPLACEMENT_MAX_FILES', 256),
-        (restore_state.restore_manifest_max_chars, 'COPYLOT_RESTORE_MANIFEST_MAX_CHARS', 1_000_000),
+        (restore_state.restore_upload_max_bytes, 'COPYLOT_RESTORE_UPLOAD_MAX_BYTES', None),
+        (restore_state.restore_expanded_max_bytes, 'COPYLOT_RESTORE_EXPANDED_MAX_BYTES', None),
+        (restore_state.restore_replacement_max_bytes, 'COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES', None),
+        (restore_state.restore_replacements_total_max_bytes, 'COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES', None),
+        (restore_state.restore_table_max_rows, 'COPYLOT_RESTORE_TABLE_MAX_ROWS', None),
+        (restore_state.restore_table_max_columns, 'COPYLOT_RESTORE_TABLE_MAX_COLUMNS', None),
+        (restore_state.restore_table_max_cells, 'COPYLOT_RESTORE_TABLE_MAX_CELLS', None),
+        (restore_state.restore_replacement_max_files, 'COPYLOT_RESTORE_REPLACEMENT_MAX_FILES', None),
+        (restore_state.restore_manifest_max_chars, 'COPYLOT_RESTORE_MANIFEST_MAX_CHARS', None),
     ]
     monkeypatch.setattr(upload_limits, '_memory_capacity_bytes', lambda: 32 * 1024**3)
     for _, setting, _ in limits:
@@ -46,16 +44,17 @@ def test_upload_and_restore_limit_parsing_preserves_boundaries(monkeypatch, raw,
         monkeypatch.delenv(setting, raising=False)
 
 
-def test_restore_replacement_limits_inherit_configured_upload_budget(monkeypatch):
+def test_restore_limits_exist_only_when_the_operator_sets_them(monkeypatch):
     from app.services import restore_state
 
     monkeypatch.setenv('COPYLOT_UPLOAD_MAX_BYTES', '123456')
     monkeypatch.delenv('COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES', raising=False)
     monkeypatch.delenv('COPYLOT_RESTORE_REPLACEMENTS_TOTAL_MAX_BYTES', raising=False)
-    assert restore_state.restore_replacement_max_bytes() == 123456
-    assert restore_state.restore_replacements_total_max_bytes() == 246912
+    assert restore_state.restore_replacement_max_bytes() is None
+    assert restore_state.restore_replacements_total_max_bytes() is None
     monkeypatch.setenv('COPYLOT_RESTORE_REPLACEMENT_MAX_BYTES', '100000')
-    assert restore_state.restore_replacements_total_max_bytes() == 200000
+    assert restore_state.restore_replacement_max_bytes() == 100000
+    assert restore_state.restore_replacements_total_max_bytes() is None
 
 
 

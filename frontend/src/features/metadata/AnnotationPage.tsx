@@ -1,5 +1,6 @@
 import ContaminantFilter from "./ContaminantFilter";
 import SummaryCard from "../../components/SummaryCard";
+import { filterResultSummary } from "./contaminantOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   aggregatePhosprot,
@@ -66,7 +67,7 @@ const ANNOTATION_MANAGER_VISIBILITY_KEY = "data.annotationManager.visible.v1";
 const MAX_MANUAL_METADATA_PROFILES = 5;
 
 export default function AnnotationPage() {
-  const [kind, setKind] = useState<AnnotationPageKind>("protein");
+  const [kind, setKind] = useState<AnnotationPageKind>(() => readPersistedUiState("data.annotation.v1", { kind: "protein" as AnnotationPageKind }).kind);
   const [currentDatasets, setCurrentDatasets] = useState<CurrentDatasetsResponse | null>(
     null
   );
@@ -113,7 +114,7 @@ export default function AnnotationPage() {
   const appliedNormalization: NormalizationMethod = result?.filter?.normalization ?? "none";
   const appliedFit: NormalizationFit = result?.filter?.normalizationFit ?? "filtered_rows";
   const visibleWarnings = (result?.warnings ?? []).filter((warning) =>
-    !/^(No normalization was applied\.|Median centering was applied globally|Quantile normalization was applied globally|VSN was applied globally|No phosphoprotein-level normalization was applied\.|Phosphosite-level normalization was )/.test(warning),
+    !/^(Contaminant filter:|No normalization was applied\.|Median centering was applied globally|Quantile normalization was applied globally|VSN was applied globally|No phosphoprotein-level normalization was applied\.|Phosphosite-level normalization was )/.test(warning),
   );
   const [peptideOverview, setPeptideOverview] = useState<PeptideOverviewResponse | null>(null);
   const [peptideResult, setPeptideResult] = useState<PeptideMetadataResponse | null>(null);
@@ -150,6 +151,10 @@ export default function AnnotationPage() {
     kind === "peptide"
       ? currentDatasets?.peptide?.path
       : currentDatasets?.[kind]?.sourcePath;
+  const draftKey = activeDataset ? JSON.stringify(["annotation.draft.v1", currentDatasets?.activePackage,
+    currentDatasets?.activeMetadataProfile, kind, activeDataset.filename, activeDatasetSource]) : null;
+  const [loadedDraft, setLoadedDraft] = useState<string | null>(null);
+  const normalizationChosen = useRef(false);
   const peptideDatasetAvailable = Boolean(currentDatasets?.peptide);
   const proteinDatasetAvailable = Boolean(currentDatasets?.protein);
   const peptideDatasetFilename = currentDatasets?.peptide?.filename;
@@ -229,12 +234,17 @@ export default function AnnotationPage() {
       setPeptideOverview(null);
       return;
     }
-    getPeptideOverview()
-      .then((overview) => setPeptideOverview(overview))
+    const controller = new AbortController();
+    getPeptideOverview({ signal: controller.signal })
+      .then((overview) => {
+        if (!controller.signal.aborted) setPeptideOverview(overview);
+      })
       .catch((err) => {
+        if (controller.signal.aborted) return;
         setPeptideOverview(null);
         setError(err instanceof Error ? err.message : "Failed to load peptide samples");
       });
+    return () => controller.abort();
   }, [
     peptideDatasetAvailable,
     proteinDatasetAvailable,
@@ -265,12 +275,31 @@ export default function AnnotationPage() {
   }, [availableKinds, kind]);
 
   useEffect(() => {
-    scaleChosen.current = false;
-    filterChosen.current = false;
-    setFilterConfig(DEFAULT_FILTER);
+    const draft = draftKey ? readPersistedUiState<{
+      conditions: ConditionDraft[]; filter?: AnnotationFilterConfig; log2?: boolean;
+      normalization?: NormalizationMethod; fit?: NormalizationFit;
+    } | null>(draftKey, null) : null;
+    setConditions(draft?.conditions ?? [{ id: 1, name: "", columns: [] }]);
+    scaleChosen.current = draft?.log2 !== undefined;
+    filterChosen.current = Boolean(draft?.filter);
+    normalizationChosen.current = draft?.normalization !== undefined;
+    if (draft?.log2 !== undefined) setIsLog2Transformed(draft.log2);
+    setFilterConfig(draft?.filter ?? DEFAULT_FILTER);
+    setSelectedNormalization(draft?.normalization ?? "none");
+    setSelectedFit(draft?.fit ?? "filtered_rows");
+    setLoadedDraft(draftKey);
     scaleRequest.current += 1;
     return () => { scaleRequest.current += 1; };
-  }, [kind, activeDataset?.filename, activeDatasetSource, currentDatasets?.activePackage, currentDatasets?.activeMetadataProfile]);
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!draftKey || loadedDraft !== draftKey) return;
+    writePersistedUiState("data.annotation.v1", {kind});
+    writePersistedUiState(draftKey, {conditions, filter: filterChosen.current ? filterConfig : undefined,
+      log2: scaleChosen.current ? isLog2Transformed : undefined,
+      normalization: normalizationChosen.current ? selectedNormalization : undefined,
+      fit: normalizationChosen.current ? selectedFit : undefined});
+  }, [draftKey, loadedDraft, kind, conditions, filterConfig, isLog2Transformed, selectedNormalization, selectedFit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,8 +325,10 @@ export default function AnnotationPage() {
         if (stored.filter && !filterChosen.current) {
           setFilterConfig({ ...DEFAULT_FILTER, ...stored.filter });
         }
-        setSelectedNormalization(stored.filter?.normalization ?? "none");
-        setSelectedFit(stored.filter?.normalizationFit ?? "filtered_rows");
+        if (!normalizationChosen.current) {
+          setSelectedNormalization(stored.filter?.normalization ?? "none");
+          setSelectedFit(stored.filter?.normalizationFit ?? "filtered_rows");
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -533,15 +564,15 @@ export default function AnnotationPage() {
 
   async function handleDownloadFullData(
     kindToDownload: AnnotationKind,
-    target: "filtered" | "metadata" | "source"
+    target: "filtered" | "metadata" | "source" | "all-metadata"
   ) {
     const busyKey = `${kindToDownload}:${target}`;
     try {
       setDownloadBusyKey(busyKey);
       setError(null);
       const { blob, filename } =
-        target === "metadata"
-          ? await downloadCurrentAnnotationMetadataData(kindToDownload)
+        target === "metadata" || target === "all-metadata"
+          ? await downloadCurrentAnnotationMetadataData(kindToDownload, target === "all-metadata" ? "all" : "selected")
           : target === "source"
             ? await downloadCurrentAnnotationSourceData(kindToDownload)
           : await downloadCurrentAnnotationFilteredData(kindToDownload);
@@ -666,6 +697,9 @@ export default function AnnotationPage() {
     }
   }, [phosphoImputationAvailable, phosprotSource]);
 
+  if ((!currentDatasets && !error) || loadedDraft !== draftKey) {
+    return <p role="status">Loading annotation settings…</p>;
+  }
   return (
     <div className="space-y-6">
       {!annotationManagerVisible ? (
@@ -853,6 +887,7 @@ export default function AnnotationPage() {
             <>
               <p className="mt-1 text-sm text-slate-600">
                 If a metadata file is uploaded for this level, it overrides UI condition mapping during annotation generation.
+                {" "}An exported all-profiles workbook restores the original profile names and pairing; combined profiles are rebuilt automatically.
               </p>
               <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
                 <div>
@@ -1012,11 +1047,6 @@ export default function AnnotationPage() {
         </div>
       </details>
 
-      {kind === "peptide" && <p className="text-sm text-slate-600">
-        Contaminant filtering follows the applied Protein filter settings for the active metadata profile.
-        Change those settings on the Protein tab and press Apply filter. Without a protein annotation,
-        peptide contaminant filtering is off. Mixed parent-protein groups are retained.
-      </p>}
       {kind === "peptide" && error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
@@ -1135,7 +1165,7 @@ export default function AnnotationPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-900">Normalization</h3>
           <p className="mt-1 text-sm text-slate-600">
-            Learned from the chosen rows and applied to every row. Currently applied:{" "}
+            Currently applied:{" "}
             <span className="font-medium text-slate-900">{NORMALIZATION_LABELS[appliedNormalization]}</span>
             {appliedNormalization !== "none" ? (
               <>, fitted on <span className="font-medium text-slate-900">{NORMALIZATION_FIT_LABELS[appliedFit].toLowerCase()}</span></>
@@ -1148,7 +1178,7 @@ export default function AnnotationPage() {
               </label>
               <select id="annotation-normalization"
                 value={selectedNormalization}
-                onChange={(e) => setSelectedNormalization(e.target.value as NormalizationMethod)}
+                onChange={(e) => { normalizationChosen.current = true; setSelectedNormalization(e.target.value as NormalizationMethod); }}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
               >
                 {normalizationOptions(Boolean(normalizationCapability?.vsnAvailable)).map((method) => (
@@ -1163,7 +1193,7 @@ export default function AnnotationPage() {
                 </label>
                 <select id="annotation-normalization-fit"
                   value={selectedFit}
-                  onChange={(e) => setSelectedFit(e.target.value as NormalizationFit)}
+                  onChange={(e) => { normalizationChosen.current = true; setSelectedFit(e.target.value as NormalizationFit); }}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900"
                 >
                   <option value="filtered_rows">{NORMALIZATION_FIT_LABELS.filtered_rows} ({result.filteredRows.toLocaleString()})</option>
@@ -1216,12 +1246,7 @@ export default function AnnotationPage() {
         <>
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900">Result Summary</h3>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <SummaryCard label="Source Rows" value={String(result.sourceRows)} />
-              <SummaryCard label="Metadata Rows" value={String(result.metadataRows)} />
-              <SummaryCard label="Conditions" value={String(result.conditionCount)} />
-              <SummaryCard label="Filtered Rows" value={String(result.filteredRows)} />
-            </div>
+            <p className="mt-3 text-sm text-slate-700">{filterResultSummary(result)}</p>
 
             {visibleWarnings.length > 0 && (
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -1250,6 +1275,11 @@ export default function AnnotationPage() {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900">Metadata</h3>
+            <button type="button" disabled={downloadBusyKey !== null}
+              onClick={() => handleDownloadFullData(kind, "all-metadata")}
+              className="mt-3 rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">
+              {downloadBusyKey === `${kind}:all-metadata` ? "Downloading..." : "Download all profiles (Excel)"}
+            </button>
             <div className="mt-4">
               <PreviewTable
                 rows={result.metadataPreview}
@@ -1258,7 +1288,7 @@ export default function AnnotationPage() {
                   label:
                     downloadBusyKey === `${kind}:metadata`
                       ? "Downloading..."
-                      : "Download Full CSV",
+                      : "Download selected profile (CSV)",
                   onClick: () => handleDownloadFullData(kind, "metadata"),
                   disabled: downloadBusyKey !== null,
                 }}
@@ -1318,23 +1348,25 @@ export default function AnnotationPage() {
                         <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="annotation-aggregation-cutoff">
                           Site localization probability cutoff
                         </label>
-                        <input id="annotation-aggregation-cutoff"
-                          type="text"
-                          inputMode="decimal"
-                          value={phosprotCutoffText}
-                          disabled={!localizationAvailable}
-                          onChange={(e) => setPhosprotCutoffDraft(e.target.value)}
-                          aria-invalid={!phosprotCutoffValid}
-                          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100"
-                        />
+                        <div className="block">
+                          <input id="annotation-aggregation-cutoff"
+                            type="text"
+                            inputMode="decimal"
+                            value={phosprotCutoffText}
+                            disabled={!localizationAvailable}
+                            onChange={(e) => setPhosprotCutoffDraft(e.target.value)}
+                            aria-invalid={!phosprotCutoffValid}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 disabled:bg-slate-100"
+                          />
+                          {phosprotCutoffValid && localizationAvailable && Number(phosprotCutoffText.replace(",", ".")) < 0.75 ? (
+                            <p className="mt-1 text-xs text-amber-700">
+                              Non-class I sites may be included: the collapse localization cutoff is below 0.75.
+                            </p>
+                          ) : null}
+                        </div>
                         {phosprotCutoffValid ? null : (
                           <p className="mt-2 text-xs leading-5 text-red-700">Enter a value between 0.00 and 1.00.</p>
                         )}
-                        {phosprotCutoffValid && localizationAvailable && Number(phosprotCutoffText.replace(",", ".")) < 0.75 ? (
-                          <p className="mt-2 text-xs leading-5 text-amber-700">
-                            Non-class I sites may be included: the collapse localization cutoff is below 0.75.
-                          </p>
-                        ) : null}
                       </div>
                     </div>
                     <button

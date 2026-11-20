@@ -2,12 +2,10 @@
 from functools import lru_cache
 import inspect
 import json
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_preprocessing import cached_notebook_render, capture_notebook
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 from app.services.notebook_volcano import volcano_source
 
 
@@ -37,9 +35,8 @@ def comparison_source(plot, interactive=False):
         code = code.replace(before, after)
     code = code.replace(prefix + '_table(', 'prepare_table(').replace(renderer + '(', 'render_plot(')
     common = module_source('plotting_common.py')
-    styling = '\n'.join(line for line in module_source('plot_styling.py').splitlines() if not line.startswith('from app.'))
-    styling += '\n\n' + function_definition(common, 'get_plt') + '\n\ndef _get_plt():\n    return get_plt()\n'
-    return extract_notebook_source(merge_source(
+    styling = portable_styling(include_matplotlib=True)
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code,
         'import numpy as np\nimport pandas as pd\nfrom textwrap import fill', code,
         extract_notebook_source(styling, ('get_plt', 'apply_advanced_axes', 'advanced_plotly_layout',
             'advanced_color', 'advanced_label', 'marker_style', 'plotly_marker', 'resolve_reference_line')).code,
@@ -52,12 +49,10 @@ def comparison_source(plot, interactive=False):
 
 @lru_cache(maxsize=3)
 def comparison_module(plot, interactive=False):
-    module = ModuleType(f'_copylot_portable_comparison_{plot}_{interactive}')
-    sys.modules[module.__name__] = module
-    exec(comparison_source(plot, interactive).code, module.__dict__)
-    return module
+    return portable_module(f'_copylot_portable_comparison_{plot}_{interactive}', lambda: comparison_source(plot, interactive))
 
 
+@cached_notebook_render
 def render_comparison(plot, *, interactive=False, **options):
     from app.services import comparison_tools
     from app.services.annotation_store import get_annotation
@@ -72,9 +67,7 @@ def render_comparison(plot, *, interactive=False, **options):
     source = comparison_source(plot, interactive)
     prefix = 'pearson_correlation' if plot == 'pearson' else 'venn'
     renderer = getattr(comparison_tools, prefix + ('_html' if interactive else '_png'))
-    bound = inspect.signature(renderer).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(renderer, **options)
     kind = settings['kind']
     data, metadata, samples = comparison_tools._analysis_context(kind)
     identifiers = [comparison_tools._id_column(kind, data)] if plot == 'venn' or interactive else []
@@ -90,11 +83,8 @@ def render_comparison(plot, *, interactive=False, **options):
     if interactive:
         content = module.render_plot(data, metadata, **settings)
     else:
-        context = module.plot_output_format.set(fmt)
-        try:
+        with portable_output_format(module, fmt):
             content = module.render_plot(data, metadata, **settings)
-        finally:
-            module.plot_output_format.reset(context)
     # Pearson's summary intentionally mixes labels, an integer and a float.
     # JSON preserves those scalar types without coercing the column to strings.
     resources = {'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),

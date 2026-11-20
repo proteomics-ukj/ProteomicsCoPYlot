@@ -24,7 +24,7 @@ from app.services.comparison_tools import (
     pearson_correlation_table,
     venn_table,
 )
-from app.api.plot_responses import plot_errors, png_response, snapshot_table, table_rows
+from app.api.plot_responses import with_notebook_token, plot_errors, png_response, snapshot_table, table_rows
 
 router = APIRouter()  # mounted under /api/plots by routes_plots
 
@@ -47,9 +47,7 @@ def _comparison_notebook_response(plot, *, interactive=False, **options):
         renderer = venn_png if plot == 'venn' else pearson_correlation_html if interactive else pearson_correlation_png
         content, token = renderer(**options), ''
     response = HTMLResponse(content=content) if interactive else png_response(content)
-    if token:
-        response.headers['X-CoPYlot-Notebook'] = token
-    return response
+    return with_notebook_token(response, token)
 
 
 @router.get("/comparison/{kind}/pearson.png")
@@ -62,7 +60,7 @@ def comparison_pearson_route(
     condition2: str = "",
     alias1: str = "",
     alias2: str = "",
-    color: str = "#1f77b4",
+    color: str = "",
     dotSize: float = 60,
     header: bool = True,
     widthCm: float = 20,
@@ -100,7 +98,7 @@ def comparison_pearson_interactive_route(
     condition2: str = "",
     alias1: str = "",
     alias2: str = "",
-    color: str = "#1f77b4",
+    color: str = "",
     dotSize: float = 8,
     header: bool = True,
     widthCm: float = 20,
@@ -167,9 +165,9 @@ def comparison_venn_route(
     alias1: str = "",
     alias2: str = "",
     alias3: str = "",
-    color1: str = "#1f77b4",
-    color2: str = "#ff7f0e",
-    color3: str = "#2ca02c",
+    color1: str = "",
+    color2: str = "",
+    color3: str = "",
     header: bool = True,
     widthCm: float = 15,
     heightCm: float = 12,

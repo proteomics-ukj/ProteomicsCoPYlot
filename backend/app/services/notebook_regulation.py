@@ -1,12 +1,10 @@
 """Portable phosphoprotein regulation, from site statistics to plot and table."""
 from functools import lru_cache
 import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source
+from app.services.notebook_preprocessing import cached_notebook_render, capture_notebook
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source
 from app.services.notebook_volcano import (
     PROTEIN_CORRECTION_EXPLANATION, frozen_protein_comparison, protein_stats_code, volcano_source)
 
@@ -33,8 +31,7 @@ def regulation_source(interactive=False):
             ('_plotly_html(', 'plotly_html(')):
         code = code.replace(before, after)
     common = module_source('plotting_common.py')
-    styling = '\n'.join(line for line in module_source('plot_styling.py').splitlines() if not line.startswith('from app.'))
-    styling += '\n\n' + function_definition(common, 'get_plt') + '\n\ndef _get_plt():\n    return get_plt()\n'
+    styling = portable_styling(include_matplotlib=True)
     styles = extract_notebook_source(styling, ('marker_style', 'plotly_marker', 'get_plt', 'apply_advanced_axes')).code
     return extract_notebook_source(merge_source(volcano_source(True).code, styles,
         extract_notebook_source(module_source('plot_export.py'), ('to_png_bytes', 'cm_to_inch')).code,
@@ -45,12 +42,10 @@ def regulation_source(interactive=False):
 
 @lru_cache(maxsize=2)
 def regulation_module(interactive=False):
-    module = ModuleType(f'_copylot_portable_regulation_{interactive}')
-    sys.modules[module.__name__] = module
-    exec(regulation_source(interactive).code, module.__dict__)
-    return module
+    return portable_module(f'_copylot_portable_regulation_{interactive}', lambda: regulation_source(interactive))
 
 
+@cached_notebook_render
 def render_regulation(*, interactive=False, **options):
     from app.services import phospho_tools, stats_tools
     from app.services.annotation_store import get_annotation
@@ -63,9 +58,7 @@ def render_regulation(*, interactive=False, **options):
 
     revision = runtime_cache_version()
     renderer = phospho_tools.phosprot_regulation_html if interactive else phospho_tools.phosprot_regulation_png
-    bound = inspect.signature(renderer).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(renderer, **options)
     data, metadata, _ = phospho_tools._phospho_regulation_context(settings['data_source'])
     metadata = metadata[[c for c in ('sample', 'condition', 'pair_id') if c in metadata]].copy(deep=True)
     source = settings['data_source']
@@ -91,11 +84,8 @@ def render_regulation(*, interactive=False, **options):
     if interactive:
         content = module.render_plot(table, **settings)
     else:
-        context = module.plot_output_format.set(fmt)
-        try:
+        with portable_output_format(module, fmt):
             content = module.render_plot(table, **settings)
-        finally:
-            module.plot_output_format.reset(context)
     resources = {'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(metadata),
         'table.parquet': dataframe_bytes(table), f'original.{fmt}': content.encode() if interactive else bytes(content),
         **protein_resources}

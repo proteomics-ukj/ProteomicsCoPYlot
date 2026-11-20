@@ -14,13 +14,12 @@ place, an unused `functions.anova_data_f` copy, was removed; the app's own path
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from app.schemas.stats import AnovaRequest
 from app.services.stats_tools import _anova_dataframe, _stats_source

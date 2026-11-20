@@ -20,7 +20,10 @@ _PRIVATE_FILE = stat.S_IRUSR | stat.S_IWUSR
 
 
 def managed_temp_root() -> Path:
-    return Path(tempfile.gettempdir()) / "ProteomicsCoPYlot"
+    # Windows can supply TEMP with an 8.3 username. Expand the parent before
+    # constructing managed paths so the ownership check sees the same spelling.
+    # Keep the app directory itself unresolved so a junction there is rejected.
+    return Path(tempfile.gettempdir()).resolve() / "ProteomicsCoPYlot"
 
 
 def private_temp_dir(name: str) -> Path:

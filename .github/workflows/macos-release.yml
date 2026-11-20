@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       source_commit:
-        description: 'Full main commit to package (default matches the existing Beta 1 downloads)'
+        description: 'Full main commit to package'
         required: true
-        default: '56d8cf48c30fff7fe21c299dc0796a773309f7a1'
         type: string
 
 permissions:

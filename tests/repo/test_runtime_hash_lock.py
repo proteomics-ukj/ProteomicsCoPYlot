@@ -1,11 +1,10 @@
 """Runtime artifact hashes must never silently change the reviewed versions."""
 import importlib.util
 import re
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 spec = importlib.util.spec_from_file_location("hash_runtime_requirements", ROOT / "tools/hash_runtime_requirements.py")
 hash_tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hash_tool)

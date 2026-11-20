@@ -11,9 +11,9 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from annotation_support import save_log2_protein_annotation
 from app.main import app
-from app.schemas.annotation import AnnotationFilterConfig
-from app.services.annotation_store import reset_all_annotations, save_annotation
+from app.services.annotation_store import reset_all_annotations
 from app.services.comparison_tools import venn_table
 from app.services.dataset_store import reset_all_datasets, save_table_dataset
 
@@ -32,9 +32,7 @@ def patchy():
     frame.insert(0, "ProteinNames", [f"P{i}" for i in range(4)])
     meta = pd.DataFrame({"sample": SAMPLES, "condition": [s[0] for s in SAMPLES]})
     save_table_dataset("patchy.tsv", "protein", frame)
-    save_annotation(kind="protein", source_data=frame, log2_data=frame, filtered_data=frame, metadata=meta,
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(frame, meta)
     yield
     reset_all_datasets()
     reset_all_annotations()

@@ -4,13 +4,11 @@ import time
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Barrier, Event
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.schemas.stats import VolcanoResultResponse
 from app.services.runtime_cache import (
@@ -38,7 +36,7 @@ def test_overlapping_calls_share_work_and_release_waiters(monkeypatch, outcome):
 
     monkeypatch.setattr(runtime_cache, 'Future', ObservedFuture)
     if outcome == 'oversized':
-        monkeypatch.setattr(runtime_cache, '_MAX_ENTRY_BYTES', 1)
+        monkeypatch.setattr(runtime_cache, '_MAX_TOTAL_BYTES', 1)
     calls = []
 
     def compute():
@@ -81,6 +79,42 @@ def test_overlapping_calls_share_work_and_release_waiters(monkeypatch, outcome):
                 assert cached_call('concurrent', {}, lambda: 'unexpected') is None
     assert len(calls) == (2 if outcome == 'oversized' else 1)
     assert not runtime_cache._IN_FLIGHT
+
+
+def test_disposal_drops_revisions_and_rejects_late_cache_writes(monkeypatch):
+    from app.services import runtime_cache
+    from app.services.session_cleanup import _discard_session
+
+    monkeypatch.setenv("COPYLOT_SESSION_ISOLATION", "1")
+    entered, release = Event(), Event()
+    session = "disposed-session"
+
+    def slow():
+        entered.set()
+        assert release.wait(10)
+        return "old"
+
+    def request(factory):
+        token = set_session_id(session)
+        try:
+            return cached_call("disposal", {}, factory)
+        finally:
+            reset_session_id(token)
+
+    with ThreadPoolExecutor() as pool:
+        old = pool.submit(request, slow)
+        try:
+            assert entered.wait(10)
+            _discard_session(session)
+            assert request(lambda: "new") == "new"
+        finally:
+            release.set()
+        assert old.result() == "old"
+        assert request(lambda: "unexpected") == "new"
+    for index in range(15):
+        name = f"disposal-{index}"
+        _discard_session(name)
+        assert name not in runtime_cache._SESSION_VERSIONS
 
 
 @pytest.mark.parametrize('separation', ['key', 'session', 'format'])
@@ -133,7 +167,7 @@ def test_nested_calculations_do_not_deadlock(monkeypatch):
 def test_nested_large_payloads_are_not_cached(monkeypatch, wrap):
     from app.services import runtime_cache
 
-    monkeypatch.setattr(runtime_cache, '_MAX_ENTRY_BYTES', 512)
+    monkeypatch.setattr(runtime_cache, '_MAX_TOTAL_BYTES', 512)
     payload = wrap('x' * 1_000_000)
     calls = []
 
@@ -175,7 +209,7 @@ def test_small_nested_payloads_are_cached_with_independent_copies():
 def test_nested_dataframe_and_model_payloads_are_counted(monkeypatch):
     from app.services import runtime_cache
 
-    monkeypatch.setattr(runtime_cache, '_MAX_ENTRY_BYTES', 512)
+    monkeypatch.setattr(runtime_cache, '_MAX_TOTAL_BYTES', 512)
     assert _estimate_size_bytes({'data': pd.DataFrame({'x': range(1000)})}) > 512
     assert _estimate_size_bytes({'result': _response(rows=1000)}) > 512
 
@@ -202,7 +236,7 @@ def test_unknown_or_failed_sizing_returns_results_without_caching(broken_frame):
         calls.append(1)
         return payload
 
-    assert _estimate_size_bytes(payload) > runtime_cache._MAX_ENTRY_BYTES
+    assert _estimate_size_bytes(payload) > runtime_cache._MAX_TOTAL_BYTES
     assert cached_call('unknown-size', {}, compute) is payload
     assert cached_call('unknown-size', {}, compute) is payload
     assert len(calls) == 2
@@ -215,7 +249,7 @@ def test_sizing_stops_before_walking_an_oversized_container(monkeypatch):
         def __iter__(self):
             raise AssertionError('The remaining contents should not be visited')
 
-    monkeypatch.setattr(runtime_cache, '_MAX_ENTRY_BYTES', 512)
+    monkeypatch.setattr(runtime_cache, '_MAX_TOTAL_BYTES', 512)
     # The first element alone exceeds the cap; the second must remain untouched.
     size = _estimate_size_bytes(['x' * 1000, UnvisitedList()])
     assert size > 1000
@@ -435,8 +469,10 @@ def test_equivalent_keys_hit_and_different_keys_miss() -> None:
         (1, 1.0),
         ({"x": True}, {"x": 1}),
         ([True, 2], [1, 2]),
+        ({"x": 1}, [["x", 1]]),
+        ({1: 2}, {"1": 2}),
     ],
-    ids=["true-vs-1", "false-vs-0", "int-vs-float", "in-a-dict", "in-a-list"],
+    ids=["true-vs-1", "false-vs-0", "int-vs-float", "in-a-dict", "in-a-list", "mapping-vs-pairs", "typed-keys"],
 )
 def test_values_python_calls_equal_are_still_different_keys(left, right) -> None:
     """`True == 1` and `1 == 1.0`, and equal values hash equally.
@@ -460,3 +496,47 @@ def test_a_boolean_and_an_integer_do_not_share_a_cache_entry() -> None:
     cached_call("bools", {"advanced": {"headerText": True}}, factory)
     cached_call("bools", {"advanced": {"headerText": 1}}, factory)
     assert calls["n"] == 2, "the integer request was served the boolean's result"
+
+
+def test_stats_result_above_old_limit_is_sized_once_and_reused(monkeypatch):
+    from app.services import runtime_cache
+    from app.services.stats_tools import _cache_stats_response
+
+    calls, sizes = [], []
+    measure = runtime_cache._estimate_size_bytes
+    def track_size(value):
+        sizes.append((type(value), len(value)))
+        return measure(value)
+    monkeypatch.setattr(runtime_cache, "_estimate_size_bytes", track_size)
+    monkeypatch.setattr(runtime_cache, "_MAX_TOTAL_BYTES", 32 * 1024**2)
+
+    def compute(payload):
+        calls.append(payload)
+        model = _response(1)
+        model.rows[0]["sample"] = "x" * (13 * 1024**2)
+        return model
+
+    run = _cache_stats_response(compute, VolcanoResultResponse)
+    first = run("large")
+    first.rows.clear()
+    assert len(run("large").rows[0]["sample"]) == 13 * 1024**2
+    assert calls == ["large"]
+    assert len(sizes) == 1 and sizes[0][0] is bytes and sizes[0][1] > 12 * 1024**2
+    invalidate_runtime_cache()
+
+
+def test_byte_budget_evicts_least_recently_used_entry(monkeypatch):
+    from app.services import runtime_cache
+
+    invalidate_runtime_cache(all_sessions=True)
+    value = bytes(120)
+    monkeypatch.setattr(runtime_cache, "_MAX_TOTAL_BYTES", 2 * sys.getsizeof(value))
+    calls = []
+    def request(key):
+        def compute():
+            calls.append(key)
+            return value
+        return cached_call("byte-budget", key, compute)
+    for key in ("A", "B", "A", "C", "A", "B"):
+        assert request(key) == value
+    assert calls == ["A", "B", "C", "B"]

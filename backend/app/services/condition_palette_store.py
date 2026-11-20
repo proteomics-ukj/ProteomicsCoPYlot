@@ -1,36 +1,14 @@
 from __future__ import annotations
 
-import colorsys
 import re
 
 from app.schemas.annotation import AnnotationKind
 from app.services.runtime_cache import invalidate_runtime_cache
 from app.services.session_context import get_session_id
 
-HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+from app.services.copylot_core import COPYLOT_COLORS, UKJ_COLORS, MATPLOTLIB_TAB10
 
-_BASE_CONDITION_COLORS = [
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf",
-    "#aec7e8",
-    "#ffbb78",
-    "#98df8a",
-    "#ff9896",
-    "#c5b0d5",
-    "#c49c94",
-    "#f7b6d2",
-    "#c7c7c7",
-    "#dbdb8d",
-    "#9edae5",
-]
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _empty_palette_state() -> dict[AnnotationKind, dict[str, str]]:
@@ -64,13 +42,7 @@ def _normalize_conditions(conditions: list[str]) -> list[str]:
 
 
 def _generated_color_hex(index: int) -> str:
-    if index < len(_BASE_CONDITION_COLORS):
-        return _BASE_CONDITION_COLORS[index].upper()
-    hue = (index * 0.618033988749895) % 1.0
-    saturation = 0.62 if index % 2 == 0 else 0.78
-    value = 0.88 if (index // 2) % 2 == 0 else 0.72
-    red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
-    return f"#{int(red * 255):02X}{int(green * 255):02X}{int(blue * 255):02X}"
+    return COPYLOT_COLORS[index % len(COPYLOT_COLORS)]
 
 
 def _normalize_hex(value: str) -> str | None:
@@ -86,6 +58,54 @@ def _normalize_hex(value: str) -> str | None:
 
 def get_condition_palette(kind: AnnotationKind) -> dict[str, str]:
     return dict(_session_palettes().get(kind, {}))
+
+
+def get_category_palette(kind: AnnotationKind) -> list[str]:
+    """The selected preset in full, or the ordered custom condition colors."""
+    overrides = get_condition_palette(kind)
+    if not overrides:
+        return list(COPYLOT_COLORS)
+    from app.services.annotation_store import get_annotation
+
+    annotation = get_annotation(kind)
+    conditions = list(overrides)
+    if annotation is not None and "condition" in annotation.metadata:
+        conditions = _normalize_conditions(annotation.metadata["condition"].astype(str).tolist())
+    colors = list(build_condition_color_map(kind, conditions).values())
+    for preset in (COPYLOT_COLORS, UKJ_COLORS, MATPLOTLIB_TAB10):
+        if colors and all(color == preset[i % len(preset)].upper() for i, color in enumerate(colors)):
+            return list(preset)
+    return colors or list(COPYLOT_COLORS)
+
+
+def fill_category_palette(function, settings):
+    """Resolve the GUI choice before rendering or capturing notebook settings."""
+    if hasattr(function, "_category_palette_kind") and settings.get("plot_colors") is None:
+        kind = settings.get("kind") or function._category_palette_kind
+        settings["plot_colors"] = get_category_palette(kind)
+    return settings
+
+
+def apply_category_palettes(namespace, names, kind="protein"):
+    """Bind session colors at renderer entry; exported plot bodies stay pure."""
+    import inspect
+    from functools import wraps
+
+    def decorate(function):
+        signature = inspect.signature(function)
+
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            fill_category_palette(wrapped, bound.arguments)
+            return function(*bound.args, **bound.kwargs)
+
+        wrapped._category_palette_kind = kind
+        return wrapped
+
+    for name in names:
+        namespace[name] = decorate(namespace[name])
 
 
 def set_condition_palette(kind: AnnotationKind, palette: dict[str, str]) -> dict[str, str]:

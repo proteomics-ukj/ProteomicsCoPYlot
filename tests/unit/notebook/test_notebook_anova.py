@@ -1,9 +1,7 @@
-from notebook_replay_support import set_original_path
+from notebook_replay_support import notebook_code, replay_cells, set_original_path
 
 import io
 import json
-import subprocess
-import sys
 from zipfile import ZipFile
 
 import pandas as pd
@@ -15,6 +13,52 @@ from app.services.notebook_anova import anova_module, render_anova
 from app.services.notebook_archive import build_notebook_archive
 from app.services.notebook_snapshots import snapshots
 from app.services.session_context import get_session_id
+
+
+def test_anova_label_toggle_reuses_analysis_but_not_the_figure(inputs, monkeypatch):
+    from app.services.runtime_cache import invalidate_runtime_cache
+    invalidate_runtime_cache('anova-label-test')
+    module = anova_module()
+    original = module.calculate_tables
+    calls = []
+    def calculate(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, 'calculate_tables', calculate)
+    payload = AnovaRequest(kind='protein', source='anova_cluster', dataSource='filtered', pValueThreshold=1, nClusters=3)
+    unlabeled, _ = render_anova(payload)
+    labeled, token = render_anova(payload.model_copy(update={'showRowLabels': True}))
+    assert len(calls) == 1
+    assert bytes(labeled) != bytes(unlabeled)
+    assert snapshots.get(get_session_id(), token).settings['request']['showRowLabels'] is True
+    render_anova(payload.model_copy(update={'nClusters': 2}))
+    assert len(calls) == 2
+    invalidate_runtime_cache('anova-label-test-changed-data')
+    render_anova(payload)
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('rows', [8, 3000])
+def test_dense_anova_labels_keep_every_heatmap_row_and_report_spacing(rows):
+    import numpy as np
+    samples = ['A1', 'A2', 'B1', 'B2']
+    frame = pd.DataFrame(np.random.default_rng(8).normal(size=(rows, 4)), columns=samples)
+    frame['ProteinNames'] = [f'P{i}' for i in range(rows)]
+    frame['cluster'] = 1
+    metadata = pd.DataFrame({'sample': samples, 'condition': ['A', 'A', 'B', 'B']})
+    fig, plt = stats_tools._anova_heatmap_figure(frame, metadata, kind='protein', advanced=None,
+        label_column='ProteinNames', p_value_threshold=1, clustered=True,
+        show_dendrograms=False, show_legend=False, row_labels=True)
+    try:
+        heatmap = next(ax for ax in fig.axes if ax.get_xlabel() == 'samples')
+        assert heatmap.images[0].get_array().shape == (rows, 4)
+        labels = heatmap.get_yticklabels()
+        assert len(labels) == rows if rows == 8 else len(labels) <= 250
+        assert labels[0].get_text() == 'P0'
+        assert labels[-1].get_text() == f'P{rows - 1}'
+        assert ('row labels for readability' in fig._copylot_notice) == (rows > 250)
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.parametrize('method', ['average', 'ward', 'complete', 'weighted', 'single'])
@@ -53,10 +97,9 @@ def test_anova_standalone_notebook_reproduces_tables_and_heatmap(inputs, tmp_pat
         archive.extractall(tmp_path)
         name = next(name for name in archive.namelist() if name.endswith('.ipynb'))
     notebook = json.loads((tmp_path / name).read_text())
-    cells = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    cells = notebook_code(notebook)
     cells = set_original_path(cells, tmp_path)
-    result = subprocess.run([sys.executable, '-I', '-c', "import sys;sys.path.insert(0,'.');\n" + cells],
-        cwd=tmp_path, capture_output=True, text=True, timeout=90)
+    result = replay_cells(cells, tmp_path, timeout=90)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'reproduced.png').read_bytes() == actual
     if cluster:

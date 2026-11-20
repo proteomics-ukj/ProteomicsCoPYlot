@@ -567,16 +567,38 @@ def _request_is_https(request: Request) -> bool:
     )
 
 
+def frame_ancestors() -> str:
+    """Who may show the application in a frame: itself, and origins the operator names.
+
+    Without it any website can load a hosted tool or viewer in an invisible
+    frame and have a logged-in user click in it (clickjacking). The application
+    frames its own interactive plots, so the answer is "self", not "none".
+    `COPYLOT_FRAME_ANCESTORS` adds origins (an institute page that embeds the
+    viewer); the origins allowed to call the API cross-origin are added too.
+    """
+    import re
+
+    named = re.split(r"[\s,]+", str(os.getenv("COPYLOT_FRAME_ANCESTORS", "")).strip())
+    extra = [origin.rstrip("/") for origin in [*named, *_CORS_ORIGINS]
+             if re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d+)?/?", origin or "")]
+    return " ".join(["frame-ancestors 'self'", *dict.fromkeys(extra)])
+
+
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    ancestors = frame_ancestors()
     if request.url.path.startswith("/api/plots/") and response.headers.get(
         "content-type", ""
     ).lower().startswith("text/html"):
         # Also contain HTML opened directly, outside the frontend iframe.
         response.headers.setdefault(
-            "Content-Security-Policy", GENERATED_HTML_CSP + "; sandbox allow-scripts allow-downloads"
+            "Content-Security-Policy", GENERATED_HTML_CSP + "; sandbox allow-scripts allow-downloads; " + ancestors
         )
+    response.headers.setdefault("Content-Security-Policy", ancestors)
+    if ancestors == "frame-ancestors 'self'":
+        # The older header cannot name other origins, so it is sent only when none is allowed.
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     if _request_is_https(request):
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

@@ -1,15 +1,3 @@
-/**
- * The RT plot greys out Mode and Bins while Type is Interactive.
- *
- * `peptide_rt_interactive_html` takes add_line, header, sampling_seed and the
- * figure size. It always draws a scatter and never bins, so Mode and Bins do
- * nothing while Type is Interactive -- a control that silently changes nothing
- * is worse than no control. The gate is a UI change only: both still reach the
- * static renderer.
- *
- * These mount the peptide page and switch Type. They replaced a node --test
- * file that walked the page's syntax tree for each field's `disabled={...}`.
- */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PeptideLevelPage from "../../src/features/peptide/PeptideLevelPage";
@@ -46,7 +34,10 @@ async function mount() {
 describe("the RT plot options", () => {
   it("leave Mode and Bins usable and send them to the static plot", async () => {
     await mount();
-    expect(field("Type").value).toBe("Normal");
+    expect(screen.queryByLabelText("Type")).toBeNull();
+    expect(field("Random Seed").value).toBe("1");
+    expect(field("Mode").value).toBe("Scatter Plot");
+    expect(field("Bins").value).toBe("100");
     expect(field("Mode").disabled).toBe(false);
     expect(field("Bins").disabled).toBe(false);
     fireEvent.change(field("Mode"), { target: { value: "Hexbin Plot" } });
@@ -55,21 +46,11 @@ describe("the RT plot options", () => {
     expect(rtRequest()!.searchParams.has("bins")).toBe(true);
   });
 
-  it("grey out Mode and Bins once Type is Interactive, and switch to the interactive renderer", async () => {
+  it("sends a custom seed to the static plot", async () => {
     await mount();
-    fireEvent.change(field("Type"), { target: { value: "Interactive" } });
-    await waitFor(() => expect(field("Mode").disabled).toBe(true));
-    expect(field("Bins").disabled).toBe(true);
-    await waitFor(() => expect(rtRequest()!.pathname).toMatch(/\/api\/plots\/peptide\/rt-interactive\.html$/));
-  });
-
-  it("keep Type and Random Seed usable in both types", async () => {
-    await mount();
-    for (const type of ["Normal", "Interactive"]) {
-      fireEvent.change(field("Type"), { target: { value: type } });
-      await waitFor(() => expect(field("Type").value).toBe(type));
-      expect(field("Type").disabled).toBe(false);
-      expect(field("Random Seed").disabled).toBe(false);
-    }
+    fireEvent.change(field("Random Seed"), { target: { value: "42" } });
+    fireEvent.blur(field("Random Seed"));
+    await waitFor(() => expect(rtRequest()!.searchParams.get("randomSeed")).toBe("42"));
+    expect(screen.queryByText("Open Interactive Plot")).toBeNull();
   });
 });

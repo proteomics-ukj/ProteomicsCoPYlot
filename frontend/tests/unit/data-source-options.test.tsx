@@ -26,8 +26,8 @@ import { PathwayHeatmapPanel } from "../../src/features/stats/PathwayHeatmapPane
 import { SimulationPanel } from "../../src/features/stats/SimulationPanel";
 import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import * as api from "../../src/lib/api";
-import { DATA_SOURCE_LABELS, resolveDataSource, type DataSource, type StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "../component/apiMock";
+import { DATA_SOURCE_LABELS, resolveDataSource, type DataSource } from "../../src/lib/types";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "../component/apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("../component/apiMock")).mockApiModule(original));
 
@@ -35,11 +35,11 @@ const PROTEIN = [{ value: "protein", label: "Protein" }];
 
 function serve(available: DataSource[]) {
   const ladder = { availableDataSources: available, defaultDataSource: available.at(-1)! };
-  vi.mocked(api.getStatisticalOptions).mockResolvedValue({
-    kind: "protein", sourceUsed: "data", imputedAvailable: available.includes("imputed"),
-    availableConditions: ["A", "B"], samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] }, pairIdsBySample: {},
-    availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }], warnings: [], ...ladder,
-  } as StatisticalOptionsResponse);
+  vi.mocked(api.getStatisticalOptions).mockResolvedValue(statisticalOptions({
+    imputedAvailable: available.includes("imputed"),
+    availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }],
+    ...ladder,
+  }));
   vi.mocked(api.getQcPlotOptions).mockResolvedValue({
     conditions: ["A", "B"], imputedAvailable: false, samples: ["a1", "b1"], centredPhosprotValues: false, ...ladder,
   } as Awaited<ReturnType<typeof api.getQcPlotOptions>>);

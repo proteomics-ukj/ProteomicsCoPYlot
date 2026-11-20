@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 from app.services.plot_export import (
     to_png_bytes as _to_png_bytes,
     cm_to_inch as _cm_to_inch,
 )
+
 
 from typing import Literal
 
@@ -661,7 +666,7 @@ def _heatmap_matrix(
         )
         matrix = matrix.loc[completeness.kept]
 
-    if cluster_rows and matrix.shape[0] > 1:
+    if cluster_matrix is not None and cluster_rows and matrix.shape[0] > 1:
         try:
             from scipy.cluster.hierarchy import leaves_list, linkage
         except ModuleNotFoundError as exc:
@@ -673,7 +678,7 @@ def _heatmap_matrix(
         matrix = matrix.iloc[row_order]
         cluster_matrix = cluster_matrix[row_order]
 
-    if cluster_cols and matrix.shape[1] > 1:
+    if cluster_matrix is not None and cluster_cols and matrix.shape[1] > 1:
         try:
             from scipy.cluster.hierarchy import leaves_list, linkage
         except ModuleNotFoundError as exc:
@@ -801,6 +806,11 @@ def single_protein_options(
         "availableIdentifiers": available_identifiers,
         "dataSource": requested_source,
         "carried": carried,
+        # Lineplot "Show NA as low" draws missing values at log2 0 (linear 1).
+        # On a phosphoprotein matrix collapsed with robust_site_median the
+        # stored values are ratios to each site's median, where 0 is the middle
+        # of the scale, not low; the page hides the toggle for that case.
+        "centredPhosprotValues": bool(phosprot_values_are_centred(kind)),
         **availability,
     }
 
@@ -850,6 +860,7 @@ def single_protein_lineplot_plot(
     advanced: dict | None = None,
     data_source: str = "data",
     show_na_low: bool = False,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     table, ordered_samples = _lineplot_long_table(
@@ -863,7 +874,11 @@ def single_protein_lineplot_plot(
 
     fig, ax = plt.subplots(figsize=(_cm_to_inch(width_cm), _cm_to_inch(height_cm)))
     features = table["Feature"].drop_duplicates().tolist()
-    color_map = plt.get_cmap("tab10", max(1, len(features)))
+    color_map = resolve_plot_colors(len(features), plot_colors)
+    if show_na_low and phosprot_values_are_centred(kind):
+        # Centred ratios: log2 0 is the middle of the scale, so a baseline
+        # there would read as a measurement. Missing stays missing.
+        show_na_low = False
 
     for idx, feature in enumerate(features):
         subset = table[table["Feature"] == feature].sort_values("x")
@@ -877,7 +892,7 @@ def single_protein_lineplot_plot(
             marker="o",
             markevery=np.flatnonzero(measured.to_numpy()).tolist() if show_na_low else None,
             label=feature,
-            color=color_map(idx),
+            color=color_map[idx],
         )
 
     ax.set_xticks(range(len(ordered_samples)))
@@ -906,24 +921,43 @@ def single_protein_lineplot_plot(
         # Up to 40 characters per entry; kept inline so the notebook export
         # (which lifts this function) needs no extra helper.
         labels = [label if len(label) <= 40 else label[:37].rstrip() + "..." for label in labels]
-        columns = max(1, min(3, len(labels)))
-        rows = -(-len(labels) // columns)
-        ax.legend(
-            handles, labels,
-            title="Feature", loc="lower center", ncol=columns, fontsize=8, title_fontsize=8, frameon=False,
-            bbox_to_anchor=advanced_anchor(ax, advanced, 0.5, 0.0), bbox_transform=fig.transFigure,
-        )
-        apply_advanced_axes(ax, advanced)
-        # Reserve the legend's height (one line per row plus the title) so
-        # tight_layout keeps the sample labels above it.
         font_scale = advanced_number(advanced, "legendFontSize", 8) / 8
-        reserved = min(0.5, (0.16 * rows + 0.3) * font_scale / _cm_to_inch(height_cm)) if ax.get_legend() else 0
-        fig.tight_layout(rect=[0, reserved, 1, 1])
+        if advanced_text(advanced, "legendPlacement") == "right":
+            # Chosen in the advanced options: one column at the right edge of
+            # the figure; the axes get the width the drawn legend leaves.
+            ax.legend(
+                handles, labels,
+                title="Feature", loc="center right", ncol=1, fontsize=8, title_fontsize=8, frameon=False,
+                bbox_to_anchor=advanced_anchor(ax, advanced, 0.99, 0.5), bbox_transform=fig.transFigure,
+            )
+            apply_advanced_axes(ax, advanced)
+            reserved = 0.0
+            if ax.get_legend():
+                fig.canvas.draw()
+                extent = ax.get_legend().get_window_extent(fig.canvas.get_renderer())
+                reserved = min(0.6, extent.width / fig.bbox.width + 0.02)
+                # The legend has its own strip; the layout fits the axes into the rest.
+                ax.get_legend().set_in_layout(False)
+            fig.tight_layout(rect=[0, 0, 1 - reserved, 1])
+        else:
+            columns = max(1, min(3, len(labels)))
+            rows = -(-len(labels) // columns)
+            ax.legend(
+                handles, labels,
+                title="Feature", loc="lower center", ncol=columns, fontsize=8, title_fontsize=8, frameon=False,
+                bbox_to_anchor=advanced_anchor(ax, advanced, 0.5, 0.0), bbox_transform=fig.transFigure,
+            )
+            apply_advanced_axes(ax, advanced)
+            # Reserve the legend's height (one line per row plus the title) so
+            # tight_layout keeps the sample labels above it.
+            reserved = min(0.5, (0.16 * rows + 0.3) * font_scale / _cm_to_inch(height_cm)) if ax.get_legend() else 0
+            fig.tight_layout(rect=[0, reserved, 1, 1])
     else:
         apply_advanced_axes(ax, advanced)
         fig.tight_layout()
 
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
 
 
 def single_protein_boxplot_table(
@@ -950,7 +984,7 @@ def single_protein_boxplot_plot(
     identifier: str = "workflow",
     outliers: bool = False,
     dots: bool = False,
-    random_seed: int = 69,
+    random_seed: int = 1,
     header: bool = True,
     legend: bool = True,
     width_cm: float = 20,
@@ -1202,6 +1236,10 @@ def single_protein_heatmap_plot(
     apply_advanced_axes(ax, advanced)
     fig.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi, tight=False)
+
+
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['single_protein_lineplot_plot'], kind='protein')
 
 
 apply_cached_wrappers(

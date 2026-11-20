@@ -1,10 +1,12 @@
-"""Bounded, session-owned immutable recipes for successful plot renders."""
+"""Session-owned immutable recipes with soft memory targets for cached exports."""
 from __future__ import annotations
 
 from collections import OrderedDict
 from concurrent.futures import Future
 from copy import deepcopy
 from dataclasses import dataclass, replace
+import base64
+import hashlib
 import json
 import secrets
 from threading import RLock, get_ident
@@ -76,11 +78,12 @@ class NotebookSnapshots:
 
     def __init__(self, *, max_bytes: int | None = None, max_total_bytes: int | None = None,
                  per_session: int = 48, ttl: float = 1800, clock=time.monotonic):
-        """`max_bytes` is each session's own budget; `max_total_bytes` bounds the server.
+        """`max_bytes` and `max_total_bytes` are cache eviction targets.
 
         A session that exceeds its budget evicts only its own oldest exports. The
-        server-wide ceiling bounds all sessions together; only when it is reached is the
-        least recently used export of any session dropped.
+        server-wide target applies to all sessions together. The incoming export
+        is always retained, even when it alone exceeds either target: cache policy
+        must not prevent a large plot or report from being exported.
         """
         session_default, total_default = notebook_memory_budgets()
         if max_total_bytes is None:
@@ -93,6 +96,7 @@ class NotebookSnapshots:
         self.max_total_bytes = max_total_bytes
         self.per_session = per_session
         self.ttl = ttl
+        self._scope_key = secrets.token_bytes(32)
         self.clock = clock
         self._lock = RLock()
         self._entries: OrderedDict[str, _Snapshot] = OrderedDict()
@@ -111,10 +115,20 @@ class NotebookSnapshots:
             size = recipe_size(recipe.recipe if isinstance(recipe, PendingRecipe) else recipe)
         retained = tuple((id(frame), int(frame.memory_usage(index=True, deep=True).sum()))
                          for frame in getattr(getattr(recipe, 'finish', None), 'frames', ()))
+        from app.services.runtime_cache import runtime_cache_version
+        scope = hashlib.blake2b(key=self._scope_key, digest_size=8)
+        scope.update(json.dumps([session, runtime_cache_version()]).encode())
+        inputs = recipe.recipe if isinstance(recipe, PendingRecipe) else recipe
+        scope.update(json.dumps([inputs.original_filename, inputs.settings, inputs.provenance], sort_keys=True).encode())
+        for name, value in sorted(inputs.resources.items()):
+            if name.endswith(".parquet"):
+                scope.update(name.encode() + b"\0" + len(value).to_bytes(8, "big"))
+                scope.update(value)
+        prefix = base64.urlsafe_b64encode(scope.digest()).decode()[:10]
         snapshot = _Snapshot(session, deepcopy(recipe), size, self.clock() + self.ttl, retained)
         with self._lock:
             self._expire()
-            token = secrets.token_urlsafe(24)
+            token = prefix + secrets.token_urlsafe(16)
             self._admit(token, snapshot)
             return token
 
@@ -124,18 +138,15 @@ class NotebookSnapshots:
         return sum(entry.size for entry in entries) + sum(retained.values())
 
     def _admit(self, token, snapshot):
-        needed = self._usage([snapshot])
-        if needed > min(self.max_bytes, self.max_total_bytes):
-            raise ValueError(
-                f'This plot exceeds the notebook snapshot memory limit: {needed / 1024**2:,.0f} MiB required. '
-                'Configure COPYLOT_NOTEBOOK_SESSION_MEMORY_MB and COPYLOT_NOTEBOOK_MEMORY_MB for a suitably sized machine.')
         candidates = OrderedDict(self._entries)
         candidates.pop(token, None)
         candidates[token] = snapshot
         owned = [key for key, entry in candidates.items() if entry.session == snapshot.session]
-        while len(owned) > self.per_session or self._usage([candidates[key] for key in owned]) > self.max_bytes:
+        while len(owned) > 1 and (
+            len(owned) > self.per_session or self._usage([candidates[key] for key in owned]) > self.max_bytes
+        ):
             del candidates[owned.pop(0)]
-        while self._usage(list(candidates.values())) > self.max_total_bytes:
+        while len(candidates) > 1 and self._usage(list(candidates.values())) > self.max_total_bytes:
             candidates.popitem(last=False)
         self._entries = candidates
 

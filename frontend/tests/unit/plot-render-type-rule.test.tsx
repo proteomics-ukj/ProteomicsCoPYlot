@@ -19,16 +19,11 @@ import QCPipelinePage from "../../src/features/qc/QCPipelinePage";
 import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import * as api from "../../src/lib/api";
 import type { StatisticalOptionsResponse, VolcanoResultResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "../component/apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "../component/apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("../component/apiMock")).mockApiModule(original));
 
-const STATS_OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B"],
-  samplesByCondition: { A: ["a1", "a2"], B: ["b1", "b2"] }, pairIdsBySample: {},
-  availableIdentifiers: [{ key: "workflow", label: "Protein" }], warnings: [],
-  availableDataSources: ["data"], defaultDataSource: "data",
-};
+const STATS_OPTIONS: StatisticalOptionsResponse = statisticalOptions();
 const VOLCANO = {
   kind: "protein", sourceUsed: "data", totalRows: 1, upregulatedCount: 0, downregulatedCount: 0,
   notSignificantCount: 1, rows: [{ ProteinNames: "P1", log2FC: 0.1, pval: 0.5 }], warnings: [],
@@ -84,11 +79,6 @@ const PAIRS: Pair[] = [
     mount: (type) => { saved("comparison.pipeline.v1", { pearson: { type, sample1: "a1", sample2: "b1" } }); return <ComparisonPipelinePage activeTab="pearson" />; },
     path: /\/api\/plots\/comparison\/protein\/pearson\.(png|html)/,
   },
-  {
-    name: "peptide RT",
-    mount: (type) => { saved("peptide.level.v1", { rt: { type } }); return <PeptideLevelPage activeTab="rtPlot" />; },
-    path: /\/api\/plots\/peptide\/rt(-interactive)?\.(png|html)/,
-  },
 ];
 
 /** Every plot URL the page asked for or framed. */
@@ -131,5 +121,18 @@ describe("the static volcano", () => {
     await plotRequest(PAIRS[0].path);
     expect(await screen.findByLabelText("Volcano Plot download format", {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.getByText("Download Plot").getAttribute("href")).toMatch(/volcano\.png/);
+  });
+});
+
+
+describe("peptide RT", () => {
+  it("uses a static plot even when an older session saved interactive mode", async () => {
+    saved("peptide.level.v1", { rt: { type: "Interactive" } });
+    render(<PeptideLevelPage activeTab="rtPlot" />);
+    const url = await plotRequest(/\/api\/plots\/peptide\/rt(-interactive)?\.(png|html)/);
+    expect(url.pathname).toMatch(/\.png$/);
+    for (const key of SIZE_KEYS) expect(url.searchParams.has(key), key).toBe(true);
+    expect(screen.getAllByText("Width (cm)")).toHaveLength(1);
+    expect(screen.queryByRole("option", { name: "Interactive" })).toBeNull();
   });
 });

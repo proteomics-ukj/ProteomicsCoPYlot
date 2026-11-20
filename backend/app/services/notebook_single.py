@@ -1,13 +1,10 @@
 """Single-feature plots and paired tables replayed from captured analysis inputs."""
 from functools import lru_cache
-import inspect
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
-from app.services.notebook_preprocessing import capture_notebook
+from app.services.notebook_preprocessing import capture_notebook, cached_notebook_render
 from app.services.notebook_qc import qc_source
-from app.services.notebook_source import extract_notebook_source, function_definition, merge_source, module_source, replace_once
+from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
 
 @lru_cache(maxsize=1)
@@ -37,8 +34,8 @@ def box_source():
                          function_definition(module_source('stats_tools.py'), '_gene_tokens'),
                          *(function_definition(code, name) for name in names)])
     local = local.replace('SingleProteinIdentifier', 'str')
-    styling = '\n'.join(line for line in module_source('plot_styling.py').splitlines() if not line.startswith('from app.'))
-    return extract_notebook_source(merge_source('import numpy as np\nimport pandas as pd', local,
+    styling = portable_styling()
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', local,
         extract_notebook_source(module_source('functions.py'), ('condition_sample_labels', 'extract_sample_id', 'intensity_unit_label')).code,
         extract_notebook_source(styling, ('resolve_marker', 'advanced_number', 'advanced_text', 'advanced_label', 'apply_advanced_axes')).code,
         extract_notebook_source(qc_source('boxplot').code, ('get_plt', 'cm_to_inch', 'to_png_bytes')).code),
@@ -47,10 +44,7 @@ def box_source():
 
 @lru_cache(maxsize=1)
 def box_module():
-    module = ModuleType('_copylot_portable_single_box')
-    sys.modules[module.__name__] = module
-    exec(box_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_single_box', box_source)
 
 
 @lru_cache(maxsize=1)
@@ -73,16 +67,14 @@ def line_source():
         '_feature_match_mask', '_gene_tokens', '_select_conditions', 'intensity_unit_label',
         'apply_advanced_axes', 'get_plt', 'cm_to_inch', 'to_png_bytes'))
     anchor = extract_notebook_source(module_source('plot_styling.py'), ('advanced_anchor',))
-    return extract_notebook_source(merge_source('import numpy as np\nimport pandas as pd', helpers.code, anchor.code, code),
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', helpers.code, anchor.code,
+        code),
                                    ('prepare_table', 'render_plot'))
 
 
 @lru_cache(maxsize=1)
 def line_module():
-    module = ModuleType('_copylot_portable_single_line')
-    sys.modules[module.__name__] = module
-    exec(line_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_single_line', line_source)
 
 
 @lru_cache(maxsize=1)
@@ -107,7 +99,7 @@ def heatmap_source():
     helpers = extract_notebook_source(box_source().code, ('_normalize_identifier', '_build_sample_labels',
         '_feature_match_mask', '_select_conditions', 'intensity_unit_label', 'apply_advanced_axes',
         'get_plt', 'cm_to_inch', 'to_png_bytes'))
-    return extract_notebook_source(merge_source('import numpy as np\nimport pandas as pd', helpers.code, code,
+    return extract_notebook_source(merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import numpy as np\nimport pandas as pd', helpers.code, code,
         extract_notebook_source(module_source('plotting_common.py'), ('get_sns',)).code,
         extract_notebook_source(module_source('plot_styling.py'), ('advanced_color_map',)).code,
         extract_notebook_source(module_source('clustering_tools.py'), ('row_zscore', 'drop_incomplete_features', 'heatmap_notice')).code),
@@ -116,20 +108,20 @@ def heatmap_source():
 
 @lru_cache(maxsize=1)
 def heatmap_module():
-    module = ModuleType('_copylot_portable_single_heatmap')
-    sys.modules[module.__name__] = module
-    exec(heatmap_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_single_heatmap', heatmap_source)
 
 
+@cached_notebook_render
 def render_heatmap(**options):
     return _render('heatmap', **options)
 
 
+@cached_notebook_render
 def render_box(**options):
     return _render('boxplot', **options)
 
 
+@cached_notebook_render
 def render_line(**options):
     return _render('lineplot', **options)
 
@@ -147,9 +139,7 @@ def _render(plot, **options):
 
     revision = runtime_cache_version()
     renderer = getattr(single, f'single_protein_{plot}_plot')
-    bound = inspect.signature(renderer).bind(**options)
-    bound.apply_defaults()
-    settings = dict(bound.arguments)
+    settings = bound_settings(renderer, **options)
     kind = settings['kind']
     annotation, dataset = get_annotation(kind), get_current_dataset(kind)
     lineage, imputation, uses_imputed, documentation = input_history(kind, annotation, dataset, source=settings['data_source'])
@@ -179,11 +169,8 @@ def _render(plot, **options):
     if plot != 'heatmap':
         settings['centered'] = phosprot_values_are_centred(kind)
     fmt = plot_output_format.get()
-    format_token = module.plot_output_format.set(fmt)
-    try:
+    with portable_output_format(module, fmt):
         image = module.render_plot(data, metadata, **settings)
-    finally:
-        module.plot_output_format.reset(format_token)
     details = {
         'boxplot': 'Per-sample median consolidation, finite-value exclusion, summary statistics, '
                    'small-sample points and seeded jitter are repeated. Project colors are frozen. ',

@@ -1,3 +1,4 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 // Replicate & variance projection: the volcano recomputed under a chosen
 // variance factor and replicate count.
 
@@ -6,7 +7,7 @@ import { buildPlotUrl, isAbortError, runSimulationAnalysis } from "../../lib/api
 import { useDatasetRevision } from "../../lib/datasetAvailability";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
 import { useDebouncedValue } from "../../lib/useDebouncedValue";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import type { ContextMode, AnnotationKind, SimulationRequest, SimulationResultResponse, SimulationTestType, StatsIdentifier, DataSource, StatisticalOptionsResponse } from "../../lib/types";
 import { PROTEIN_CORRECTION_LABEL, useProteinCorrection } from "../../lib/proteinCorrection";
 import { useDataSourceChoice } from "../../lib/useDataSourceChoice";
@@ -15,6 +16,7 @@ import SelectField from "../../components/SelectField";
 import SectionCard from "../../components/SectionCard";
 import CheckboxField from "../../components/CheckboxField";
 import NumberField from "../../components/NumberField";
+import NotebookDownload from "../../components/NotebookDownload";
 import { keepCondition, keepIdentifier, useStatisticalOptionsLoader } from "./useStatisticalOptions";
 import { InfoSection, Notice, PlotFrame, SummarySection, ConditionPicker } from "./statsShared";
 import { conditionOptions, removeSourceUsageWarnings, restorePValueThreshold } from "./statsHelpers";
@@ -45,7 +47,7 @@ function formatEffectiveSampleSize(minimum: number, maximum: number): string {
   return minimum === maximum ? String(minimum) : `${minimum}-${maximum}`;
 }
 
-export function SimulationPanel({
+function SimulationPanelView({
   kindOptions,
   advancedPlotOptions,
   onContextModeChange,
@@ -55,18 +57,9 @@ export function SimulationPanel({
   onContextModeChange?: (mode: ContextMode | null) => void;
 }) {
   const advancedPlotSignal = useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("stats.simulation.v1", {}),
-    []
-  );
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("stats.simulation.v1", kind), [kind]);
   const revision = useDatasetRevision();
-  const [preferredKind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot" ? value : "protein";
-  });
-  const kind = (kindOptions.some((option) => option.value === preferredKind)
-    ? preferredKind
-    : kindOptions[0]?.value ?? preferredKind) as AnnotationKind;
   const {
     dataSource,
     applyChoices: applyDataSourceChoices,
@@ -215,7 +208,7 @@ export function SimulationPanel({
   }, [debouncedRequestPayload, advancedPlotSignal, revision]);
 
   useEffect(() => {
-    writePersistedUiState("stats.simulation.v1", {
+    writeWorkflowState("stats.simulation.v1", {
       kind,
       dataSource,
       condition1,
@@ -247,7 +240,7 @@ export function SimulationPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="Replicate & Variance Projection">
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={kindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>
@@ -324,8 +317,10 @@ export function SimulationPanel({
             { label: "Upregulated", value: String(result.upregulatedCount) },
             { label: "Downregulated", value: String(result.downregulatedCount) },
             { label: "Not Significant", value: String(result.notSignificantCount) },
-            { label: "No p-value", value: String(result.unavailableCount ?? 0) },
           ]} />
+          <div className="flex justify-end">
+            <NotebookDownload plotUrl={plotUrl} rendered={null} prepareOnClick />
+          </div>
           <PlotFrame title="Projected volcano plot" url={plotUrl} height={760} />
           <Notice error={null} warnings={removeSourceUsageWarnings(result.warnings)} />
         </>
@@ -333,3 +328,5 @@ export function SimulationPanel({
     </div>
   );
 }
+
+export const SimulationPanel = withWorkflowSettings("stats.simulation.v1", SimulationPanelView, props => props.kindOptions);

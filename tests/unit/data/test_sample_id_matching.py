@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 
 import pandas as pd
 import pytest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[3]
 
 import app.services.completeness_tools as ct
 import app.services.peptide_tools as pt

@@ -905,23 +905,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/peptide/quantity-options": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Peptide Quantity Options */
-        get: operations["get_peptide_quantity_options_api_peptide_quantity_options_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/peptide/sequence-coverage": {
         parameters: {
             query?: never;
@@ -1109,6 +1092,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/plots/imputation/{kind}/applied-notebook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Applied Imputation Notebook Route */
+        get: operations["applied_imputation_notebook_route_api_plots_imputation__kind__applied_notebook_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plots/imputation/{kind}/before-missing.png": {
         parameters: {
             query?: never;
@@ -1150,7 +1150,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Download Plot Notebook */
+        /**
+         * Download Plot Notebook
+         * @description One export as a ZIP.
+         *
+         *     `matrices` ships the data matrices of deterministic steps, `imputed` the full
+         *     imputed matrix. Both are off unless the user turned them on in Settings: the
+         *     export then holds only what cannot be recomputed from the original file.
+         */
         get: operations["download_plot_notebook_api_plots_notebooks__token__zip_get"];
         put?: never;
         post?: never;
@@ -1186,23 +1193,6 @@ export interface paths {
         };
         /** Peptide Modification Route */
         get: operations["peptide_modification_route_api_plots_peptide_modification_png_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/plots/peptide/rt-interactive.html": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Peptide Rt Interactive Route */
-        get: operations["peptide_rt_interactive_route_api_plots_peptide_rt_interactive_html_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1594,6 +1584,26 @@ export interface paths {
         };
         /** Qc Cv Route */
         get: operations["qc_cv_route_api_plots_qc__kind__cv_png_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plots/qc/{kind}/feature-cvs.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Qc Feature Cvs Route
+         * @description The feature CVs as CSV (what the notebook export reproduces) or, for reading, as an Excel file.
+         */
+        get: operations["qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2478,6 +2488,31 @@ export interface components {
          */
         AdvancedPlotSettings: {
             /**
+             * Abundancehighlightcolor
+             * @default null
+             */
+            abundanceHighlightColor?: string | null;
+            /**
+             * Abundancehighlightlegend
+             * @default null
+             */
+            abundanceHighlightLegend?: boolean | null;
+            /**
+             * Abundancehighlightlegendlabel
+             * @default null
+             */
+            abundanceHighlightLegendLabel?: string | null;
+            /**
+             * Abundancehighlightwidth
+             * @default null
+             */
+            abundanceHighlightWidth?: number | null;
+            /**
+             * Abundancelabelsize
+             * @default null
+             */
+            abundanceLabelSize?: number | null;
+            /**
              * Axislabelfontfamily
              * @default null
              */
@@ -2637,6 +2672,26 @@ export interface components {
              */
             correlationColorMap?: string | null;
             /**
+             * Distributionnotetext
+             * @default null
+             */
+            distributionNoteText?: string | null;
+            /**
+             * Distributionnotevisible
+             * @default null
+             */
+            distributionNoteVisible?: boolean | null;
+            /**
+             * Distributionnotexoffset
+             * @default null
+             */
+            distributionNoteXOffset?: number | null;
+            /**
+             * Distributionnoteyoffset
+             * @default null
+             */
+            distributionNoteYOffset?: number | null;
+            /**
              * Fontfamily
              * @default null
              */
@@ -2681,6 +2736,11 @@ export interface components {
              * @default null
              */
             legendFrame?: boolean | null;
+            /**
+             * Legendplacement
+             * @default null
+             */
+            legendPlacement?: ("below" | "right") | null;
             /**
              * Legendtextcolor
              * @default null
@@ -2861,10 +2921,25 @@ export interface components {
              */
             volcanoHighlightLegendLabel?: string | null;
             /**
-             * Volcanohighlightsize
+             * Volcanohighlightwidth
              * @default null
              */
-            volcanoHighlightSize?: number | null;
+            volcanoHighlightWidth?: number | null;
+            /**
+             * Volcanolabelconnector
+             * @default null
+             */
+            volcanoLabelConnector?: boolean | null;
+            /**
+             * Volcanolabelconnectorcolor
+             * @default null
+             */
+            volcanoLabelConnectorColor?: string | null;
+            /**
+             * Volcanolabelconnectorwidth
+             * @default null
+             */
+            volcanoLabelConnectorWidth?: number | null;
             /**
              * Volcanolabelsize
              * @default null
@@ -3767,7 +3842,7 @@ export interface components {
         /** ContaminantFilterConfig */
         ContaminantFilterConfig: {
             /** Categories */
-            categories?: (1 | 2 | 3 | 4 | 5)[];
+            categories?: (1 | 2 | 3 | 4 | 5 | 6)[];
             /**
              * Enabled
              * @default false
@@ -4274,7 +4349,7 @@ export interface components {
             sampleWise?: boolean;
             /**
              * Seed
-             * @default 1337
+             * @default 1
              */
             seed?: number;
             /**
@@ -4302,6 +4377,12 @@ export interface components {
             /** Genes */
             genes?: string[];
             /**
+             * Inputsource
+             * @default manual
+             * @enum {string}
+             */
+            inputSource?: "manual" | "list";
+            /**
              * Maxtermsize
              * @default 300
              */
@@ -4311,6 +4392,11 @@ export interface components {
              * @default 20
              */
             minTermSize?: number;
+            /**
+             * Namedlist
+             * @default
+             */
+            namedList?: string;
             /**
              * Organism
              * @default human
@@ -4351,6 +4437,11 @@ export interface components {
             evidenceToken?: string;
             /** Genes */
             genes: string[];
+            /**
+             * Notebooktoken
+             * @default
+             */
+            notebookToken?: string;
             /**
              * Organism
              * @description Organism of the Gene Ontology database used for enrichment.
@@ -4721,18 +4812,6 @@ export interface components {
             /** Rows */
             rows: number;
         };
-        /** PeptideQuantityOptionsResponse */
-        PeptideQuantityOptionsResponse: {
-            /** Columns */
-            columns?: string[];
-            /** Defaultcolumn */
-            defaultColumn?: string | null;
-            /**
-             * Requiresselection
-             * @default false
-             */
-            requiresSelection?: boolean;
-        };
         /** PhosphoLocalizationCutoffRequest */
         PhosphoLocalizationCutoffRequest: {
             /** Cutoff */
@@ -5101,6 +5180,39 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /**
+         * SummaryPlotEntry
+         * @description One plot added to the report, as it was when it was added.
+         *
+         *     `request` holds the page's options for that plot, `render` how it was drawn
+         *     (type Normal or Interactive, widthCm, heightCm, dpi) and `advanced` its
+         *     advanced appearance. The report has a protein and a phosphosite level, so
+         *     those are the levels an entry can belong to.
+         */
+        SummaryPlotEntry: {
+            /** Advanced */
+            advanced?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "protein" | "phospho";
+            /** Render */
+            render?: {
+                [key: string]: unknown;
+            };
+            /** Request */
+            request?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "volcano" | "pearson" | "venn" | "anova" | "ora" | "single_box" | "single_line";
+        };
         /** SummaryReportContext */
         SummaryReportContext: {
             /**
@@ -5124,6 +5236,8 @@ export interface components {
             completenessSettings?: {
                 [key: string]: unknown;
             };
+            /** Entries */
+            entries?: components["schemas"]["SummaryPlotEntry"][];
             /** Qcadvancedsettingsbytab */
             qcAdvancedSettingsByTab?: {
                 [key: string]: {
@@ -5138,6 +5252,14 @@ export interface components {
             };
             /** Volcanoentries */
             volcanoEntries?: components["schemas"]["SummaryVolcanoEntry"][];
+            /** Workflowplotsettings */
+            workflowPlotSettings?: {
+                [key: string]: {
+                    [key: string]: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
         };
         /** SummaryReportRequest */
         SummaryReportRequest: {
@@ -5146,7 +5268,16 @@ export interface components {
              * @default
              */
             author?: string;
+            /**
+             * Includesamplelabels
+             * @default false
+             */
+            includeSampleLabels?: boolean;
             reportContext?: components["schemas"]["SummaryReportContext"] | null;
+            /** Samplelabels */
+            sampleLabels?: {
+                [key: string]: string;
+            };
             /** Textentries */
             textEntries?: {
                 [key: string]: string;
@@ -5176,6 +5307,8 @@ export interface components {
         SummaryTablesResponse: {
             phospho: components["schemas"]["SummaryMetadataTable"];
             protein: components["schemas"]["SummaryMetadataTable"];
+            /** Samplenames */
+            sampleNames?: string[];
         };
         /** SummaryVolcanoEntry */
         SummaryVolcanoEntry: {
@@ -5688,7 +5821,9 @@ export interface operations {
     };
     download_current_metadata_annotation_api_annotations_current__kind__metadata_download_get: {
         parameters: {
-            query?: never;
+            query?: {
+                scope?: "selected" | "all";
+            };
             header?: never;
             path: {
                 kind: "protein" | "phospho" | "phosprot";
@@ -7297,26 +7432,6 @@ export interface operations {
             };
         };
     };
-    get_peptide_quantity_options_api_peptide_quantity_options_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PeptideQuantityOptionsResponse"];
-                };
-            };
-        };
-    };
     get_sequence_coverage_api_peptide_sequence_coverage_get: {
         parameters: {
             query: {
@@ -7772,6 +7887,43 @@ export interface operations {
             };
         };
     };
+    applied_imputation_notebook_route_api_plots_imputation__kind__applied_notebook_get: {
+        parameters: {
+            query?: {
+                normalization?: string;
+                showImputationDraw?: boolean;
+                advanced?: string;
+            };
+            header?: never;
+            path: {
+                kind: "protein" | "phospho" | "phosprot";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     imputation_before_route_api_plots_imputation__kind__before_missing_png_get: {
         parameters: {
             query?: {
@@ -7855,7 +8007,10 @@ export interface operations {
     };
     download_plot_notebook_api_plots_notebooks__token__zip_get: {
         parameters: {
-            query?: never;
+            query?: {
+                matrices?: boolean;
+                imputed?: boolean;
+            };
             header?: never;
             path: {
                 token: string;
@@ -7947,42 +8102,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    peptide_rt_interactive_route_api_plots_peptide_rt_interactive_html_get: {
-        parameters: {
-            query?: {
-                addLine?: boolean;
-                header?: boolean;
-                randomSeed?: number;
-                widthCm?: number;
-                heightCm?: number;
-                advanced?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
                 };
             };
             /** @description Validation Error */
@@ -8523,6 +8642,12 @@ export interface operations {
                 widthCm?: number;
                 heightCm?: number;
                 advanced?: string;
+                search?: string;
+                topHigh?: number;
+                topLow?: number;
+                highlightOutline?: boolean;
+                highlightLabels?: boolean;
+                identifier?: "workflow" | "genes";
             };
             header?: never;
             path: {
@@ -8562,6 +8687,12 @@ export interface operations {
                 heightCm?: number;
                 dpi?: number;
                 advanced?: string;
+                search?: string;
+                topHigh?: number;
+                topLow?: number;
+                highlightOutline?: boolean;
+                highlightLabels?: boolean;
+                identifier?: "workflow" | "genes";
             };
             header?: never;
             path: {
@@ -8872,6 +9003,41 @@ export interface operations {
             };
         };
     };
+    qc_feature_cvs_route_api_plots_qc__kind__feature_cvs_csv_get: {
+        parameters: {
+            query?: {
+                snapshot?: string;
+                format?: "csv" | "xlsx";
+            };
+            header?: never;
+            path: {
+                kind: "protein" | "phospho" | "phosprot";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": unknown;
+                    "text/csv": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     qc_hist_route_api_plots_qc__kind__intensity_histogram_png_get: {
         parameters: {
             query?: {
@@ -8915,7 +9081,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "protein" | "phospho" | "phosprot";
+                kind: "protein" | "phospho" | "phosprot" | "peptide" | "precursor";
             };
             cookie?: never;
         };
@@ -9708,6 +9874,8 @@ export interface operations {
         parameters: {
             query: {
                 highlightOutline?: boolean;
+                labelTopUp?: number;
+                labelTopDown?: number;
                 advanced?: string;
                 condition1Control: string;
                 condition2Control: string;
@@ -9839,6 +10007,8 @@ export interface operations {
         parameters: {
             query: {
                 highlightOutline?: boolean;
+                labelTopUp?: number;
+                labelTopDown?: number;
                 advanced?: string;
                 condition1: string;
                 condition2: string;

@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from annotation_support import save_log2_protein_annotation
 from app.main import app
 from app.schemas.annotation import AnnotationFilterConfig
 from app.services import ai_functions, stats_tools
@@ -49,10 +50,10 @@ def awkward_project(monkeypatch):
     proteins.insert(0, "ProteinNames", ["P1;P2", *PROTEINS[1:], *[f"Q{index}" for index in range(7)]])
     proteins.insert(1, "GeneNames", [f"G{index}" for index in range(12)])
     save_table_dataset("awkward.tsv", "protein", proteins)
-    save_annotation(kind="protein", source_data=proteins, log2_data=proteins, filtered_data=proteins,
-                    metadata=pd.DataFrame({"sample": samples, "condition": [CONDITIONS[i // 3] for i in range(15)]}),
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(
+        proteins,
+        pd.DataFrame({"sample": samples, "condition": [CONDITIONS[i // 3] for i in range(15)]}),
+    )
 
     site_samples = [f"p{condition}_{replicate}" for condition in range(4) for replicate in range(3)]
     sites = pd.DataFrame(rng.normal(12, 1, (6, len(site_samples))), columns=site_samples)

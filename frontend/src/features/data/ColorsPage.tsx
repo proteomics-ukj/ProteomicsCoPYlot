@@ -10,25 +10,11 @@ import {
 import { useCurrentDatasetsSnapshot } from "../../lib/datasetAvailability";
 import type { AnnotationKind } from "../../lib/types";
 
-const DEFAULT_PALETTE = [
-  "#1f77b4",
-  "#ff7f0e",
-  "#2ca02c",
-  "#d62728",
-  "#9467bd",
-  "#8c564b",
-  "#e377c2",
-  "#7f7f7f",
-  "#bcbd22",
-  "#17becf",
-];
+import { conditionColor as fallbackColor } from "../../lib/conditionColors";
+
+import { CONDITION_COLOR_SETS } from "../../lib/conditionColorSets";
 
 type ColorMap = Record<string, string>;
-
-
-function fallbackColor(index: number): string {
-  return DEFAULT_PALETTE[index % DEFAULT_PALETTE.length];
-}
 
 export default function ColorsPage() {
   const { availableKinds, kindOptions } = useCurrentDatasetsSnapshot();
@@ -36,10 +22,12 @@ export default function ColorsPage() {
   const kind = availableKinds.includes(preferredKind) ? preferredKind : availableKinds[0] ?? preferredKind;
   const [conditions, setConditions] = useState<string[]>([]);
   const [colors, setColors] = useState<ColorMap>({});
+  const [hexDrafts, setHexDrafts] = useState<Record<string, string>>({});
   const [preferredCopyTargetKind, setCopyTargetKind] = useState<AnnotationKind>("phospho");
   const [loadedKind, setLoadedKind] = useState<AnnotationKind | null>(null);
   const loading = availableKinds.includes(kind) && loadedKind !== kind;
   const [error, setError] = useState<string | null>(null);
+  const [applyingColorSet, setApplyingColorSet] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
 
   const otherKinds = availableKinds.filter((value) => value !== kind);
@@ -56,7 +44,6 @@ export default function ColorsPage() {
         const unique = Array.from(
           new Set(payload.conditions.map((value) => value.trim()).filter(Boolean))
         );
-        setConditions(unique);
         const saved = await getConditionPalette(kind, { signal: controller.signal });
         const merged: ColorMap = {};
         unique.forEach((condition, index) => {
@@ -65,11 +52,15 @@ export default function ColorsPage() {
             ? savedColor.toUpperCase()
             : fallbackColor(index);
         });
+        if (controller.signal.aborted) return;
+        setConditions(unique);
         setColors(merged);
+        setHexDrafts({});
+        setInfo(null);
         setError(null);
       })
       .catch((err) => {
-        if (isAbortError(err)) return;
+        if (controller.signal.aborted || isAbortError(err)) return;
         setConditions([]);
         setColors({});
         setError(
@@ -98,7 +89,6 @@ export default function ColorsPage() {
   );
 
   // What is being typed, per condition, while it is not yet a valid colour.
-  const [hexDrafts, setHexDrafts] = useState<Record<string, string>>({});
 
   async function persistPalette(next: ColorMap) {
     await setConditionPalette(kind, next);
@@ -142,21 +132,32 @@ export default function ColorsPage() {
     });
   }
 
-  function resetPalette() {
+  const selectedColorSet = CONDITION_COLOR_SETS.find((set) =>
+    conditions.every((condition, index) =>
+      colors[condition]?.toUpperCase() === set.colors[index % set.colors.length]
+    )
+  )?.value ?? "custom";
+
+  async function applyColorSet(value: string) {
+    const set = CONDITION_COLOR_SETS.find((item) => item.value === value);
+    if (!set || loading || applyingColorSet || conditions.length === 0) return;
     const next: ColorMap = {};
     conditions.forEach((condition, index) => {
-      next[condition] = fallbackColor(index);
+      next[condition] = set.colors[index % set.colors.length];
     });
-    setColors(next);
+    setApplyingColorSet(true);
     setInfo(null);
     setError(null);
-    persistPalette(next)
-      .then(() => {
-        setInfo("Default palette restored and saved.");
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Failed to save colors.");
-      });
+    try {
+      await persistPalette(next);
+      setColors(next);
+      setHexDrafts({});
+      setInfo(`${set.label} applied and saved.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save colors.");
+    } finally {
+      setApplyingColorSet(false);
+    }
   }
 
   async function copyPaletteToTarget() {
@@ -203,13 +204,23 @@ export default function ColorsPage() {
             value={kindOptions.length === 0 ? "" : kind}
             onChange={(value) => setKind(value as AnnotationKind)}
             options={kindOptions}
-            disabled={kindOptions.length === 0}
+            disabled={kindOptions.length === 0 || applyingColorSet}
+          />
+          <SelectField assistant={false}
+            label="Color set"
+            value={selectedColorSet}
+            onChange={(value) => { void applyColorSet(value); }}
+            options={[
+              ...CONDITION_COLOR_SETS.map(({ value, label }) => ({ value, label })),
+              ...(selectedColorSet === "custom" ? [{ value: "custom", label: "Custom colors" }] : []),
+            ]}
+            disabled={loading || applyingColorSet || rows.length === 0}
           />
           <div className="self-end">
             <button
               type="button"
-              onClick={resetPalette}
-              disabled={rows.length === 0}
+              onClick={() => { void applyColorSet("copylot"); }}
+              disabled={loading || applyingColorSet || rows.length === 0}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Reset Default Palette
@@ -230,7 +241,7 @@ export default function ColorsPage() {
               <button
                 type="button"
                 onClick={copyPaletteToTarget}
-                disabled={rows.length === 0 || !copyTargetKind || copyTargetKind === kind}
+                disabled={loading || applyingColorSet || rows.length === 0 || !copyTargetKind || copyTargetKind === kind}
                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Copy Colors
@@ -278,6 +289,7 @@ export default function ColorsPage() {
                 >
                   <div className="text-sm font-medium text-slate-800">{row.condition}</div>
                   <input
+                    disabled={applyingColorSet}
                     type="color"
                     aria-label={`${row.condition} color`}
                     value={row.color}
@@ -285,6 +297,7 @@ export default function ColorsPage() {
                     className="h-9 w-14 rounded-lg border border-slate-300 bg-white px-1 py-1"
                   />
                   <input
+                    disabled={applyingColorSet}
                     type="text"
                     aria-label={`${row.condition} color as hex`}
                     value={hexDrafts[row.condition] ?? row.color}
@@ -307,8 +320,3 @@ export default function ColorsPage() {
     </div>
   );
 }
-
-// Local on purpose: this page's dropdowns are plain `<select>` elements.
-// The shared `components/SelectField` renders an `AssistantSelect`, which
-// registers the control for the assistant -- a behaviour change, not a
-// refactor, so it is a decision rather than a cleanup.

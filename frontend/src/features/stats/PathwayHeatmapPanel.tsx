@@ -1,3 +1,4 @@
+import { useWorkflow, withWorkflowSettings } from "../../lib/workflowSettings";
 // Pathway heatmap panel.
 
 import { SizeRow } from "../../components/PlotFields";
@@ -6,7 +7,7 @@ import { AssistantSelect } from "../../components/AssistantFields";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { buildPlotUrl, getPathwayOptions, isAbortError } from "../../lib/api";
 import { useAdvancedPlotSignal } from "../../lib/useAdvancedPlotSignal";
-import { readPersistedUiState, writePersistedUiState } from "../../lib/persistedUiState";
+import { readWorkflowState, writeWorkflowState } from "../../lib/persistedUiState";
 import type { ContextMode, AnnotationKind, EnrichmentOrganism, PathwayOptionsResponse, DataSource, StatisticalOptionsResponse } from "../../lib/types";
 import { dataSourceOptions, ENRICHMENT_ORGANISM_OPTIONS } from "../../lib/types";
 import { useDataSourceChoice } from "../../lib/useDataSourceChoice";
@@ -37,7 +38,7 @@ function MultiSelect({ values, onChange, options }: { values: string[]; onChange
   );
 }
 
-export function PathwayHeatmapPanel({
+function PathwayHeatmapPanelView({
   kindOptions,
   onContextModeChange,
   advancedPlotOptions,
@@ -47,17 +48,8 @@ export function PathwayHeatmapPanel({
   advancedPlotOptions?: ReactNode;
 }) {
   useAdvancedPlotSignal();
-  const persisted = useMemo(
-    () => readPersistedUiState<Record<string, unknown>>("stats.pathwayHeatmap.v1", {}),
-    []
-  );
-  const [preferredKind, setKind] = useState<AnnotationKind>(() => {
-    const value = String(persisted.kind ?? "protein").trim();
-    return value === "protein" || value === "phospho" || value === "phosprot" ? value : "protein";
-  });
-  const kind = (kindOptions.some((option) => option.value === preferredKind)
-    ? preferredKind
-    : kindOptions[0]?.value ?? preferredKind) as AnnotationKind;
+  const [kind, setKind] = useWorkflow<AnnotationKind>();
+  const persisted = useMemo(() => readWorkflowState("stats.pathwayHeatmap.v1", kind), [kind]);
   const [options, setOptions] = useState<StatisticalOptionsResponse | null>(null);
   const [pathways, setPathways] = useState<PathwayOptionsResponse | null>(null);
   const [pathway, setPathway] = useState(() => String(persisted.pathway ?? ""));
@@ -184,7 +176,7 @@ export function PathwayHeatmapPanel({
   });
 
   useEffect(() => {
-    writePersistedUiState("stats.pathwayHeatmap.v1", {
+    writeWorkflowState("stats.pathwayHeatmap.v1", {
       kind,
       pathway,
       organism,
@@ -222,7 +214,7 @@ export function PathwayHeatmapPanel({
   return (
     <div className="space-y-6">
       <SectionCard title="Pathway Heatmap">
-        <div className="max-w-xs">
+        <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
           <SelectField label="Dataset level" value={kind} onChange={(value) => setKind(value as AnnotationKind)} options={kindOptions} />
           <LocalizationCutoffField kind={kind} />
         </div>
@@ -291,3 +283,5 @@ export function PathwayHeatmapPanel({
     </div>
   );
 }
+
+export const PathwayHeatmapPanel = withWorkflowSettings("stats.pathwayHeatmap.v1", PathwayHeatmapPanelView, props => props.kindOptions);

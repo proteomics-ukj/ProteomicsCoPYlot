@@ -20,13 +20,11 @@ the plot draws a sample rather than everything, it says so.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services import data_tools
 from app.services.runtime_cache import invalidate_runtime_cache
@@ -34,12 +32,10 @@ from app.services.annotation_store import get_annotation
 from app.services.functions import QQ_MAX_POINTS, qqnorm_plot_data
 from app.services.analysis_matrix import qc_matrix
 from app.services.phosprot_tools import transform_phosprot
-from app.services.viewer_bootstrap import load_viewer_state
 
 
 @pytest.fixture(scope="module")
-def project():
-    load_viewer_state(ROOT / "tests" / "fixtures" / "viewer_config.json")
+def project(example_project):
     return True
 
 

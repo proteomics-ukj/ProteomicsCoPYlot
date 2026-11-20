@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+# <shared-core>
+from app.services.copylot_core import resolve_plot_colors
+# </shared-core>
+
 import gzip
 
 
 from app.services.plot_export import (
     to_png_bytes as _to_png_bytes,
     cm_to_inch as _cm_to_inch,
-    cm_to_px as _cm_to_px,
 )
 
 import logging
@@ -24,19 +27,17 @@ from app.schemas.peptide import PeptideSpecies
 from app.services.annotation_store import get_annotation
 from app.services.dataset_reader import read_dataframe
 from app.services.dataset_store import get_current_dataset
-from app.services.functions import extract_sample_id as _extract_id_or_number
+from app.services.functions import extract_sample_id as _extract_id_or_number, sample_display_labels
 from app.services.functions import sample_id_map
 from app.services.peptide_metadata_store import get_peptide_metadata
 from app.services.plot_styling import (
-    advanced_plotly_layout,
     apply_advanced_axes,
     advanced_label_size,
     marker_style,
-    plotly_marker,
     resolve_reference_line,
 )
 from app.services.reference_db import resolve_reference_db
-from app.services.plotting_common import get_plt as _get_plt, get_plotly_go as _get_plotly, plotly_html as _plotly_html, truncate_hover_text as _truncate_hover_text
+from app.services.plotting_common import get_plt as _get_plt
 
 
 LOGGER = logging.getLogger(__name__)
@@ -129,29 +130,50 @@ def _peptide_dataset_path(stored=None) -> Path:
     return path
 
 
+def _detection_column(column: str) -> bool:
+    name = re.sub(r"[^a-z0-9]", "", str(column).lower())
+    return (name in {"run", "precursorquantity", "fgquantity", "fgcharge", "fglabeledsequence",
+                     # Spectronaut reports without FG.Quantity or a stripped sequence
+                     "egtotalquantitysettings", "pepquantity", "egmodifiedsequence",
+                     # MaxQuant evidence.txt
+                     "sequence", "modifiedsequence", "rawfile", "experiment", "intensity", "charge", "reverse",
+                     # FragPipe combined ion and peptide tables (with "<experiment> Intensity" below)
+                     "peptidesequence"}
+            or ("file" in name and "name" in name)
+            or ("stripped" in name and "sequence" in name)
+            or ("precursor" in name and "id" in name)
+            # the quantity columns of a Spectronaut peptide pivot, one per run
+            or re.search(r"\.(?:EG\.TotalQuantity \(Settings\)|FG\.Quantity|FG\.MS2Quantity|PEP\.Quantity|PEP\.MS2Quantity)$",
+                         str(column).strip()) is not None
+            # the quantity columns of a FragPipe combined table, one per experiment
+            or re.search(r"(?<! MaxLFQ) Intensity$", str(column).strip()) is not None)
+
+
 @lru_cache(maxsize=4)
-def _load_peptide_frame_cached(path_str: str, modified_ns: int) -> pd.DataFrame:
+def _load_peptide_frame_cached(path_str: str, modified_ns: int, size: int = 0, changed_ns: int = 0, detection_only: bool = False) -> pd.DataFrame:
     path = Path(path_str)
     with path.open("rb") as handle:
-        return read_dataframe(path.name, handle)
+        return read_dataframe(path.name, handle, select_column=_detection_column if detection_only else None, peptide=True)
 
 
-def get_peptide_frame(*, apply_contaminants: bool = True) -> pd.DataFrame:
+def get_peptide_frame(*, columns: list[str] | None = None, detection_only: bool = False) -> pd.DataFrame:
     # Retain the dataset while reading: session expiry must not release its file
     # between resolving the path and opening it.
     stored = get_current_dataset("peptide")
     path = _peptide_dataset_path(stored)
     stat = path.stat()
-    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns).copy()
-    annotation = get_annotation("protein") if apply_contaminants else None
-    if annotation is not None and annotation.filter_config.contaminants.enabled:
-        from app.services.contaminant_filter import filter_peptide_contaminants, contaminant_reference
-        frame = filter_peptide_contaminants(frame, annotation.filter_config.contaminants.model_dump(), contaminant_reference())
-    return frame
+    frame = _load_peptide_frame_cached(str(path), stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, detection_only)
+    if columns is not None:
+        frame = frame[[column for column in columns if column in frame.columns]]
+    return frame.copy()
 
 
 def _require_column(frame: pd.DataFrame, column: str) -> str:
     if column not in frame.columns:
+        if column == "Predicted.RT":
+            raise ValueError(
+                "Required peptide column 'Predicted.RT' is missing: this report has no predicted retention time, "
+                "which the plot compares with the measured one. FragPipe and MaxQuant reports never contain it.")
         raise ValueError(f"Required peptide column '{column}' is missing.")
     return column
 
@@ -176,32 +198,6 @@ def _stripped_sequence_column(frame: pd.DataFrame) -> str:
     if not matches:
         raise ValueError("Could not find a stripped-sequence column in the peptide dataset.")
     return matches[0]
-
-
-def _peptide_feature_column(frame: pd.DataFrame) -> str | None:
-    preferred = [
-        "Stripped.Sequence",
-        "Modified.Sequence",
-        "Precursor.Id",
-        "PrecursorID",
-        "Precursor",
-        "ProteinNames",
-    ]
-    for column in preferred:
-        if column in frame.columns:
-            return column
-    for column in frame.columns:
-        normalized = str(column).strip().lower()
-        if "sequence" in normalized:
-            return str(column)
-    return None
-
-
-def _short_sample_label(value: object, max_len: int = 14) -> str:
-    text = str(value or "").strip()
-    basename = re.split(r"[\\/]", text)[-1]
-    candidate = basename.strip() or text
-    return _truncate_hover_text(candidate, max_len=max_len)
 
 
 PeptideProtease = Literal["trypsin", "trypsin_lysc"]
@@ -306,7 +302,7 @@ def _protein_names_column(frame: pd.DataFrame) -> str:
     return _require_column(frame, "ProteinNames")
 
 
-def _prepare_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
+def peptide_annotation_metadata() -> pd.DataFrame:
     protein_dataset = get_current_dataset("protein")
     if protein_dataset is not None:
         stored = get_annotation("protein")
@@ -345,18 +341,14 @@ def _prepare_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
             "Annotation metadata does not contain any usable sample/condition rows."
         )
 
+    return meta
+
+
+def _prepare_metadata(frame: pd.DataFrame, include_id: bool) -> pd.DataFrame:
+    meta = peptide_annotation_metadata()
     meta["id"] = meta["sample"].apply(_extract_id_or_number)
     meta["sample_index"] = meta.groupby("condition").cumcount() + 1
-    if include_id:
-        meta["new_sample"] = meta.apply(
-            lambda row: f"{row['condition']}_{row['sample_index']}\n({row['id']})",
-            axis=1,
-        )
-    else:
-        meta["new_sample"] = meta.apply(
-            lambda row: f"{row['condition']}_{row['sample_index']}",
-            axis=1,
-        )
+    meta['new_sample'] = sample_display_labels(meta, index_column="sample_index", include_id=include_id)
     return meta
 
 
@@ -383,8 +375,33 @@ def _sample_rename_map(
     )
 
     mapping = {column: by_name[column] for column in run_columns if column in by_name}
-    leftover_columns = [column for column in run_columns if column not in by_name]
-    leftover_samples = [sample for sample in by_name if sample not in run_columns]
+    # Then the run's stem: a Spectronaut protein pivot names the sample
+    # "<run>.PG.Quantity" and MaxQuant "LFQ intensity <experiment>", while the
+    # peptide report of the same search carries the bare run. Only a stem that
+    # names one run and one sample is used.
+    def _run_stem(name: object) -> str:
+        import re  # local: this function is copied into exported notebooks
+        text = str(name).strip()
+        spectronaut = re.match(r"^(.+)\.(?:PG|PEP|EG|FG|PTM)\.[^.]+$", text)
+        if spectronaut is not None:
+            return spectronaut[1]
+        # FragPipe: "<experiment> MaxLFQ Intensity" beside the bare experiment
+        text = re.sub(r" (?:MaxLFQ Intensity|Intensity|Spectral Count)$", "", text)
+        return re.sub(r"^(?:LFQ intensity|Intensity|iBAQ|MS/MS count) ", "", text)
+
+    stems: dict[str, list[str]] = {}
+    for sample in by_name:
+        if sample not in mapping:
+            stems.setdefault(_run_stem(sample), []).append(sample)
+    unmatched = [column for column in run_columns if column not in mapping]
+    by_stem: set[str] = set()
+    for column in unmatched:
+        named = stems.get(_run_stem(column), [])
+        if len(named) == 1 and sum(_run_stem(other) == _run_stem(column) for other in unmatched) == 1:
+            mapping[column] = by_name[named[0]]
+            by_stem.add(named[0])
+    leftover_columns = [column for column in run_columns if column not in mapping]
+    leftover_samples = [sample for sample in by_name if sample not in run_columns and sample not in by_stem]
     if leftover_columns and leftover_samples:
         # Both sides are checked: an ambiguous id is unusable whichever side it
         # comes from, and reporting it here names the offending files.
@@ -398,6 +415,11 @@ def _sample_rename_map(
 
 
 def peptide_overview() -> dict[str, object]:
+    from app.services.peptide_preparation_cache import cached_peptide_preparation
+    return cached_peptide_preparation('overview', (), _peptide_overview_uncached)
+
+
+def _peptide_overview_uncached() -> dict[str, object]:
     path = _peptide_dataset_path()
     frame = get_peptide_frame()
     warnings: list[str] = []
@@ -458,15 +480,16 @@ def peptide_overview() -> dict[str, object]:
 
 def peptide_rt_plot(
     *,
-    method: str = "Hexbin Plot",
+    method: str = "Scatter Plot",
     add_line: bool = False,
-    bins: int = 1000,
+    bins: int = 100,
     header: bool = True,
-    sampling_seed: int = 69,
+    sampling_seed: int = 1,
     width_cm: float = 20,
     height_cm: float = 15,
     dpi: int = 100,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     frame = get_peptide_frame()
@@ -485,7 +508,7 @@ def peptide_rt_plot(
     if method == "Scatter Plot":
         if len(data) > 100000:
             data = data.sample(n=100000, random_state=int(sampling_seed))
-        ax.scatter(data["Predicted.RT"], data["RT"], **marker_style(advanced, size=1.0, alpha=0.2))
+        ax.scatter(data["Predicted.RT"], data["RT"], **marker_style(advanced, size=1.0, alpha=0.2, color_default=resolve_plot_colors(1, plot_colors)[0]))
     elif method == "Density Plot":
         from matplotlib.colors import LogNorm
 
@@ -523,113 +546,6 @@ def peptide_rt_plot(
     return _to_png_bytes(fig, plt, dpi=dpi)
 
 
-def peptide_rt_interactive_html(
-    *,
-    add_line: bool = False,
-    header: bool = True,
-    sampling_seed: int = 69,
-    width_cm: float = 20,
-    height_cm: float = 15,
-    advanced: dict | None = None,
-) -> str:
-    go = _get_plotly()
-    frame = get_peptide_frame()
-    _require_column(frame, "Predicted.RT")
-    _require_column(frame, "RT")
-
-    feature_col = _peptide_feature_column(frame)
-    feature_series = (
-        frame[feature_col].fillna("").astype(str)
-        if feature_col is not None
-        else pd.Series([f"feature_{idx + 1}" for idx in range(len(frame))], index=frame.index, dtype=str)
-    )
-
-    try:
-        sample_col = _file_name_column(frame)
-        sample_series = frame[sample_col].fillna("").astype(str)
-    except ValueError:
-        sample_series = pd.Series([""] * len(frame), index=frame.index, dtype=str)
-
-    data = pd.DataFrame(
-        {
-            "feature": feature_series,
-            "sample": sample_series,
-            "predicted": pd.to_numeric(frame["Predicted.RT"], errors="coerce"),
-            "actual": pd.to_numeric(frame["RT"], errors="coerce"),
-        }
-    ).dropna(subset=["predicted", "actual"])
-    if data.empty:
-        raise ValueError("No numeric Predicted.RT / RT values are available for the retention-time plot.")
-
-    data["feature"] = data["feature"].replace("", "n/a")
-    data["feature_short"] = data["feature"].map(lambda value: _truncate_hover_text(value, max_len=48))
-    data["sample_short"] = data["sample"].map(_short_sample_label)
-    data["delta"] = data["actual"] - data["predicted"]
-
-    if len(data) > 250_000:
-        data = data.sample(n=250_000, random_state=int(sampling_seed))
-
-    custom_data = np.column_stack(
-        [
-            data["feature"].to_numpy(dtype=object),
-            data["sample_short"].to_numpy(dtype=object),
-            data["delta"].to_numpy(dtype=float),
-            data["feature_short"].to_numpy(dtype=object),
-        ]
-    )
-
-    fig = go.Figure()
-    fig.add_trace(
-        # SVG, not Scattergl: see plot_webgl - WebGL fails outright without
-        # hardware acceleration, and _plotly_html enforces the same policy.
-        go.Scatter(
-            x=data["predicted"],
-            y=data["actual"],
-            mode="markers",
-            marker=plotly_marker(advanced, size=4, alpha=0.35, color_default="#1f77b4"),
-            customdata=custom_data,
-            hovertemplate=(
-                "Feature: %{customdata[3]}<br>"
-                "Predicted RT: %{x:.4f}<br>"
-                "Actual RT: %{y:.4f}<br>"
-                "Delta (Actual - Predicted): %{customdata[2]:.4f}<br>"
-                "Sample: %{customdata[1]}"
-                "<extra></extra>"
-            ),
-            showlegend=False,
-        )
-    )
-
-    identity_line = resolve_reference_line(advanced, color="red", width=2.0)
-    if add_line and identity_line.visible:
-        x_min = float(min(data["predicted"].min(), data["actual"].min()))
-        x_max = float(max(data["predicted"].max(), data["actual"].max()))
-        line_x = np.array([x_min, x_max], dtype=float)
-        fig.add_trace(
-            go.Scatter(
-                x=line_x,
-                y=line_x,
-                mode="lines",
-                line=identity_line.plotly(),
-                hoverinfo="skip",
-                showlegend=False,
-            )
-        )
-
-    fig.update_layout(
-        title=("Retention Time Plot" if header else None),
-        xaxis_title="Predicted RT",
-        yaxis_title="Actual RT",
-        template="plotly_white",
-        autosize=True,
-        height=_cm_to_px(height_cm),
-        margin=dict(l=56, r=22, t=(64 if header else 18), b=54),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.25)")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.25)")
-    fig.update_layout(**advanced_plotly_layout(advanced, width_px=_cm_to_px(width_cm), height_px=_cm_to_px(height_cm)))
-    return _plotly_html(fig)
-
 
 def peptide_modification_plot(
     *,
@@ -640,6 +556,7 @@ def peptide_modification_plot(
     height_cm: float = 15,
     dpi: int = 100,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     plt = _get_plt()
     frame = get_peptide_frame()
@@ -690,9 +607,9 @@ def peptide_modification_plot(
     plot_data = plot_data.sort_values("Sample")
 
     mod_colors = {
-        "Carbamidomethylation": "blue",
-        "Oxidation": "red",
-        "Acetylation": "green",
+        "Carbamidomethylation": resolve_plot_colors(3, plot_colors)[0],
+        "Oxidation": resolve_plot_colors(3, plot_colors)[1],
+        "Acetylation": resolve_plot_colors(3, plot_colors)[2],
     }
     found_mods = [
         value
@@ -729,6 +646,7 @@ def peptide_modification_plot(
     return _to_png_bytes(fig, plt, dpi=dpi)
 
 
+
 def peptide_missed_cleavage_plot(
     *,
     include_id: bool = False,
@@ -740,6 +658,7 @@ def peptide_missed_cleavage_plot(
     height_cm: float = 15,
     dpi: int = 100,
     advanced: dict | None = None,
+    plot_colors=None,
 ) -> bytes:
     resolved_protease = normalize_protease(protease)
     plt = _get_plt()
@@ -790,7 +709,8 @@ def peptide_missed_cleavage_plot(
             .reindex(sample_order)["Percentage"]
             .fillna(0.0)
         )
-        ax.bar(range(len(sample_order)), subset, bottom=bottom, label=str(count))
+        ax.bar(range(len(sample_order)), subset, bottom=bottom, label=str(count),
+               color=resolve_plot_colors(int(count) + 1, plot_colors)[int(count)])
         bottom += subset.to_numpy(dtype=float)
 
     ax.set_ylabel("Peptides by missed cleavages (%)")
@@ -833,6 +753,7 @@ def peptide_missed_cleavage_plot(
     apply_advanced_axes(ax, advanced)
     fig.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi)
+
 
 
 @lru_cache(maxsize=4)
@@ -950,14 +871,34 @@ def _protein_peptides(frame: pd.DataFrame, protein: str) -> list[str]:
     return frame.loc[selected, _stripped_sequence_column(frame)].dropna().astype(str).unique().tolist()
 
 
+def _protein_peptide_index() -> dict[str, list[str]]:
+    """Index quantified peptides once; preserve first-occurrence order per protein."""
+    frame = get_peptide_frame()
+    protein_col = _protein_names_column(frame)
+    seq_col = _stripped_sequence_column(frame)
+    if "Precursor.Quantity" in frame.columns:
+        quantity = pd.to_numeric(frame['Precursor.Quantity'], errors='coerce')
+        frame = frame.loc[np.isfinite(quantity) & (quantity > 0)]
+    frame = frame.loc[frame[seq_col].notna(), [protein_col, seq_col]]
+    ordered: dict[str, dict[str, None]] = {}
+    for names, peptide in zip(frame[protein_col].fillna('').astype(str), frame[seq_col].astype(str)):
+        for name in names.split(';'):
+            ordered.setdefault(name.strip(), {})[peptide] = None
+    return {name: list(peptides) for name, peptides in ordered.items()}
+
+
 def _coverage_visualization(
-    frame: pd.DataFrame,
+    frame: pd.DataFrame | None,
     db: pd.DataFrame,
     protein: str,
     chunk_size: int = 30,
     sequence: str | None = None,
+    found_sequences: list[str] | None = None,
 ) -> str:
-    found_sequences = _protein_peptides(frame, protein)
+    if found_sequences is None:
+        if frame is None:
+            raise ValueError("Peptide data is required for coverage.")
+        found_sequences = _protein_peptides(frame, protein)
 
     if sequence is None:
         sequence = _fasta_sequence(db, protein)
@@ -1033,8 +974,9 @@ def peptide_sequence_coverage(
     if not protein.strip():
         raise ValueError("A protein must be selected for sequence coverage.")
 
-    frame = get_peptide_frame()
-    peptides = _protein_peptides(frame, protein)
+    from app.services.peptide_preparation_cache import cached_peptide_preparation
+    peptide_index = cached_peptide_preparation('protein-peptide-index', (), _protein_peptide_index)
+    peptides = peptide_index.get(protein, [])
     if not peptides:
         raise ValueError(f"No peptides were found for protein '{protein}'.")
 
@@ -1061,7 +1003,7 @@ def peptide_sequence_coverage(
                 coverage_mask[index] = 1
 
     coverage_percent = round((sum(coverage_mask) / len(sequence)) * 100.0, 2)
-    coverage_text = _coverage_visualization(frame, db, protein, chunk_size=chunk_size, sequence=sequence)
+    coverage_text = _coverage_visualization(None, db, protein, chunk_size=chunk_size, sequence=sequence, found_sequences=peptides)
 
     unmapped = sorted(unmapped)
     warnings: list[str] = []
@@ -1084,3 +1026,6 @@ def peptide_sequence_coverage(
         "sequenceText": coverage_text,
         "warnings": warnings,
     }
+
+from app.services.condition_palette_store import apply_category_palettes
+apply_category_palettes(globals(), ['peptide_rt_plot', 'peptide_modification_plot', 'peptide_missed_cleavage_plot'], kind='protein')

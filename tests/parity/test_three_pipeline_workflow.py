@@ -3,7 +3,6 @@
 No stochastic draws: a supplied post-filter log2 matrix isolates downstream
 agreement. Failures are reported at individual stages, not hidden in totals.
 """
-from pathlib import Path
 import gzip
 import io
 import json
@@ -19,7 +18,7 @@ from app.services import annotation_store, dataset_store, metadata_upload_store
 from app.services.r_runtime import detect_r_runtime
 from proteomicscopylot import notebook_functions as nb
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 METHODS = ("none", "median", "quantile")
 TESTS = ("unpaired", "unpaired_welch", "paired")
 MODES = ("robust_site_median", "mean", "sum_ignore_na", "sum_propagate_na")

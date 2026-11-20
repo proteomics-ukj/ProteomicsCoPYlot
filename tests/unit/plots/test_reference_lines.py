@@ -102,7 +102,6 @@ def _renderers() -> dict:
         "pearson html": lambda adv: comparison_tools.pearson_correlation_html(
             "protein", sample1=SAMPLE_1, sample2=SAMPLE_2, advanced=adv),
         "retention time png": lambda adv: peptide_tools.peptide_rt_plot(add_line=True, advanced=adv),
-        "retention time html": lambda adv: peptide_tools.peptide_rt_interactive_html(add_line=True, advanced=adv),
         "kinase library volcano": lambda adv: phospho_tools.ksea_uploaded_volcano_html(
             st_results=kinases, tnc_results=kinases, advanced=adv),
         "imputation fit and draw": lambda adv: plot_images.imputation_overall_fit_plot(
@@ -177,7 +176,8 @@ def drawn(example_project, monkeypatch, tmp_path):
 
     for module in (comparison_tools, peptide_tools, phospho_tools, plot_images, stats_tools):
         monkeypatch.setattr(module, "_to_png_bytes", catch_png)
-        monkeypatch.setattr(module, "_plotly_html", catch_html)
+        if hasattr(module, "_plotly_html"):  # peptide_tools draws no interactive plot
+            monkeypatch.setattr(module, "_plotly_html", catch_html)
 
     renderers = _renderers()
 

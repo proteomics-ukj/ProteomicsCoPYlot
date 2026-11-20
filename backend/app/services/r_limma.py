@@ -35,7 +35,7 @@ from app.services.r_runtime import detect_r_runtime
 
 # One probe answers both questions: installed, and which R and limma (so the
 # report and the runtime page do not spawn R again for the version, 2026-10-22).
-_PROBE_SCRIPT = ('if (requireNamespace("limma", quietly=TRUE)) '
+_LIMMA_PROBE_SCRIPT = ('if (requireNamespace("limma", quietly=TRUE)) '
                  'cat("TRUE|", as.character(getRversion()), "|", as.character(packageVersion("limma")), sep="") '
                  'else cat("FALSE")')
 
@@ -91,7 +91,7 @@ def limma_availability() -> dict[str, object]:
         }
     try:
         completed = subprocess.run(
-            [str(executable), "-e", _PROBE_SCRIPT],
+            [str(executable), "-e", _LIMMA_PROBE_SCRIPT],
             capture_output=True, check=False, text=True, timeout=60, creationflags=_creationflags(),
         )
     except Exception as exc:  # noqa: BLE001 - reported, not raised

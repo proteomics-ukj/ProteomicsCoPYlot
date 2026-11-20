@@ -19,7 +19,7 @@ import pytest  # noqa: E402
 
 from app.services import plot_images  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 SAMPLES = ["A1", "A2", "B1", "B2"]
 
 

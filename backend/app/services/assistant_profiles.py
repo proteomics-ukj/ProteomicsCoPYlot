@@ -79,7 +79,6 @@ OBSERVED_MODELS: dict[str, tuple[str, str]] = {
 # Kept for the reviewed-qualification path: (provider, exact model, quantization)
 # -> (profile, evaluation report). Only real evaluations belong here.
 TESTED_MODELS: dict[tuple[str, str, str], tuple[str, str]] = {}
-RELATED_MODELS: dict[tuple[str, str, str], tuple[str, str, str]] = {}
 
 # Families by inference. `legacy` families are an older generation: they need
 # about twice the size for the same level. Sizes are total parameters (B) for

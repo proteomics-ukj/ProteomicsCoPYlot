@@ -114,7 +114,7 @@ class ImputationRunRequest(BaseModel):
     adjustStd: float = Field(default=0.3, ge=0.0)
     downShift: float = Field(default=1.8, ge=0.0)
     width: float = Field(default=0.3, ge=0.0)
-    seed: int = Field(default=1337, ge=0, le=2_147_483_647)
+    seed: int = Field(default=1, ge=0, le=2_147_483_647)
     sampleWise: bool = True
 
     @model_validator(mode="after")

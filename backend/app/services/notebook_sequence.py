@@ -1,12 +1,10 @@
 """Offline sequence coverage from the selected peptides and reference record."""
 from functools import lru_cache
 import json
-import sys
-from types import ModuleType
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
 from app.services.notebook_preprocessing import capture_notebook
-from app.services.notebook_source import extract_notebook_source, function_definition, module_source, replace_once
+from app.services.notebook_source import portable_module, extract_notebook_source, function_definition, module_source, replace_once
 
 
 @lru_cache(maxsize=1)
@@ -14,7 +12,11 @@ def sequence_source():
     original = module_source('peptide_tools.py')
     function = function_definition(original, 'peptide_sequence_coverage')
     function = replace_once(function, 'def peptide_sequence_coverage(\n    *,', 'def calculate(data, database, *,')
-    function = replace_once(function, '    frame = get_peptide_frame()', '    frame = data')
+    function = replace_once(function,
+        "    from app.services.peptide_preparation_cache import cached_peptide_preparation\n"
+        "    peptide_index = cached_peptide_preparation('protein-peptide-index', (), _protein_peptide_index)\n"
+        "    peptides = peptide_index.get(protein, [])",
+        "    peptides = _protein_peptides(data, protein)")
     function = replace_once(function, '    db = _load_fasta_dataframe(species)', '    db = database')
     # The notebook carries the selected record itself; no bundled file is consulted on a miss.
     function = replace_once(function, '    sequence = _fasta_sequence(db, protein, species)', '    sequence = _fasta_sequence(db, protein)')
@@ -32,10 +34,7 @@ def sequence_source():
 
 @lru_cache(maxsize=1)
 def sequence_module():
-    module = ModuleType('_copylot_portable_sequence_coverage')
-    sys.modules[module.__name__] = module
-    exec(sequence_source().code, module.__dict__)
-    return module
+    return portable_module('_copylot_portable_sequence_coverage', sequence_source)
 
 
 def capture_sequence_coverage(*, species, protein, chunk_size=100):

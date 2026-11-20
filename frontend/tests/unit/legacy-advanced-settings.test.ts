@@ -48,7 +48,8 @@ describe("an older panel's settings", () => {
       "copylot:advancedPlotSettingsByKey.v2",
       JSON.stringify({ "stats:volcano": { axisLineVisible: false, textYOffset: 2, markerSize: 4 } })
     );
-    expect(getAdvancedPlotSettingsByKey()["stats:volcano"]).toEqual({
+    expect(getAdvancedPlotSettingsByKey()["stats:volcano:phospho"]).toBeUndefined();
+    expect(getAdvancedPlotSettingsByKey()["stats:volcano:protein"]).toEqual({
       markerSize: 4,
       ...Object.fromEntries(SIDES.map((side) => [side, false])),
     });

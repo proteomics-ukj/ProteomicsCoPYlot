@@ -16,6 +16,8 @@ class BuildPyWithGoDatabase(_build_py):
                          "crap_ccp.fasta", "crap_ccp_metadata.csv", "CAMBRIDGE_NOTICE.md", "CAMBRIDGE_LICENSE.txt", "CC-BY-4.0.txt"):
             self.copy_file(str(source_dir / filename), str(target_dir / filename))
         self.copy_file(str(source_dir / "PACKAGED_README.md"), str(target_dir / "README.md"))
+        self.copy_file(str(Path(__file__).parent / "examples" / "example.ipynb"),
+                       str(target_dir.parent / "example.ipynb"))
 
 
 setup(cmdclass={"build_py": BuildPyWithGoDatabase})

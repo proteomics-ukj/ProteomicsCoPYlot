@@ -33,7 +33,7 @@
     "In a healthy experiment, the distributions of protein quantitative mean values of all groups are similar, depicted by the same shape of the distribution curves."
   ],
   "BoxplotIntProt": [
-    "Protein intensity distributions - Depicted are the measured log2-raw protein intensities in a boxplot of each sample.",
+    "Protein intensity distributions - Depicted are the log2 protein intensities of each sample in a boxplot, after the normalization stated above (none, if none was applied) and before imputation.",
     "Missing values are not considered when creating the boxplots. Zero intensity values are considered as missing values.",
     "For a healthy experiment, we expect similar log2-intensity distributions in all samples and all conditions.",
     "Significant deviations indicate unequal peptide loading during LC-MS/MS or unequal protein amounts in the starting material. Also, major contaminants in the samples can influence accurate peptide concentration measurements and, therefore, the number of protein identifications and protein quantitative values in a given sample."
@@ -64,12 +64,13 @@
     "Number of phosphoproteins, phosphopeptides and phosphosite rows in the dataset. Phosphosite rows are counted by collapse key, so a multiply phosphorylated peptide contributes one row per site; phosphopeptides are counted as distinct peptide sequences regardless of which residue carries the phosphate, so two sites on the same peptide count as one phosphopeptide."
   ],
   "Coverage(Number)Phos": [
-    "Identification of phosphosites is a measure of the number of non-missing measurements by replicate; each sample's bar is split by localization class (Class I, Not Class I, Unclassified).",
-    "Low phosphosite counts in a sample / LC-MS/MS run may suggest technical variability, low enrichment efficiency, or sample processing issues that should be considered before downstream statistical analysis.",
-    "Ideally, the numbers of phosphosite identifications, and the share of confidently localized (Class I) sites among them, are high and comparable across all samples in the dataset."
+    "Coverage counts quantified phosphosites in each sample, grouped by experimental condition. The QC coverage settings determine whether replicate counts or condition summaries are shown."
   ],
   "Coverage(Quality)Phos": [
-    "The same counts by localization class, summarised per condition: one bar per class with the mean over the condition's samples and the standard deviation as error bar."
+    "Localization coverage distinguishes Class I phosphosites from other quantified sites. The selected phosphosite coverage view shows individual samples or condition summaries with replicate values and standard deviations."
+  ],
+  "STYPhos": [
+    "Counts of phosphosites on serine (S), threonine (T) and tyrosine (Y); sites with unrecognized residue labels are shown as Unparsed."
   ],
   "MissingValuePhos": [
     "The amount of missing values can be affected by biological regulation of phosphorylation or by technical factors during sample processing and MS-measurements, and it can vary substantially between experiments. The plot counts, for each phosphosite, in how many samples it is missing, and shows how many phosphosites fall into each count.",
@@ -80,7 +81,7 @@
     "In a healthy experiment, the distributions of phosphosite quantitative mean values across all groups are expected to be similar, depicted by comparable shapes of the distribution curves."
   ],
   "BoxplotIntPhos": [
-    "Phosphosite intensity distributions - Depicted are the measured log2-raw phosphosite intensities in a boxplot of each sample.",
+    "Phosphosite intensity distributions - Depicted are the log2 phosphosite intensities of each sample in a boxplot, after the normalization stated above (none, if none was applied) and before imputation.",
     "Missing values are not considered when creating the boxplots. Zero intensity values are treated as missing values.",
     "For a healthy experiment, we expect similar log2-intensity distributions of phosphosites across all samples and experimental conditions.",
     "Significant deviations may indicate unequal peptide loading during LC-MS/MS, variability in phosphopeptide enrichment efficiency, or unequal protein amounts in the starting material. In addition, major contaminants or technical issues can influence accurate phosphosite quantification and the number of confidently localized phosphosites in a given sample."
@@ -116,6 +117,45 @@
     "Differential abundance of phosphosites between two conditions was assessed with a t-test on log2 intensities (Student's pooled-variance, Welch, paired on within-pair differences, or a limma moderated t-test where R was available, as selected per comparison), followed by Benjamini-Hochberg adjustment of the p-values unless uncorrected p-values were explicitly requested.",
     "Commonly used settings are an adjusted p-value < 0.05 and an absolute log2 fold change > 1 (two-fold). The test type, thresholds and p-value correction actually applied are stated in the Statistics line of each comparison below; they may differ from these defaults.",
     "Results are shown as volcano plots: the x-axis is the log2 fold change (first condition minus second), the y-axis is -log10 of the adjusted p-value (or of the raw p-value when uncorrected); reference lines mark the thresholds used for that comparison."
+  ],
+  "PearsonProt": [
+    "The Pearson correlation plot compares the log2 protein intensities of two samples, or the mean intensities of two conditions, in a scatter plot. Each point is one protein quantified on both sides; the line shows the linear fit and r the Pearson correlation coefficient.",
+    "For a healthy experiment we expect replicates to lie close to the line (r near 1). A broad cloud or points far from the line indicate differences in abundance between the two sides or low measurement precision."
+  ],
+  "PearsonPhos": [
+    "The Pearson correlation plot compares the log2 phosphosite intensities of two samples, or the mean intensities of two conditions, in a scatter plot. Each point is one phosphosite quantified on both sides; the line shows the linear fit and r the Pearson correlation coefficient.",
+    "For a healthy experiment we expect replicates to lie close to the line (r near 1). A broad cloud or points far from the line indicate differences in abundance between the two sides or low measurement precision."
+  ],
+  "VennProt": [
+    "The Venn diagram shows how many proteins were identified in each of the selected samples or conditions and how many are shared between them.",
+    "For a healthy experiment we expect a large overlap between replicates. Proteins found in only one condition can reflect real presence or absence, but also missing values close to the detection limit."
+  ],
+  "VennPhos": [
+    "The Venn diagram shows how many phosphosites were identified in each of the selected samples or conditions and how many are shared between them.",
+    "For a healthy experiment we expect a large overlap between replicates. Phosphosites found in only one condition can reflect real presence or absence, but also missing values close to the detection limit."
+  ],
+  "AnovaProt": [
+    "Differences in protein abundance across all conditions were assessed with a one-way ANOVA on log2 intensities, followed by Benjamini-Hochberg adjustment of the p-values unless uncorrected p-values were explicitly requested. A significant result shows that at least one condition differs; it does not say which one.",
+    "The heatmap shows the row z-scores of the significant proteins. For the cluster analysis the significant proteins are grouped by hierarchical clustering into protein sets with a similar pattern across the conditions; a cluster plot shows the proteins of one cluster. Clustering describes patterns and is not an additional significance test.",
+    "The test settings, the clustering and the optional Tukey HSD post-hoc test actually applied are stated with each analysis below."
+  ],
+  "AnovaPhos": [
+    "Differences in phosphosite abundance across all conditions were assessed with a one-way ANOVA on log2 intensities, followed by Benjamini-Hochberg adjustment of the p-values unless uncorrected p-values were explicitly requested. A significant result shows that at least one condition differs; it does not say which one.",
+    "The heatmap shows the row z-scores of the significant phosphosites. For the cluster analysis the significant phosphosites are grouped by hierarchical clustering into phosphosite sets with a similar pattern across the conditions; a cluster plot shows the phosphosites of one cluster. Clustering describes patterns and is not an additional significance test.",
+    "The test settings, the clustering and the optional Tukey HSD post-hoc test actually applied are stated with each analysis below."
+  ],
+  "OraProt": [
+    "The Gene Ontology (GO) over-representation analysis (ORA) tests whether GO terms occur more often in a selected gene list than expected from the background. The gene list comes from the up- or downregulated proteins of a comparison or from one ANOVA cluster, as stated with each analysis below.",
+    "Terms were tested with a one-sided hypergeometric test, followed by Benjamini-Hochberg adjustment of the p-values. The plot shows the top enriched terms; the table below it lists them.",
+    "An enriched term describes how often an annotation occurs in the gene list relative to the background. It does not show that a pathway is activated or inhibited."
+  ],
+  "SingleProt": [
+    "The plots below show the log2 intensities of selected proteins. A boxplot shows one protein per condition; a line plot follows one or more proteins across the samples.",
+    "Missing values are not shown unless the plot uses imputed data; the data source is stated with each plot."
+  ],
+  "SinglePhos": [
+    "The plots below show the log2 intensities of selected phosphosites. A boxplot shows one phosphosite per condition; a line plot follows one or more phosphosites across the samples.",
+    "Missing values are not shown unless the plot uses imputed data; the data source is stated with each plot."
   ],
   "Imputation": [
     "For analyses based on imputed data, missing values were sampled from a normal distribution centred on the q = {qValue} quantile of the observed values, with {adjustStd} times their standard deviation ({citation})."

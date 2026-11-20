@@ -17,7 +17,7 @@ import pandas as pd
 
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 EXAMPLE = ROOT / "proteomicscopylot" / "example_data"
 CONFIGS = [ROOT / "viewer_config.json", ROOT / "viewer_data" / "HEK293" / "viewer_config.json",
            ROOT / "tests" / "fixtures" / "viewer_config.json"]

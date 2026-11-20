@@ -90,9 +90,20 @@ def _http_exceptions(body: list[ast.stmt]) -> list[ast.Call]:
     ]
 
 
+def _function_scope(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+        if isinstance(node, (ast.ClassDef, ast.Lambda)):
+            return None
+    return None
+
+
 def check_route_module(source: str, path: str) -> list[Violation]:
     """Exception text stays out of responses, and every 500 is logged."""
     tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     found: list[Violation] = []
     has_logger = any(
         isinstance(node, ast.Assign)
@@ -102,6 +113,14 @@ def check_route_module(source: str, path: str) -> list[Violation]:
     )
     for handler in (node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)):
         caught = handler.name
+        scope = _function_scope(handler, parents)
+        injected_loggers = {
+            arg.arg for arg in (*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs)
+            if isinstance(arg.annotation, ast.Attribute)
+            and isinstance(arg.annotation.value, ast.Name)
+            and arg.annotation.value.id == "logging"
+            and arg.annotation.attr == "Logger"
+        } if scope else set()
         for call in _http_exceptions(handler.body):
             detail = _keyword(call, "detail")
             if caught and isinstance(detail, ast.JoinedStr) and caught in _formatted_names(detail):
@@ -112,22 +131,28 @@ def check_route_module(source: str, path: str) -> list[Violation]:
                 ))
             status = _keyword(call, "status_code")
             if isinstance(status, ast.Constant) and status.value == 500:
-                logged = any(
-                    _is_call_to(node, "exception")
-                    and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "LOGGER"
-                    and node.lineno <= call.lineno
+                logged_names = {
+                    node.func.value.id
                     for statement in handler.body
                     for node in ast.walk(statement)
-                )
-                if not logged:
+                    if _is_call_to(node, "exception")
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and ((node.func.value.id == "LOGGER" and "LOGGER" not in injected_loggers) or (
+                        node.func.value.id in injected_loggers
+                        and _function_scope(node, parents) is scope
+                        and _function_scope(call, parents) is scope
+                    ))
+                    and node.lineno <= call.lineno
+                }
+                if not logged_names:
                     found.append(Violation(
                         path, call.lineno, "unlogged-500",
-                        "a 500 is answered without LOGGER.exception(...) in the same handler, so the "
+                        "a 500 is answered without LOGGER.exception(...) or a typed logger parameter's "
+                        "exception(...) in the same handler, so the "
                         "only record of why is the generic message the user saw",
                     ))
-                elif not has_logger:
+                elif not (logged_names & injected_loggers) and not has_logger:
                     found.append(Violation(
                         path, call.lineno, "unlogged-500", "the module has no LOGGER = logging.getLogger(__name__)",
                     ))

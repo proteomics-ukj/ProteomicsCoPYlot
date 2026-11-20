@@ -11,7 +11,6 @@ backend, the pip package and R alike.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,7 +21,6 @@ from app.schemas.stats import AnovaRequest, VolcanoRequest
 from app.services import ai_functions, stats_tools
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[3]
 
 
 def _volcano(raw: bool) -> pd.DataFrame:

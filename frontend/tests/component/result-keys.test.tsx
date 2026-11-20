@@ -23,18 +23,17 @@ import { SimulationPanel } from "../../src/features/stats/SimulationPanel";
 import { VolcanoPanel } from "../../src/features/stats/VolcanoPanel";
 import * as api from "../../src/lib/api";
 import type { StatisticalOptionsResponse } from "../../src/lib/types";
-import { serveDatasets, silenceNetwork } from "./apiMock";
+import { serveDatasets, silenceNetwork, statisticalOptions } from "./apiMock";
 
 vi.mock("../../src/lib/api", async (original) => (await import("./apiMock")).mockApiModule(original));
 
 const MARKER = "the stored answer is on screen";
 const PROTEIN = [{ value: "protein", label: "Protein" }];
-const OPTIONS: StatisticalOptionsResponse = {
-  kind: "protein", sourceUsed: "data", imputedAvailable: false, availableConditions: ["A", "B", "C"],
-  samplesByCondition: { A: ["a1", "a2", "a3"], B: ["b1", "b2", "b3"], C: ["c1", "c2", "c3"] }, pairIdsBySample: {},
+const OPTIONS: StatisticalOptionsResponse = statisticalOptions({
+  availableConditions: ["A", "B", "C"],
+  samplesByCondition: { A: ["a1", "a2", "a3"], B: ["b1", "b2", "b3"], C: ["c1", "c2", "c3"] },
   availableIdentifiers: [{ key: "workflow", label: "Protein" }, { key: "genes", label: "Genes" }],
-  warnings: [], availableDataSources: ["data"], defaultDataSource: "data",
-};
+});
 const COUNTS = { searchSpace: 1, overlapTested: 1, passingCutoff: 0, displayed: 0 };
 
 type Case = {

@@ -93,7 +93,7 @@ def _every_setting() -> dict[str, Any]:
 # names, the per-condition point groups, the labelled volcano hits.
 ROUTES: list[tuple[str, dict[str, Any]]] = [
     ("/stats/protein/volcano.html", {"condition1": C1, "condition2": C2}),
-    ("/stats/protein/volcano.png", {"condition1": C1, "condition2": C2, "labelTopUp": 3, "labelTopDown": 3}),
+    ("/stats/protein/volcano.png", {"condition1": C1, "condition2": C2, "labelTopUp": 3, "labelTopDown": 3, "highlightLabels": True}),
     ("/stats/protein/anova.png", {"source": "anova_cluster", "showRowLabels": True, "nClusters": 2, "pValueThreshold": 0.001}),
     ("/stats/protein/ora/up.png", {"condition1": C1, "condition2": C2}),
     ("/stats/protein/simulation.html", {"condition1": C1, "condition2": C2}),

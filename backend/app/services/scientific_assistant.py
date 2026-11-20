@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from app.schemas.assistant import AssistantPlan, AssistantRequest, AssistantResponse, ContextMode, Evidence, Lookup, ScientificAnswer, StyleEdit, UiAction, WrittenAnswer
 from app.services import ai_functions
+from app.services.dataset_store import get_all_current_datasets
 from app.services import assistant_styling
 from app.services.ai_context_tools import _MODULE_SPECIFIC_AI_FUNCTIONS, _function_payload
 from app.services.chat_tools import ASSISTANT_INPUT_MAX_CHARS, AssistantContextExhausted, NativeToolsUnavailable, assistant_completion, assistant_prompt_budget, assistant_tool_turn, estimate_tokens, model_capability, native_tools_supported, _resolve_chat_model
@@ -19,7 +20,7 @@ from contextvars import ContextVar
 
 from app.services.assistant_profiles import LEVELS, PROFILES, TIERS, Tier, scaled_budgets
 from app.services import assistant_plot_parts, assistant_presets, assistant_prose, assistant_safety, assistant_tools
-from app.services.assistant_methods import METHODS, method_evidence, canvas_workflow_guidance
+from app.services.assistant_methods import METHODS, VIEWER_NOTE, WORKFLOW_GUIDE, method_evidence, canvas_workflow_guidance, viewer_mode
 from app.services.assistant_answers import evidence_context, partial_qualification
 from app.services.assistant_narrative import answer_catalogue, assemble_answer, catalogue_fallback
 from app.services.assistant_routing import planner_tasks, response_guidance, refers_to_visible_result, requests_canvas_guidance, ui_actions_schema, canvas_add_request, canvas_explanation_request, requests_current_result, feature_request, feature_request_mode, requests_unchanged_view, explanation_requested, explicit_selection, explicit_destination, contradictory_preservation, where_request, application_feature_question, application_help_module
@@ -435,6 +436,15 @@ def _evidence_module(request: AssistantRequest, plan: AssistantPlan) -> str:
 
 @traced
 def scientific_evidence(request: AssistantRequest, plan: AssistantPlan, profile: str = "compact") -> list[Evidence]:
+    found = _scientific_evidence(request, plan, profile)
+    if viewer_mode() and any(item.status != "unavailable" for item in found):
+        # What a viewer cannot do belongs to every read: "can I download the notebook for this?"
+        # was answered with "the details I have don't mention one" (2026-11-13).
+        found = [*found, Evidence(tool="viewer", status="available", text=VIEWER_NOTE)]
+    return found
+
+
+def _scientific_evidence(request: AssistantRequest, plan: AssistantPlan, profile: str = "compact") -> list[Evidence]:
     plan = plan.model_copy(update={"module": _evidence_module(request, plan)})
     view = request.view
     if plan.module == "external_activity":
@@ -443,7 +453,10 @@ def scientific_evidence(request: AssistantRequest, plan: AssistantPlan, profile:
             return [Evidence(tool="external_activity", status="unavailable", text=(
                 "I cannot assess kinase activity from the available view. Phosphosite fold changes and the Kinase Library "
                 "export are inputs, not kinase-activity results. Open an uploaded external Kinase Library result to inspect "
-                "its evidence; site or protein abundance alone does not establish kinase activity."))]
+                "its evidence; site or protein abundance alone does not establish kinase activity. "
+                "To get kinase results: on Phospho-specific / Kinase Library, download the input table for your comparison, "
+                "run it in the external Kinase Library tool (once for serine/threonine, once for tyrosine kinases) and upload "
+                "both result files on that page; the Kinase Library volcano is drawn from those uploaded results."))]
         plan = plan.model_copy(update={"module": view.module})
     if plan.task == "help":
         return [method_evidence(plan.module or view.module)]
@@ -461,6 +474,10 @@ def scientific_evidence(request: AssistantRequest, plan: AssistantPlan, profile:
         state = ai_functions.general_proteomics_context("protein")["data"]["text"]
         return [_bounded_evidence("project_state", "No single workflow selected.\n" + "\n".join(state.splitlines()[1:]))]
     if workflow not in {"protein", "phosphosite", "phosphoprotein", "peptide"}:
+        if not any(get_all_current_datasets().values()):
+            return [Evidence(tool="workflow", status="unavailable", text=(
+                "status=error|detail=No dataset is loaded yet. Load a table on Data / Upload, then assign the samples "
+                "to conditions on Data / Annotation; every plot is calculated from that."))]
         return [Evidence(tool="workflow", status="unavailable", text="Choose a workflow before requesting data-specific evidence.")]
     state = ai_functions.general_proteomics_context(workflow)
     result = [_bounded_evidence("project_state", state["data"]["text"], 2500)]
@@ -572,6 +589,30 @@ def _separate_lookup_note(request: AssistantRequest, plan: AssistantPlan) -> str
     return ""
 
 
+def _basic_level(request: AssistantRequest) -> bool:
+    """The Basic level: small local models, guided more closely by the application."""
+    return _execution_profile(request)[0] == "compact"
+
+
+def _basic_sources(request: AssistantRequest, sources: dict[str, str]) -> dict[str, str]:
+    """The evidence choice a Basic-level model is offered: the open page and the pages the question names.
+
+    2026-11-13, qwen3.5:2b: offered every method and result source (about 80), the
+    model answered "how do I get this plot out for my paper?" from the ID
+    Translator and "how do I save my session?" from Colors, or chose nothing. The
+    larger levels keep the full list.
+    """
+    if not request.view.destinations:
+        return sources  # without the page list there is nothing to tell the named pages by
+    current = request.view.module
+    named = [key for _, key, _ in _page_scores(request.message, request.view.destinations)[:4]]
+    if named and named[0] == current:
+        named = []  # "which test should I use, my samples are paired" on the volcano page is about that page
+    keep = {"current_result", "qc_review", "project_state", "entity_lookup", "external_activity", "unsupported",
+            "method:workflow.overview", *(f"{kind}:{key}" for kind in ("method", "result") for key in (current, *named))}
+    return {key: text for key, text in sources.items() if key in keep}
+
+
 def _select_evidence_plan(request: AssistantRequest, plan: AssistantPlan, model: str, history: list) -> AssistantPlan | None:
     if plan.task == "current_plot" and (rephrase_request(request.message) or _VISIBLE_DESCRIPTION.fullmatch(request.message)):
         return plan.model_copy(update={"module": request.view.module})
@@ -592,6 +633,19 @@ def _select_evidence_plan(request: AssistantRequest, plan: AssistantPlan, model:
     sources["method:workflow.overview"] = "The order of the whole analysis across the application's pages (where to start, what next)."
     sources.update({f"result:{key}": "Calculated results: " + METHODS.get(key, key)[:240]
                     for key in _MODULE_SPECIFIC_AI_FUNCTIONS})
+    basic = _basic_level(request)
+    if basic:
+        sources = _basic_sources(request, sources)
+        if (plan.task in {"current_plot", "qc_review", "help"} and "qc_review" in sources and not request.answerOnly
+                and _REPLICATE_QUALITY.search(request.message) and request.view.module.startswith("qc.")
+                and re.search(r"\?|\b(?:ok(?:ay)?|good|fine|bad|consistent|how)\b", request.message, re.I)):
+            # "are my replicates ok?" on a QC page is the QC review, not the one open plot.
+            return plan.model_copy(update={"task": "qc_review", "module": "", "query": "", "clarification": ""})
+        elsewhere = {key.split(":", 1)[1] for key in sources if ":" in key} - {request.view.module, "workflow.overview"}
+        if (plan.task == "current_plot" and plan.module in {"", request.view.module} and not plan.query and not elsewhere
+                and not request.answerOnly):
+            # The plan is the open plot and the question names no other page: nothing to choose.
+            return plan.model_copy(update={"module": request.view.module, "clarification": ""})
     schema = {"type": "object", "properties": {
         "source": {"type": "string", "enum": list(sources)},
         "query": {"type": "string", "maxLength": 200}},
@@ -621,6 +675,11 @@ def _select_evidence_plan(request: AssistantRequest, plan: AssistantPlan, model:
             or not isinstance(chosen["query"], str) or len(chosen["query"]) > 200):
         return None
     source, query = chosen["source"], chosen["query"].strip()
+    if basic and source != "entity_lookup" and len(query.split()) > 1:
+        query = ""  # qwen3.5:2b repeats the question here; a single identifier is still refused below
+    if basic and source == "external_activity" and not _KINASE_ACTIVITY.search(request.message):
+        # After a kinase question the model kept this source for "how many phosphosites did we find?".
+        source = "current_result"
     if source == "unsupported" or (source == "entity_lookup") != bool(query):
         return None
     if query and not any(query.casefold() in text.casefold() for text in
@@ -695,7 +754,7 @@ def _grounded(value: str, request: AssistantRequest) -> bool:
     if request.conversationState:
         for selection in request.conversationState.selections:
             remembered.update(selection.value if isinstance(selection.value, list) else [str(selection.value)])
-    refers_back = re.search(r"\b(?:that|same|previous|earlier)\s+(?:protein|gene|site|phosphosite|selection)|\b(?:it|those|them)\b",
+    refers_back = re.search(r"\b(?:that|same|previous|earlier)\s+(?:protein|gene|site|phosphosite|selection)|\b(?:it|its|those|them|their)\b",
                             request.message, re.I)
     if value in remembered and refers_back:
         return True
@@ -891,7 +950,13 @@ _PAGE_TOPICS = {
     "phospho.phosprotRegulation": "phosphoprotein phosprot regulation collapsed",
     "analysis.canvas": "canvas combine several plots together overview everything",
     "data.imputation": "imputation impute imputed fill replace",
-    "data.upload": "upload load import file",
+    "data.upload": "upload load import file report peptide dataset table",
+    "data.annotation": "annotation annotate conditions groups filter valid normalization normalisation normalize normalise log2 contaminant",
+    "data.restore": "save state session restore continue tomorrow later resume reopen portable",
+    "data.distribution": "qq normal normality distributed distribution quantile",
+    "settings.unknown": "settings notebook export ship matrices theme option compatibility rscript installation installed",
+    "comparison.pearson": "two against each other versus scatter pair pairwise correlation",
+    "stats.simulation": "replicates replicate projection variance how many more needed",
     "summary.report": "report export pdf methods",
     "comparison.venn": "overlap venn shared unique",
     "peptide.missedCleavage": "missed cleavage digestion trypsin",
@@ -907,10 +972,8 @@ _WHERE_FILLER = {"where", "can", "see", "find", "look", "check", "view", "page",
                  "my", "the", "in", "of", "to", "per", "protein", "feature", "were", "was", "den", "together"}
 
 
-def _where_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
-    """Point to the page(s) that show a topic, from labels and reviewed descriptions."""
-    if request.answerOnly or not where_request(request.message) or not request.view.destinations:
-        return None
+def _page_scores(message: str, destinations: dict[str, str]) -> list[tuple[float, str, str]]:
+    """Pages ranked by the words a message shares with their names, topics and reviewed descriptions."""
     def stem(word: str) -> str:
         for suffix in ("ingly", "edly", "ing", "ed", "es", "ly", "s"):
             if word.endswith(suffix) and len(word) - len(suffix) >= (2 if suffix == "s" else 3) and not word.endswith("ss"):
@@ -921,20 +984,28 @@ def _where_response(request: AssistantRequest, revision: int) -> AssistantRespon
     def stems(text: str) -> set[str]:
         words = re.findall(r"[a-zäöü0-9]{2,}", text.lower().replace("-", " "))
         return {stem(word) for word in words if word not in _WHERE_STOP}
-    asked = stems(request.message) - {stem(word) for word in _WHERE_FILLER}
+    asked = stems(message) - {stem(word) for word in _WHERE_FILLER}
     pages = {key: (stems(f"{label} {_PAGE_TOPICS.get(key, '')}"), stems(METHODS.get(key, "")))
-             for key, label in request.view.destinations.items()}
+             for key, label in destinations.items()}
     # A word shared by many pages ("phosphosite") says little about which one.
     spread = {word: sum(word in named for named, _ in pages.values()) or sum(word in described for _, described in pages.values())
               for word in asked}
     scored = []
-    for key, label in request.view.destinations.items():
+    for key, label in destinations.items():
         named, described = pages[key]
         score = sum((2 if word in named else 0.5 if word in described else 0) / math.sqrt(spread[word])
                     for word in asked if spread[word])
         if score >= 0.9:
             scored.append((score, key, label))
     scored.sort(key=lambda item: -item[0])
+    return scored
+
+
+def _where_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
+    """Point to the page(s) that show a topic, from labels and reviewed descriptions."""
+    if request.answerOnly or not where_request(request.message) or not request.view.destinations:
+        return None
+    scored = _page_scores(request.message, request.view.destinations)
     if not scored:
         return None
     best = [item for item in scored if item[0] >= 0.6 * scored[0][0]][:3]
@@ -998,6 +1069,11 @@ def _unavailable_reason(evidence) -> str:
             if reason:
                 return reason[:200] + "."
     return ""
+
+
+_KINASE_ACTIVITY = re.compile(
+    r"\bkinases?\b[^.?!]{0,80}\b(?:activ\w*|inhibit\w*|responsible|driv\w+|upstream)\b|"
+    r"\b(?:activ\w*|inhibit\w*|responsible|upstream)\b[^.?!]{0,60}\bkinases?\b|\bkinase[- ]activit\w+", re.I)
 
 
 _METHOD_QUESTION = re.compile(r"\b(?:cite|citation|cited|reference|version|release|database|annotation source|methods? section|"
@@ -1088,9 +1164,12 @@ def _names_entity_or_condition(request: AssistantRequest) -> bool:
     return any(re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", request.message, re.I) for name in conditions)
 
 
-def _ungrounded_entity(request: AssistantRequest, actions, controls) -> str | None:
-    """A clarification when a setter names a feature the user did not name."""
-    aliases = set(_uploaded_entity_aliases(request).values())
+def _ungrounded_entity(request: AssistantRequest, actions, controls, resolved: frozenset[str] = frozenset()) -> str | None:
+    """A clarification when a setter names a feature the user did not name.
+
+    ``resolved`` holds identifiers the application itself derived from a name the
+    user gave (one unique feature of the uploaded table), casefolded."""
+    aliases = set(_uploaded_entity_aliases(request).values()) | resolved
     for action in actions:
         control = controls.get(action.target)
         if action.type != "set_control" or control is None or not _ENTITY_LABEL.fullmatch(control.label):
@@ -1182,6 +1261,9 @@ _PROPERTY_WORDS = {
 # 45 and size 12 were refused as "not requested").
 _READABILITY = re.compile(r"\b(?:hard|difficult|impossible)\s+to\s+(?:read|see)\b|\b(?:unreadable|illegible|readab\w*|legib\w*|"
                           r"overlap\w*|crowd\w*|cramped|squash\w*|squish\w*|clipp\w*|cut\s+off|lesbar\w*|unleserlich|"
+                          # "the sample labels are too small" asks for a size change without a size word (2026-11-12).
+                          r"too\s+(?:small|big|large|tiny|thin|thick|wide|narrow|tall|short|tight|faint|pale)|tiny|huge|"
+                          r"zu\s+(?:klein|gro(?:ß|ss)|d(?:ü|ue)nn|dick|eng|breit|schmal)|"
                           r"(?:ü|ue)berlapp\w*)", re.I)
 # Size words in the other languages users write in ("Mach die Schrift bitte
 # größer", glm5 2026-10-08): German first, then French and Spanish.
@@ -1459,7 +1541,7 @@ def _build_planner_call(request: AssistantRequest, keep: list[int] | None = None
     schema["properties"]["modules"] = {"type": "array", "items": {"type": "string", "enum": list(_MODULE_SPECIFIC_AI_FUNCTIONS)},
                                        "maxItems": overview_limit if "results_overview" in tasks else 0}
     schema["$defs"].pop("UiAction")
-    all_sites_requested = bool(re.search(r"\b(?:all|every)\s+(?:the\s+)?(?:phosphosites?|(?:phosphorylation\s+)?sites?)\b", request.message, re.I)
+    all_sites_requested = bool(re.search(r"\b(?:all|every|its|their)\s+(?:the\s+)?(?:phosphosites?|(?:phosphorylation\s+)?sites?)\b", request.message, re.I)
                                and not re.search(r"\b(?:not|don't|never|without)\s+(?:show\s+)?(?:all|every)\b", request.message, re.I))
     if not all_sites_requested:
         schema["$defs"]["CanvasFocusRequest"]["properties"]["allSites"]["enum"] = [False]
@@ -1798,6 +1880,12 @@ _ALL_PLOTS = (r"(?:to|on|for|across)\s+(?:all|every|each|the other|other)\s+(?:m
               r"|\beverywhere\b|\ball\s+(?:of\s+)?(?:my\s+|the\s+)?(?:plots|figures|charts|graphs)\b|\bevery\s+(?:plot|figure|chart|graph)\b")
 
 
+# "save this look as paper and use it for all plots" (2026-11-12) was saved under the name
+# "paper and use it for all plots" and applied nowhere: the two halves are two steps.
+_SAVE_AND_APPLY = re.compile(r"(?P<save>.+?)[,;]?\s+and\s+(?:then\s+)?(?:use|apply|copy|put|give)\s+(?:it|that|this|the style)\s+(?P<where>.+)",
+                             re.I | re.S)
+
+
 def _style_library_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
     """Saving a plot's look under a name and applying it here or to every plot.
 
@@ -1805,6 +1893,16 @@ def _style_library_response(request: AssistantRequest, revision: int) -> Assista
     copies a plot's appearance without its texts); no model is involved."""
     if request.answerOnly:
         return None
+    compound = _SAVE_AND_APPLY.fullmatch(request.message.strip())
+    first = _SAVE_STYLE.fullmatch(compound["save"]) if compound and re.search(_ALL_PLOTS, compound["where"], re.I) else None
+    if first and not request.receipts:
+        return AssistantResponse(model="application", revision=revision,
+                                 actions=[{"type": "save_style", "value": first["name"].strip()}])
+    if first and any(receipt.startswith("Saved ") for receipt in request.receipts):
+        if any(receipt.startswith("Applied ") for receipt in request.receipts):
+            return None
+        return AssistantResponse(model="application", revision=revision, finished=True, actions=[
+            {"type": "apply_style", "value": json.dumps({"name": first["name"].strip(), "scope": "all"})}])
     if request.receipts:
         # "Make all my plots Nature style": the preset was applied to this plot; now copy it everywhere.
         if (re.search(_ALL_PLOTS, request.message, re.I) and _broad_style(request)
@@ -1929,7 +2027,10 @@ def _written_answer(request: AssistantRequest, model: str, evidence: list[Eviden
     if not checked:
         return None
     checked = _page_names(checked, request)
-    notes = list(dict.fromkeys(partial_qualification(item) for item in evidence if item.status == "partial"))
+    # A shortened method text is not a partly read result (2026-11-12: the note closed an
+    # answer on a page without any result).
+    notes = list(dict.fromkeys(partial_qualification(item) for item in evidence
+                               if item.status == "partial" and not item.tool.startswith("method:")))
     if notes:
         checked += "\n\n" + " ".join(notes)
     return checked
@@ -1942,6 +2043,226 @@ def _own_question(request: AssistantRequest, plan: AssistantPlan, tier: Tier) ->
     reference = "\n".join(assistant_plot_parts.describe(request))
     checked, removed = assistant_prose.verify(plan.question.strip(), [reference], assistant_prose.context_text(request))
     return "" if removed else checked
+
+
+# Where the user makes each processing decision the assistant refuses (2026-11-12: a model
+# offered Data / Imputation for a valid-value filter and Data / Annotation for the
+# localization cutoff). The place is the application's, not the model's guess.
+_PIPELINE_PLACES = (
+    (r"\bimput\w*", "Data / Imputation", "Imputation is your step on Data / Imputation."),
+    (r"\blocali[sz]ation\b", "", "The localization probability cutoff is your setting in the field shown with the phosphosite plots."),
+    (r"\bnormali[sz]\w*|\bvsn\b|\bmedian\b|\bquantile\b|\blog\s?2\b|\btransform\w*|\bfilter\w*|\bvalid values?\b|\bcontaminants?\b",
+     "Data / Annotation", "Filtering, normalization and the log2 declaration are your settings on Data / Annotation."),
+    (r"\b(?:remove|delete|drop|exclude)\b[^.?!]{0,40}\b(?:samples?|outliers?|replicates?)\b",
+     "Data / Annotation", "Which samples belong to the analysis is assigned on Data / Annotation."),
+)
+
+
+_VIEWER_PLACE = ("This is the read-only viewer: how the data were filtered, normalized and imputed was set by whoever "
+                 "published the project and cannot be changed here.")
+_CHANGE_REQUEST = re.compile(r"\b(?:normali[sz]e|impute|filter|remove|delete|drop|exclude|transform|apply|set|change|switch|use|"
+                             r"redo|run|turn|normalisiere|imputiere|filtere|entferne|l(?:ö|oe)sche|setze|(?:ä|ae)ndere)\b", re.I)
+_DECLINES = re.compile(r"\b(?:can(?:'|’)?t|cannot|won(?:'|’)?t|never changes|not able to|kann (?:ich )?(?:\w+ ){0,4}nicht)\b", re.I)
+
+
+def _pipeline_place_added(message: str, answer: str) -> str:
+    """A refusal of a processing change, with the page where the user makes that change."""
+    place = next(((page, sentence) for pattern, page, sentence in _PIPELINE_PLACES if re.search(pattern, message, re.I)), None)
+    if _VIEWER_PLACE in answer:
+        return answer
+    if place is not None and viewer_mode() and _CHANGE_REQUEST.search(message) and _DECLINES.search(answer):
+        # In the viewer there is no page where the user could make that change.
+        kept = " ".join(part for part in re.split(r"(?<=[.!?])\s+", answer) if not re.search(r"Data / \w+", part))
+        return f"{kept or assistant_safety.REFUSAL} {_VIEWER_PLACE}".strip()
+    if (place is None or not _CHANGE_REQUEST.search(message) or not _DECLINES.search(answer)
+            or place[1] in answer or (place[0] and place[0] in answer)):
+        return answer
+    return f"{answer.rstrip()}\n\n{place[1]}"
+
+
+_PIPELINE_ORDER = re.compile(
+    r"^\s*(?![^.?!]*\b(?:colou?rs?|ax[ie]s|scale|legend|rows?|z-?scores?)\b)"
+    r"(?:(?:please|bitte|now|then|ok(?:ay)?)[\s,]+)*(?:(?:can|could|would) you\s+(?:please\s+)?)?"
+    r"(?:(?:re-?)?normali[sz]e|impute|log\s?2[- ]?transform|"
+    r"(?:filter(?: out)?|remove|delete|drop|exclude)\s[^.?!]{0,40}\b(?:samples?|outliers?|replicates?|contaminants?|"
+    r"missing values?|valid values?))\b", re.I)
+
+
+_OPEN_REQUEST = re.compile(r"^\s*(?:(?:please|now|then|bitte)[\s,]+)*(?:open|show(?: me)?|go to|take me to|switch to|"
+                           r"bring me to|(?:ö|oe)ffne|zeig(?:e)?(?: mir)?|gehe? zu)\b", re.I)
+
+
+_NOT_A_PAGE_REQUEST = re.compile(
+    r"\?|^\s*(?:what|how|why|which|where|when|who|is|are|was|were|do|does|did|can|could|should|would|will|explain|describe|"
+    r"tell|was|wie|warum|welche\w*|wo|ist|sind)\b|\b(?:is|are|was|were|looks?|seems?|has|have|should|not|don't|without|"
+    r"explain|describe|tell|what|why|how)\b", re.I)
+
+
+def _basic_destination_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
+    """At the Basic level, open the page a short request names without saying "open".
+
+    2026-11-13, qwen3.5:2b: "now the boxplot for a single protein, GAPDH" ended in
+    "could not complete this step" and "volcano of the phosphosites, GRK vs WT" in a
+    method text of another page. The page is opened when the words name one page
+    clearly; the protein or comparison is then set on that page as for any request.
+    """
+    if (request.answerOnly or request.receipts or len(request.message.split()) > 12
+            or _NOT_A_PAGE_REQUEST.search(request.message) or _appearance_only(request)
+            or "ui" not in planner_tasks(request.message) or canvas_focus_intent(request.message)):
+        return None
+    named = _page_scores(request.message, request.view.destinations)
+    if (not named or named[0][0] < 2 or named[0][1] == request.view.module
+            or (len(named) > 1 and named[0][0] < 1.5 * named[1][0])):
+        return None
+    rest = re.search(r"[,;]\s*\S|\b(?:for|of|and|then|with)\b", request.message, re.I)
+    return AssistantResponse(model="application", revision=revision, finished=not rest,
+                             actions=[{"type": "navigate", "target": named[0][1]}])
+
+
+def _basic_feature_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
+    """At the Basic level, select the one protein the request names on a page with one feature selector.
+
+    Only an identifier the user wrote, resolved to exactly one uploaded feature; the
+    model is not asked (qwen3.5:2b opened the boxplot page and then returned nothing
+    for "..., GAPDH").
+    """
+    if (request.answerOnly or _NOT_A_PAGE_REQUEST.search(request.message) or _appearance_only(request)
+            or "ui" not in planner_tasks(request.message) or requests_unchanged_view(request.message)):
+        return None
+    targets = [control for control in request.view.controls if control.type == "select"
+               and re.fullmatch(r"(?:Protein / Site|Protein|Site|Gene|Protein or gene)", control.label, re.I)]
+    kind = _data_kind(request.view)
+    if len(targets) != 1 or kind not in _LEVELS:
+        return None
+    control = targets[0]
+    other_values = {value.casefold() for item in request.view.controls if item is not control
+                    for value in [*item.options, *item.optionLabels.values()]}
+    tokens = [token for token in dict.fromkeys(_ENTITY_TOKEN.findall(request.message))
+              if token not in _NOT_ENTITIES and token.casefold() not in other_values]
+    if len(tokens) != 1:
+        return None
+    token = tokens[0]
+    if token in control.options:
+        found = [token]
+    else:
+        try:
+            found = feature_candidates(kind, parent=token)
+        except ValueError:
+            return None
+        if control.options and control.optionCount <= len(control.options):
+            found = [item for item in found if item in control.options]
+    if len(found) != 1 or control.value == found[0]:
+        return None
+    return AssistantResponse(model="application", revision=revision, finished=True,
+                             actions=[{"type": "set_control", "target": control.id, "value": found[0]}])
+
+
+def _basic_readability(request: AssistantRequest, revision: int) -> AssistantRequest | AssistantResponse:
+    """At the Basic level, "the labels are too small" names the size setting or asks which one.
+
+    qwen3.5:2b returned a change without a setting or a value and the turn ended in
+    "could not complete this step" (2026-11-13). One size whose name the sentence
+    carries is made bigger like "make the title bigger"; otherwise the sizes of the
+    plot are listed. The larger levels pick the setting themselves.
+    """
+    if request.answerOnly or not re.search(r"\btoo (?:small|tiny)\b|\btiny\b|\bzu klein\b", request.message, re.I):
+        return request
+    names = {}
+    for control in request.view.controls:
+        if control.appearance and control.permission == "view" and control.type == "number" and re.search(r"\bsize\b", control.label, re.I):
+            parts = [re.sub(r"\s*\bsize$", "", part.lower()).strip() for part in control.label.split(" / ")[-2:]]
+            parts = [part for part in parts if part]
+            # "Title / Size" is the title, "X axis / X tick label size" the x tick label, "Legend / Text size" the legend text.
+            name = parts[-1] if len(parts) == 1 or parts[-1].split()[0] == parts[0].split()[0] else " ".join(parts)
+            names.setdefault(name, control)
+    if not names:
+        return request
+    said = {word.rstrip("s") for word in re.findall(r"[a-z]+", request.message.lower())}
+    # Every word of the setting's whole label: "labels" alone does not name "Value labels / Label size".
+    fitting = [name for name, control in names.items()
+               if all(word.rstrip("s") in said for word in re.findall(r"[a-z]+", control.label.lower()) if word != "size")]
+    if len(fitting) == 1:
+        clear = request.model_copy(update={"message": f"Make {names[fitting[0]].label} bigger."})
+        if _simple_style_plan(clear) is not None:
+            return clear
+    listed = list(names)[:8]
+    return AssistantResponse(model="application", revision=revision, needsClarification=True, answer=(
+        "Which text should be larger? This plot has these sizes: " + ", ".join(listed) +
+        f". Say for example \"make the {listed[0]} bigger\". Nothing was changed."))
+
+
+_DOWNLOAD_HOW = re.compile(
+    r"\b(?:how|where|can i|wie)\b[^.?!]*(?:\b(?:download|export|save)\b[^.?!]*\b(?:plot|figure|image|graph|table|csv|numbers)\b|"
+    r"\b(?:plot|figure|image|graph|table)\b[^.?!]*\b(?:download\w*|export\w*)\b|"
+    r"\b(?:get|put|use)\b[^.?!]*\b(?:plot|figure|image|graph|table)\b[^.?!]*\b(?:out|into|in my|for my)\b)", re.I)
+
+
+def _basic_download_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
+    """At the Basic level, how to download a plot or table is the guide's own sentence.
+
+    qwen3.5:2b answered "how do I get this plot out for my paper?" from the ID
+    Translator text, then with the volcano's numbers (2026-11-13).
+    """
+    if request.answerOnly or not _DOWNLOAD_HOW.search(request.message) or code_request(request.message):
+        return None
+    # up to the end of the sentence; the full stop in "(.xlsx)" is not one
+    found = re.search(r"every plot has a format choice and Download Plot;.*?\.(?= |$)", WORKFLOW_GUIDE)
+    if found is None:
+        return None
+    notebook = "" if viewer_mode() else (" To reproduce the output later, Export notebook sits beside the download "
+                                        "controls of supported plots and tables.")
+    return AssistantResponse(model="application", revision=revision, answer=(
+        f"Downloading is your own step: {found[0]}{notebook} Nothing was changed."))
+
+
+_REPLICATE_QUALITY = re.compile(r"\b(?:replicates?|data quality|quality of (?:my|the|this) data|quality control)\b", re.I)
+
+
+def _basic_level_plan(request: AssistantRequest) -> dict | None:
+    """At the Basic level, "volcano of the phosphosites, ..." sets the Dataset level the words name.
+
+    qwen3.5:2b left the volcano on proteins (2026-11-13). The level is a view
+    selection, not processing; it goes first and alone, as on every level.
+    """
+    if (request.answerOnly or _NOT_A_PAGE_REQUEST.search(request.message) or _appearance_only(request)
+            or "ui" not in planner_tasks(request.message) or requests_unchanged_view(request.message)):
+        return None
+    wanted = ("phosprot" if re.search(r"\bphosphoproteins?\b", request.message, re.I) else
+              "phospho" if re.search(r"\bphospho\s?sites?\b|\bphospho\b|\bsites\b", request.message, re.I) else None)
+    control = next((item for item in request.view.controls if item.label == "Dataset level" and item.type == "select"), None)
+    if wanted is None or control is None or control.value == wanted or wanted not in control.options:
+        return None
+    return {"task": "ui", "actions": [{"type": "set_control", "target": control.id, "value": wanted}]}
+
+
+def _basic_pipeline_response(request: AssistantRequest, revision: int) -> AssistantResponse | None:
+    """A plain order to process the data, declined by the application at the Basic level.
+
+    2026-11-13, qwen3.5:2b: "normalize the data with the median please" was answered
+    with a description of the open plot. Nothing was changed -- no processing
+    control is ever offered -- but the user was not told why or where to do it.
+    The larger levels word this refusal themselves.
+    """
+    if request.answerOnly or not _PIPELINE_ORDER.search(request.message):
+        return None
+    answer = _with_pipeline_place(request.message, "")
+    if not answer:
+        return None
+    return AssistantResponse(model="application", revision=revision, answer=f"{answer} Nothing was changed.")
+
+
+def _with_pipeline_place(message: str, question: str) -> str:
+    place = next(((page, sentence) for pattern, page, sentence in _PIPELINE_PLACES if re.search(pattern, message, re.I)), None)
+    if place is None:
+        return question
+    page, sentence = place
+    if viewer_mode():
+        return f"I can't change that. {_VIEWER_PLACE}"
+    if set(re.findall(r"Data / \w+", question)) - {page}:
+        question = ""  # the model's own question names another page
+    if page and page in question:
+        return question
+    return f"{question or assistant_safety.REFUSAL} {sentence}"
 
 
 _REVIEW = """Review step. The changes listed in completed were just applied and the attached image shows
@@ -2073,10 +2394,28 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
         content = str(message.get("content") or "").strip()
         if not calls:
             try:
-                if isinstance(json.loads(content), dict):
-                    return model, content, None  # a plan written as text is validated the same way
+                as_text = json.loads(content)
             except ValueError:
-                pass
+                as_text = None
+            if isinstance(as_text, dict):
+                if str(as_text.get("text") or "").strip() and "actions" not in as_text and "answer" in tool_names:
+                    # The answer tool's arguments written as text ({"task":"answer","module":
+                    # "data.restore","text":"Die Sitzung speichern Sie ..."}, Haiku 2026-11-12) ended
+                    # the request with "could not complete this step". They are that call.
+                    if as_text.get("task") not in answer_tasks:
+                        as_text["task"] = "current_plot" if "current_plot" in answer_tasks else answer_tasks[0]
+                    calls = [{"id": f"call_{round_index}_text", "type": "function",
+                              "function": {"name": "answer", "arguments": json.dumps(as_text)}}]
+                    content = ""
+                elif as_text.get("task") == "ui" and not as_text.get("actions") and not nudged:
+                    # An empty change list written as text gets the one reminder to use a tool.
+                    nudged = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _USE_A_TOOL})
+                    continue
+                else:
+                    return model, content, None  # a plan written as text is validated the same way
+        if not calls:
             # Prose instead of a tool call (Qwen, Ministral; glm5 after a long read). When the
             # model has read results, the prose is its answer and is checked like one; it is
             # not thrown away for the form it came in. Without anything read it gets one
@@ -2149,6 +2488,19 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
                     if text and read:
                         # Keep the requested explanation grounded in the results just read.
                         return model, json.dumps({"task": "current_plot"}), {"text": text, "evidence": read}
+                    if (text and not request.receipts
+                            and any(re.search(pattern, request.message, re.I) for pattern, _, _ in _PIPELINE_PLACES)):
+                        # 2026-11-12: "remove sample GRK_5, it looks like an outlier" was declined in the
+                        # model's own words without a read, and the user saw "No supported action was
+                        # identified". Nothing was done, so this is the refusal of a processing change.
+                        # Whole sentences within the plan's question length (2026-11-13: a longer refusal
+                        # was an invalid plan and the user saw "could not complete this step").
+                        kept = ""
+                        for sentence in re.split(r"(?<=[.!?])\s+", text):
+                            if len(kept) + len(sentence) >= 400:
+                                break
+                            kept = f"{kept} {sentence}".strip()
+                        return model, json.dumps({"task": "clarify", "clarification": "pipeline", "question": kept or text[:400]}), None
                     # "answer" with task=ui after a finished batch is a closing remark (glm5,
                     # 2026-10-08): the application reports the changes itself, so it simply finishes.
                     return model, json.dumps({"task": "ui", "actions": []}), None
@@ -2220,6 +2572,15 @@ def _tool_plan(request: AssistantRequest, call: "PlannerCall", tier: Tier, image
                 result = _lookup_results(request, [Lookup.model_validate(lookup)], call.profile)
             except ValidationError:
                 result = [{"tool": name, "result": "The arguments were malformed."}]
+            described = method_evidence(request.view.module)
+            if (name == "find_settings" and described.status == "available"
+                    and request.view.module not in _MODULE_SPECIFIC_AI_FUNCTIONS and described not in read):
+                # 2026-11-12, on Settings: "I could not find an R setting" although the page holds
+                # R Compatibility. A page the assistant only opens has no settings it could list;
+                # what the page holds is its reviewed description.
+                result.append({"tool": "page", "result": "The fields of this page are the user's and are not listed as settings. "
+                                                         "What the page holds: " + described.text})
+                read.append(described)
             messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
                              "content": json.dumps(result, ensure_ascii=False)[:12000]})
     raise PlanRejected("The model kept reading without finishing. Nothing was changed; ask a narrower question.")
@@ -2424,7 +2785,10 @@ def assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespon
     assistant_safety.check_actions(original, response.actions)
     # (AssistantResponse defaults to 8; the preset path sets a larger one itself.)
     budget = max(_tier(request).action_budget, response.actionBudget if response.actionBudget > 8 else 0)
-    return response.model_copy(update={"actionBudget": budget})
+    answer = response.answer
+    if answer and not response.actions:
+        answer = _pipeline_place_added(request.message, answer)
+    return response.model_copy(update={"actionBudget": budget, "answer": answer})
 
 
 _RELATIVE_SIZE = re.compile(r"\s*(?:(?:a little|a bit|slightly|even|please)\s+)*(smaller|bigger|larger)(?:[,\s]+(?:again|please))*[.!?]*\s*", re.I)
@@ -2502,24 +2866,41 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
         # model wrote a guessed sketch and said the app has no R export. The human
         # decided the assistant writes no analysis or plot code; the reviewed routes are
         # Export notebook and the bundled examples.
+        notebook = "" if viewer_mode() else (
+            "To reproduce a plot or table outside the app, use \"Export notebook\" next to that output's download "
+            "controls: it gives a ZIP with a Python notebook, the analysis code, the settings and the original output "
+            "to compare against; by default it holds no data matrix, so keep the original uploaded file with it. ")
         return AssistantResponse(model="application", revision=revision, answer=(
-            "I don't write analysis or plotting code. To reproduce a plot or table outside the app, use "
-            "\"Export notebook\" next to that output's download controls: it gives a ZIP with a Python notebook, the "
-            "captured input tables, the settings and the original output to compare against. For a standalone "
+            f"I don't write analysis or plotting code. {notebook}For a standalone "
             "workflow in Python or R, the bundled examples (examples/example.ipynb and examples/example.R) show the "
             "same steps with the app's own functions. Nothing was changed."))
     library = _style_library_response(request, revision)
     if library is not None:
         return library
     tier = _tier(request)
+    basic = _basic_level(request)
+    if basic:
+        settled = (_basic_pipeline_response(request, revision) or _basic_download_response(request, revision)
+                   or _basic_feature_response(request, revision) or _basic_destination_response(request, revision))
+        if settled is not None:
+            return settled
     preset = _preset_plan(request, tier)
     if isinstance(preset, AssistantResponse):
         return preset
+    if basic and not preset:
+        readable = _basic_readability(request, revision)
+        if isinstance(readable, AssistantResponse):
+            return readable
+        request = readable
     # "What can I see?" is always the open plot: no planner call is needed to say so.
     visible = {"task": "current_plot", "module": request.view.module} if describe_visible else None
     implied = None if visible or preset else _implied_contrast_plan(request)
     named_contrast = None if visible or preset else _named_contrast_plan(request)
-    direct = (visible or preset or named_contrast or implied
+    if basic and named_contrast is None and not (visible or preset) and not _NOT_A_PAGE_REQUEST.search(request.message):
+        # "volcano of the phosphosites, GRK vs WT": a request without a verb is read as "show ...".
+        named_contrast = _named_contrast_plan(request.model_copy(update={"message": f"Show {request.message}"}))
+    level = _basic_level_plan(request) if basic and not (visible or preset) else None
+    direct = (visible or preset or level or named_contrast or implied
               or _mark_colour_plan(request) or _simple_style_plan(request))
     preset_summary = str(direct.pop("presetSummary", "")) if direct else ""
     lookups_left = 0 if direct else tier.lookups
@@ -2600,6 +2981,11 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                     and call.control_targets.get(target, target) in numeric_targets
                     and type(value) in (int, float) and math.isfinite(value)):
                 action["value"] = str(value)
+        if isinstance(payload, dict) and payload.get("responseStyle") not in {None, "concise", "explanation", "review"}:
+            # A style word of the model's own ("direct") made the whole
+            # plan invalid and the user saw "could not complete this step". It only shapes the
+            # wording, so the default applies.
+            payload.pop("responseStyle")
         plan = AssistantPlan.model_validate(payload)
         if describe_visible:
             plan = AssistantPlan(task="current_plot", module=request.view.module,
@@ -2729,6 +3115,45 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
             and controls[action.target].appearance and controls[action.target].type == "number"
             and re.search(r"\b(?:smaller|bigger|larger|shrink|enlarge|increase|decrease)\b", request.message, re.I)
             and any(receipt.startswith(f"Set {controls[action.target].label} to ") for receipt in request.receipts))]
+        # 2026-11-12: "the boxplot for a single protein, GAPDH" searched the feature list for
+        # "GAPDH", found nothing (the list holds entry names such as G3P_HUMAN), searched again
+        # and stopped. A name from the user's own words that the uploaded table maps to exactly
+        # one feature of this level is that feature (the rule of _uploaded_entity_aliases).
+        # The dataset level rebuilds the page's other fields, so settings sent in the same batch
+        # no longer exist once it is applied ("Controls changed after: Set Dataset level", 2026-11-12).
+        # The level goes first on its own; the rest is planned on the rebuilt page.
+        level_first = [action for action in plan.actions if action.type == "set_control" and controls.get(action.target) is not None
+                       and controls[action.target].label.split(" / ")[-1] == "Dataset level"]
+        level_split = bool(level_first) and len(plan.actions) > 1
+        if level_split:
+            plan = plan.model_copy(update={"actions": level_first[:1]})
+        resolved_names: set[str] = set()
+        for action in plan.actions:
+            control = controls.get(action.target)
+            if (action.type == "search_options" and control is not None and control.type == "select"
+                    and _ENTITY_LABEL.fullmatch(control.label) and isinstance(action.value, str)):
+                kind, query = _data_kind(request.view), action.value.strip()
+                if not _grounded(query, request):
+                    # 2026-11-13: for "show GRK2 as a boxplot" the model searched its own synonym
+                    # ("ADRBK1") twice and the turn ended there. The one name the user wrote is
+                    # looked up instead; a name of the model's is never selected.
+                    written = [token for token in dict.fromkeys(_ENTITY_TOKEN.findall(request.message)) if token not in _NOT_ENTITIES]
+                    if len(written) != 1:
+                        continue
+                    query = written[0]
+                try:
+                    found = feature_candidates(kind, parent=query) if kind in _LEVELS else []
+                except ValueError:
+                    found = []
+                if kind == "phospho" and request.view.module == "singleProtein.heatmap":
+                    # This page lists parent proteins by accession: the sites the table holds
+                    # for the named protein all carry it ("its phosphosites", after AKT1).
+                    found = sorted({site.split("~", 1)[0] for site in found if "~" in site})
+                elif kind == "phospho":
+                    found = []
+                if len(found) == 1 and query.casefold() not in found[0].casefold():
+                    action.type, action.value = "set_control", found[0]
+                    resolved_names.add(found[0].casefold())
         remaining = max(0, tier.action_budget - len(request.receipts))
         # An application-built preset is one validated batch; a model's batch
         # follows its level (4 for Basic/Standard, 30 for Advanced).
@@ -2797,7 +3222,7 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                         raise PlanRejected(f"Invalid value for {control.label}. Nothing was changed.")
         if any(a.type != "set_control" for a in plan.actions) and len(plan.actions) != 1:
             raise PlanRejected("Navigation must complete before changing plot controls. Nothing was changed.")
-        ungrounded = _ungrounded_entity(request, plan.actions, controls)
+        ungrounded = _ungrounded_entity(request, plan.actions, controls, frozenset(resolved_names))
         if ungrounded:
             return AssistantResponse(model=model, revision=revision, needsClarification=True, answer=ungrounded)
         # Wrong-scope setters are left out and reported; the others still run.
@@ -2823,6 +3248,14 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
         preparatory = any(controls.get(action.target) is not None
                           and controls[action.target].label.split(" / ")[-1] in {"New tile type", "New list name", "Protein source"}
                           for action in plan.actions)
+        # "volcano of the phosphosites, GRK vs WT" (2026-11-12): the dataset level comes first
+        # because it rebuilds the page's condition fields; the named comparison is set after it.
+        named_conditions = {option.casefold() for control in controls.values() if control.label.split(" / ")[-1] in {"Condition 1", "Condition 2"}
+                            for option in control.options
+                            if re.search(rf"(?<![\w.]){re.escape(option)}(?![\w.])", request.message, re.I)}
+        preparatory = preparatory or level_split or ((bool(_referenced_contrast(request)) or len(named_conditions) >= 2) and any(
+            controls.get(action.target) is not None and controls[action.target].label.split(" / ")[-1] == "Dataset level"
+            for action in plan.actions))
         finished = bool(plan.actions and not deferred and not explain_after and not styling_left and not preparatory
                         and not _entity_pending(request, plan, controls)
                         # Canvas construction can still have other requested tiles to add.
@@ -2844,6 +3277,14 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                                      answer="\n".join(dict.fromkeys([*design_notes, *_summarised(problems)])),
                                      needsClarification=bool(problems) and not plan.actions and not request.receipts,
                                      explainAfterChanges=explain_after)
+        if basic and proposed_count and not plan.actions and not request.receipts:
+            # 2026-11-13, qwen3.5:2b: "open the QQ plot" from another page came back as a
+            # change that was "already in place". The page the request names is opened.
+            named = _page_scores(request.message, request.view.destinations)
+            if (named and named[0][1] != request.view.module and _OPEN_REQUEST.search(request.message)
+                    and (len(named) == 1 or named[0][0] >= 1.5 * named[1][0])):
+                return AssistantResponse(model="application", revision=revision, finished=True,
+                                         actions=[{"type": "navigate", "target": named[0][1]}])
         return AssistantResponse(model=model, actions=plan.actions, revision=revision, finished=finished,
                                  reviewAfter=review_after,
                                  # After completed steps the receipts already say so; repeating
@@ -2893,8 +3334,25 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                     value.casefold() for value in [*selectors[0].options, *selectors[0].optionLabels.values()]}:
                 return AssistantResponse(model=model, revision=revision, needsClarification=True,
                     answer=f"I couldn't find {query!r} in the current feature choices. Check the identifier mode or provide its uploaded identifier. The current selection was kept.")
-        return AssistantResponse(model=model, answer=_own_question(request, plan, tier) or _CLARIFICATIONS[reason],
+        question = _own_question(request, plan, tier)
+        if reason == "pipeline":
+            question = _with_pipeline_place(request.message, question)
+        return AssistantResponse(model=model, answer=question or _CLARIFICATIONS[reason],
                                  revision=revision, needsClarification=True)
+    kinase_fixed = False
+    if ((tooled_plan or basic) and plan.task in {"current_plot", "help", "qc_review", "results_overview", "entity_lookup", "project_state"}
+            and _KINASE_ACTIVITY.search(request.message) and not where_request(request.message)
+            and not (request.view.module == "phospho.ksea"
+                     and ai_functions._mode_fields(request.view.mode).get("externalplotpresent", "").lower() == "true")):
+        # 2026-11-12: a model that plans with tools never reaches the external_activity
+        # evidence choice of the other levels and promised to "list the kinases with the
+        # strongest activity changes" once a comparison was set. The application's own
+        # statement of what it can show answers on every path.
+        # 2026-11-13: a Basic-level model (qwen3.5:2b) chose the phosphosite count instead.
+        written = None
+        kinase_fixed = True
+        plan = plan.model_copy(update={"task": "current_plot", "module": "external_activity", "query": "", "clarification": ""})
+    set_aside = None
     if (written and plan.task in {"current_plot", "help"}
             and (plan.task == "current_plot" or requests_current_result(request.message)
                  or requests_numeric_summary(request.message))
@@ -2904,6 +3362,10 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
         # A method definition or control catalogue cannot substantiate findings
         # about the current dataset. Re-read actual results and compose from them
         # through the normal evidence path instead of accepting unchecked prose.
+        # The text is kept aside: when that re-read finds no result either, the
+        # model's explanation of the method and of why nothing is calculated is the
+        # answer (checked like every written answer), not a bare "no result".
+        set_aside = written
         written = None
         plan = plan.model_copy(update={"task": "current_plot"})
     if (written and plan.task == "current_plot" and plan.module and plan.module != request.view.module
@@ -2935,7 +3397,8 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
             raise ValueError("The analysis changed while the assistant was working. Please retry.")
         if checked:
             checked = _page_names(checked, request)
-            notes = list(dict.fromkeys(partial_qualification(item) for item in evidence_read if item.status == "partial"))
+            notes = list(dict.fromkeys(partial_qualification(item) for item in evidence_read
+                                       if item.status == "partial" and not item.tool.startswith("method:")))
             if notes:
                 checked += "\n\n" + " ".join(notes)
             return AssistantResponse(model=model, answer=checked, evidence=evidence_read, revision=revision)
@@ -2946,7 +3409,7 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
     help_module = application_help_module(request.message) if plan.task == "help" else ""
     if help_module:
         plan = plan.model_copy(update={"module": help_module})
-    elif plan.task != "results_overview" and not tooled_plan:
+    elif plan.task != "results_overview" and not tooled_plan and not kinase_fixed:
         plan = _select_evidence_plan(request, plan, model, history)
     if (request.answerOnly and request.view.module == "analysis.canvas"
             and canvas_explanation_request(request.message)):
@@ -3000,9 +3463,33 @@ def _assistant_step(request: AssistantRequest, cancelled=None) -> AssistantRespo
                        or application_feature_question(request.message)
                        or ((plan.module or request.view.module) in METHODS
                            and (plan.module or request.view.module) not in _MODULE_SPECIFIC_AI_FUNCTIONS))
-        if method.status != "available" and help_intent and not lookup:
-            method = method_evidence("workflow.overview")
-        if (not lookup and plan.task != "entity_lookup" and method.status == "available"
+        # 2026-11-12 (Haiku, glm5): "which test should I use?", "how do I get this plot out?",
+        # "what am I looking at?" on a page without a result (both conditions still equal, or no
+        # dataset loaded) ended in the bare sentence below, although the model had read the
+        # method and written a correct explanation. A model that writes its own answers gets
+        # the page's method, the workflow guide and the reason nothing is calculated; its text
+        # is checked like every written answer, so it cannot report results that do not exist.
+        explains = (tier.prose_answers and not lookup and plan.task != "entity_lookup"
+                    and not any(item.tool == "external_activity" or item.tool.startswith("canvas tile") for item in primary))
+        if explains and set_aside:
+            module = plan.module or request.view.module
+            read = [*set_aside["evidence"], *evidence]
+            checked, _ = assistant_prose.verify(set_aside["text"], [item.text for item in read] + [METHODS.get(module, "")],
+                                                assistant_prose.context_text(request))
+            if checked:
+                return AssistantResponse(model=model, answer=_page_names(checked, request), evidence=read, revision=revision)
+        guide = method_evidence("workflow.overview")
+        if method.status != "available" and (help_intent or explains) and not lookup:
+            method = guide
+        if explains and not help_intent and method.status == "available" and not requests_numeric_summary(request.message):
+            reason = _unavailable_reason(primary)
+            status = Evidence(tool="result_status", status="available", text=(
+                "No calculated result is available on the open page" + (f": {reason}" if reason else ".")
+                + " Say so, say what the user has to select or load first, and answer what the method"
+                  " description and the workflow guide can answer. Do not describe results."))
+            plan = plan.model_copy(update={"task": "help", "responseStyle": "explanation", "query": "", "clarification": ""})
+            evidence = [status, method, *([] if method is guide else [guide]), *evidence]
+        elif (not lookup and plan.task != "entity_lookup" and method.status == "available"
                 and help_intent and not requests_numeric_summary(request.message)):
             # "which GO release do the terms come from and how should I cite it?" on an ORA
             # page whose two conditions were still equal got "No calculated result is

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.main import app
 from app.schemas.annotation import AnnotationFilterConfig
@@ -203,8 +202,6 @@ def test_the_unfiltered_matrix_is_served_and_labelled_as_itself(empty_filtered, 
     names the matrix it used, so the report and the UI can say so too.
     """
     kind, _, _ = empty_filtered
-    if kind == "phosprot" and endpoint == "/api/stats/simulation/run":
-        pytest.skip("phosprot simulation needs conditions this fixture does not build")
     payload = {"kind": kind, "condition1": "A", "condition2": "B", "dataSource": "data"}
     with TestClient(app) as client:
         response = client.post(endpoint, json=payload)

@@ -13,14 +13,13 @@ here: the sign is the finding.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parents[3]
+from tests.repo_paths import ROOT
 
 from app.main import app
 from app.schemas.annotation import AnnotationFilterConfig

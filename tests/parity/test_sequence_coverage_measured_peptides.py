@@ -7,7 +7,6 @@ covers sequence -- in the web app, the pip package and the R functions alike.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,7 +14,7 @@ import pytest
 
 from proteomicscopylot import notebook_functions as notebook
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.repo_paths import ROOT
 
 from app.services import peptide_tools  # noqa: E402
 

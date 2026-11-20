@@ -9,13 +9,11 @@ same orientation; the R heatmap already draws both from the bottom up.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import leaves_list, linkage
 
-ROOT = Path(__file__).resolve().parents[3]
 
 from app.services.stats_tools import _anova_heatmap_figure
 from proteomicscopylot import notebook_functions

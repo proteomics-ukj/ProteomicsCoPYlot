@@ -52,20 +52,6 @@ lists it where the middleware is registered, and
    data") reaches the browser in the `X-CoPYlot-Notice` header and is shown under
    the plot, never inside the figure or the report.
 
-## ORA gene mapping
-
-ORA expands every semicolon-separated gene annotation, trims whitespace, drops
-empty entries and deduplicates each gene list. This rule applies to Protein and
-Phosphoproteome inputs, ordinary/control volcano selections, one-way ANOVA
-clusters, explicit gene lists and their experiment-specific backgrounds, including
-the Python/R functions and exported notebooks. Original group annotations remain
-unchanged. Global background mode continues to use the annotation database.
-
-Results describe functions associated with genes mapped to the selected groups;
-membership in an ambiguous protein group does not establish that each gene was
-independently measured. Expanding both selection and background can change
-enrichment results compared with the previous first-gene-only Protein mapping.
-
 ## Assistant
 
 `backend/app/services/scientific_assistant.py` runs one step of a chat request; the

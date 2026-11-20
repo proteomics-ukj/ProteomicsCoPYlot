@@ -9,6 +9,8 @@ export type AdvancedPlotVisibleControls = {
   textElements?: boolean;
   tickControls?: boolean;
   legendControls?: boolean;
+  // The "Position" choice (below or right of the plot): the single-protein line plot.
+  legendPlacement?: boolean;
   // Any plot that draws a threshold, a fit or a guide over its data.
   referenceLineColor?: boolean;
   // The "Show" box in the Reference line card. False where the plot switches
@@ -43,12 +45,14 @@ export type AdvancedPlotVisibleControls = {
   markerColor?: boolean;
   // Three classes of dot in one figure, each sized and faded on its own.
   volcanoMarkers?: boolean;
+  abundanceHighlights?: boolean;
   // Colours that moved here out of a plot's own options row.
   barColor?: boolean;
   // Feature names written beside the rows of a heatmap (the ANOVA cluster
   // heatmaps, when their "Show feature names" option is on).
   rowLabels?: boolean;
   phosphoClassColors?: boolean;
+  distributionNote?: boolean;
   vennColors?: boolean;
   // The numbers drawn on bars and boxes.
   valueLabels?: boolean;
@@ -257,8 +261,6 @@ export default function AdvancedPlotOptions({
         cleared.volcanoUpSize = undefined;
         cleared.volcanoDownSize = undefined;
         cleared.volcanoNsSize = undefined;
-        // The highlight ring follows the general size until set on its own.
-        cleared.volcanoHighlightSize = undefined;
       }
       if ("markerAlpha" in next) {
         cleared.volcanoUpAlpha = undefined;
@@ -502,6 +504,32 @@ export default function AdvancedPlotOptions({
           </Section>
         ) : null}
 
+        {visibleControls.distributionNote && (
+          <Section title="Distribution note" summary="Show, text and position">
+            <label className="flex items-center gap-2 text-sm">
+              <AssistantInput data-assistant-permission="view" type="checkbox"
+                checked={value.distributionNoteVisible !== false}
+                onChange={(event) => patch({ distributionNoteVisible: event.target.checked })} />
+              Show distribution note
+            </label>
+            <label className="block text-sm">Note text
+              <AssistantInput data-assistant-permission="view" type="text" className={inputClass}
+                value={value.distributionNoteText ?? ""} placeholder="Automatic trim summary"
+                onChange={(event) => patch({ distributionNoteText: event.target.value })} />
+            </label>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <label className="block text-sm">Horizontal offset (points)
+                <NumberInput value={value.distributionNoteXOffset ?? 0} fallback={0} step="1"
+                  onValidChange={(next) => patch({ distributionNoteXOffset: next })} />
+              </label>
+              <label className="block text-sm">Vertical offset (points)
+                <NumberInput value={value.distributionNoteYOffset ?? 0} fallback={0} step="1"
+                  onValidChange={(next) => patch({ distributionNoteYOffset: next })} />
+              </label>
+            </div>
+          </Section>
+        )}
+
         {showTextElements ? (
           <Section title="Title" summary="Show, text, size, weight, color, position">
             <label className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -627,6 +655,20 @@ export default function AdvancedPlotOptions({
                 />
                 Draw a frame
               </label>
+              {visibleControls.legendPlacement === true ? (
+                <label className="block">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Position</span>
+                  <AssistantSelect data-assistant-permission="view"
+                    aria-label="Legend position"
+                    value={value.legendPlacement ?? "below"}
+                    onChange={(event) => patch({ legendPlacement: event.target.value === "right" ? "right" : "below" })}
+                    className={inputClass}
+                  >
+                    <option value="below">Below the plot</option>
+                    <option value="right">Right of the plot</option>
+                  </AssistantSelect>
+                </label>
+              ) : null}
               <label className="block">
                 <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Offset x / y (px)</span>
                 <div className="mt-1 grid grid-cols-2 gap-2">
@@ -1075,59 +1117,14 @@ export default function AdvancedPlotOptions({
               </label>
             </div>
           ))}
-          <div className="grid gap-4 lg:grid-cols-4">
-            <label className="block">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlight ring size</span>
-              <NumberInput
-                min="0.5"
-                step="0.5"
-                value={value.volcanoHighlightSize ?? (value.markerSize !== undefined ? value.markerSize + 4 : 10)}
-                fallback={value.markerSize !== undefined ? value.markerSize + 4 : 10}
-                onValidChange={(next) => patch({ volcanoHighlightSize: next })}
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlight ring color</span>
-              <AssistantInput data-assistant-permission="view"
-                type="color"
-                value={value.volcanoHighlightColor || "#22c55e"}
-                onChange={(event) => patch({ volcanoHighlightColor: event.target.value })}
-                className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-900"
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlight legend text</span>
-              <AssistantInput data-assistant-permission="view"
-                type="text"
-                value={value.volcanoHighlightLegendLabel ?? ""}
-                placeholder="Highlighted"
-                onChange={(event) => patch({ volcanoHighlightLegendLabel: event.target.value })}
-                className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900"
-              />
-            </label>
-            <label className="mt-6 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
-              <AssistantInput data-assistant-permission="view"
-                type="checkbox"
-                checked={value.volcanoHighlightLegend !== false}
-                onChange={(event) => patch({ volcanoHighlightLegend: event.target.checked })}
-                className="h-4 w-4 accent-sky-600"
-              />
-              Highlight legend entry
-            </label>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-4">
-            <label className="block">
-              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Hit label size (static plot)</span>
-              <NumberInput
-                min="3"
-                step="0.5"
-                value={value.volcanoLabelSize ?? 7}
-                fallback={7}
-                onValidChange={(next) => patch({ volcanoLabelSize: next })}
-              />
-            </label>
-          </div>
+          <HighlightStyleControls value={value} patch={patch} prefix="volcano" />
         </div>
+          </Section>
+        ) : null}
+
+        {visibleControls.abundanceHighlights ? (
+          <Section title="Highlights" summary="Point outlines and feature labels">
+            <HighlightStyleControls value={value} patch={patch} prefix="abundance" />
           </Section>
         ) : null}
 
@@ -1657,6 +1654,7 @@ function numberToDraft(value: number | undefined, fallback: number | undefined):
 function NumberInput({
   value,
   ariaLabel,
+  placeholder,
   fallback,
   onValidChange,
   className = inputClass,
@@ -1666,6 +1664,7 @@ function NumberInput({
 }: {
   value: number | undefined;
   ariaLabel?: string;
+  placeholder?: string;
   // The value the field shows when it holds nothing. `undefined` makes the
   // field clearable: emptying it means "inherit", which is what a per-condition
   // override needs and what a general setting must never do.
@@ -1704,6 +1703,7 @@ function NumberInput({
     <AssistantInput data-assistant-permission="view"
       type="number"
       aria-label={ariaLabel}
+      placeholder={placeholder}
       min={min}
       max={max}
       step={step}
@@ -1717,4 +1717,83 @@ function NumberInput({
       className={className}
     />
   );
+}
+
+function HighlightStyleControls({ value, patch, prefix }: {
+  value: AdvancedPlotSettings;
+  patch: (next: Partial<AdvancedPlotSettings>) => void;
+  prefix: "volcano" | "abundance";
+}) {
+  return <>
+          <div className="grid gap-4 lg:grid-cols-4">
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlight outline width</span>
+              <NumberInput min="0.1" step="0.1"
+                value={value[`${prefix}HighlightWidth`] ?? 1}
+                fallback={1}
+                onValidChange={(next) => patch({ [`${prefix}HighlightWidth`]: next })}
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlight ring color</span>
+              <AssistantInput data-assistant-permission="view"
+                type="color"
+                value={value[`${prefix}HighlightColor`] || (prefix === "abundance" ? "#333333" : "#22c55e")}
+                onChange={(event) => patch({ [`${prefix}HighlightColor`]: event.target.value })}
+                className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-900"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlight legend text</span>
+              <AssistantInput data-assistant-permission="view"
+                type="text"
+                value={value[`${prefix}HighlightLegendLabel`] ?? ""}
+                placeholder="Highlighted"
+                onChange={(event) => patch({ [`${prefix}HighlightLegendLabel`]: event.target.value })}
+                className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900"
+              />
+            </label>
+            <label className="mt-6 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+              <AssistantInput data-assistant-permission="view"
+                type="checkbox"
+                checked={value[`${prefix}HighlightLegend`] !== false}
+                onChange={(event) => patch({ [`${prefix}HighlightLegend`]: event.target.checked })}
+                className="h-4 w-4 accent-sky-600"
+              />
+              Highlight legend entry
+            </label>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-4">
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Highlighted label size (static plot)</span>
+              <NumberInput
+                min="3"
+                step="0.5"
+                value={value[`${prefix}LabelSize`] ?? 7}
+                fallback={7}
+                onValidChange={(next) => patch({ [`${prefix}LabelSize`]: next })}
+              />
+            </label>
+            {prefix === "volcano" && <>
+              <label className="flex items-center gap-2 text-sm">
+                <AssistantInput data-assistant-permission="view" type="checkbox"
+                  checked={value.volcanoLabelConnector !== false}
+                  onChange={(event) => patch({ volcanoLabelConnector: event.target.checked })} />
+                Label connector lines (Normal plot)
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold">Label connector thickness</span>
+                <NumberInput min="0" step="0.1" value={value.volcanoLabelConnectorWidth ?? 0.5} fallback={0.5}
+                  onValidChange={(next) => patch({ volcanoLabelConnectorWidth: next })} />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold">Label connector color</span>
+                <AssistantInput data-assistant-permission="view" type="color"
+                  value={value.volcanoLabelConnectorColor || "#000000"}
+                  onChange={(event) => patch({ volcanoLabelConnectorColor: event.target.value })}
+                  className="mt-1 h-10 w-full rounded-xl border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-900" />
+              </label>
+            </>}
+          </div>
+  </>;
 }

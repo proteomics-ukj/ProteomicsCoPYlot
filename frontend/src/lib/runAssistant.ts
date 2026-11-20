@@ -268,7 +268,10 @@ export async function runAssistant(
       const currentView = readView();
       if (now.pending || now.revision !== revision.revision || stableSnapshot(currentView) !== snapshot) {
         const sameScope = stableSnapshot({ ...currentView, controls: [] }) === stableSnapshot({ ...view, controls: [] });
-        if (sameScope && !result.actions.length && !now.pending && now.revision === revision.revision && settleRetries < 3) {
+        // Nothing of this step has been applied yet. When only the page's controls moved on
+        // (a dataset level that was just changed is still loading its conditions), the step
+        // is planned again on the settled page instead of ending the request.
+        if (sameScope && !now.pending && now.revision === revision.revision && settleRetries < 3) {
           settleRetries += 1;
           step -= 1;
           continue;

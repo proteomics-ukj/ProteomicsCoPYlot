@@ -1,4 +1,5 @@
 include CHANGELOG.md
+include examples/example.ipynb
 include data/db/all_go_terms_genes.csv
 include data/db/all_go_terms_genes_mouse.csv
 include data/db/README.md

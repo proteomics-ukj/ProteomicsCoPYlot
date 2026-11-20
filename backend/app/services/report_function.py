@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.services.method_references import cite
 from app.services.html_security import GENERATED_HTML_META
 from app.services.notebook_report import report_plot, report_table, record_sample_mapping
+from app.services.report_entries import optional_sections
 
 import base64
 import logging
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping, Callable
 
 import pandas as pd
+from pydantic import ValidationError
 
 from app.app_version import APP_VERSION
 from app.schemas.stats import VolcanoRequest
@@ -28,6 +30,7 @@ from app.schemas.summary import (
 )
 from app.services.column_labels import HIDDEN_TABLE_COLUMNS, display_labels
 from app.services.annotation_store import get_annotation
+from app.services.analysis_matrix import most_processed_data_source
 from app.services.dataset_store import get_current_dataset
 from app.services.peptide_metadata_store import get_peptide_metadata
 from app.services.completeness_tools import completeness_excluded_feature_count
@@ -37,6 +40,7 @@ from app.services.completeness_tools import (
 )
 from app.services.phospho_tools import (
     phospho_coverage_png,
+    phospho_sty_png,
     phosphosite_plot_png,
 )
 from app.services.plot_images import (
@@ -172,11 +176,13 @@ def _plotly_to_iframe(plot_html: str, height_px: int = 740) -> str:
     )
 
 
-def _table_to_html(title: str, frame: pd.DataFrame) -> str:
+def _table_to_html(title: str, frame: pd.DataFrame, entity_plural: str | None = None) -> str:
     # The frame's columns are the data contract (CSV, API, notebooks); the
     # reader gets the display label, and numbers rounded to two decimals.
     shown = frame.drop(columns=[c for c in HIDDEN_TABLE_COLUMNS if c in frame.columns])
     safe = shown.rename(columns=display_labels(shown.columns))
+    if entity_plural:
+        safe = safe.rename(columns={"Identified features (n)": f"Identified {entity_plural} (n)"})
     safe = safe.where(pd.notna(safe), "")
     table_html = safe.to_html(index=False, border=0, justify="left", float_format=lambda v: f"{v:.2f}")
     return (
@@ -191,6 +197,8 @@ def _sample_mapping_rows_html(frame: pd.DataFrame, *, show_pairs: bool) -> str:
     header = ["Plot label", "Original sample name", "Condition"]
     if show_pairs:
         header.append("Pair")
+    if "custom_label" in frame:
+        header.append("Custom label")
     head = "".join(f"<th>{html.escape(name)}</th>" for name in header)
 
     body_rows: list[str] = []
@@ -205,6 +213,8 @@ def _sample_mapping_rows_html(frame: pd.DataFrame, *, show_pairs: bool) -> str:
         ]
         if show_pairs:
             cells.append(f"<td>{html.escape(str(row.pair_id))}</td>")
+        if "custom_label" in frame:
+            cells.append(f"<td>{html.escape(str(row.custom_label))}</td>")
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
     return (
@@ -244,6 +254,10 @@ def _report_failure(warnings: list[str], what: str, exc: Exception) -> None:
     traceback and named only, because an exception string can carry a file
     path or a column of someone's data.
     """
+    if isinstance(exc, ValidationError):
+        reasons = "; ".join(str(error.get("msg", "")).removeprefix("Value error, ") for error in exc.errors())
+        warnings.append(f"{what} could not be rendered: {reasons}")
+        return
     if isinstance(exc, ValueError) and str(exc).strip():
         warnings.append(f"{what} could not be rendered: {exc}")
         return
@@ -254,6 +268,7 @@ def _sample_mapping_html(
     *,
     levels: list[tuple[str, pd.DataFrame | None]],
     warnings: list[str],
+    custom_labels: dict[str, str] | None = None,
 ) -> str:
     """Per-level tables mapping original run names to their plot labels."""
     parts: list[str] = [
@@ -268,6 +283,8 @@ def _sample_mapping_html(
             continue
         try:
             mapping = sample_label_frame(metadata)
+            if custom_labels is not None:
+                mapping["custom_label"] = mapping["sample"].map(lambda sample: custom_labels.get(str(sample), ""))
         except Exception as exc:  # pragma: no cover - defensive runtime behavior
             _report_failure(warnings, f"Sample mapping ({level_name})", exc)
             continue
@@ -334,11 +351,7 @@ def _safe_png(
         return _png_to_html(renderer())
     except Exception as exc:  # pragma: no cover - defensive runtime behavior
         _report_failure(warnings, fallback_title, exc)
-        return (
-            "<div style='padding:10px;border:1px solid #f5c2c7;background:#f8d7da;color:#842029;border-radius:8px;'>"
-            "Could not render this plot."
-            "</div>"
-        )
+        return ""
 
 
 def _safe_plotly(
@@ -352,11 +365,7 @@ def _safe_plotly(
         return _plotly_to_iframe(renderer(), height_px=height_px)
     except Exception as exc:  # pragma: no cover - defensive runtime behavior
         _report_failure(warnings, fallback_title, exc)
-        return (
-            "<div style='padding:10px;border:1px solid #f5c2c7;background:#f8d7da;color:#842029;border-radius:8px;'>"
-            "Could not render this interactive plot."
-            "</div>"
-        )
+        return ""
 
 
 def _safe_table_html(
@@ -365,23 +374,32 @@ def _safe_table_html(
     title: str,
     fallback_title: str,
     warnings: list[str],
+    entity_plural: str | None = None,
 ) -> str:
     try:
         frame = renderer()
     except Exception as exc:  # pragma: no cover - defensive runtime behavior
         _report_failure(warnings, fallback_title, exc)
-        return (
-            "<div style='padding:10px;border:1px solid #f5c2c7;background:#f8d7da;color:#842029;border-radius:8px;'>"
-            "Could not render this summary table."
-            "</div>"
-        )
+        return ""
     if frame.empty:
         return (
             "<div style='padding:10px;border:1px solid #d6d6d6;background:#f8fafc;color:#475569;border-radius:8px;'>"
             "No summary rows available."
             "</div>"
         )
-    return _table_to_html(title, frame)
+    return _table_to_html(title, frame, entity_plural)
+
+
+def _section_anchor(section_id: str) -> str:
+    return "s-" + re.sub(r"[^0-9A-Za-z]+", "-", section_id).strip("-")
+
+
+def _contents_html(contents: list[tuple[str, str, str]]) -> str:
+    """The table of contents, written from the headings the report holds."""
+    return "".join(
+        f"<p class='toc-{level}'><a href='#{anchor}'>{html.escape(text)}</a></p>"
+        for level, anchor, text in contents
+    )
 
 
 def _append_plot_section(
@@ -395,8 +413,14 @@ def _append_plot_section(
     text_key: str,
     content_html: str,
     comments_override: list[str] | None = None,
+    contents: list[tuple[str, str, str]] | None = None,
 ) -> None:
-    html_parts.append(f"<h2>{html.escape(section_id)} {html.escape(title)}</h2>")
+    if not content_html:
+        return
+    anchor = _section_anchor(section_id)
+    if contents is not None:
+        contents.append(("item", anchor, f"{section_id} {title}"))
+    html_parts.append(f"<h2 id='{anchor}'>{html.escape(section_id)} {html.escape(title)}</h2>")
     comments: list[str] = []
     if comments_override is not None:
         comments.extend(comments_override)
@@ -478,12 +502,18 @@ def _global_advanced_settings(context: SummaryReportContext, key: str) -> dict[s
     return _advanced_settings_from_map(context.advancedPlotSettingsByKey, key)
 
 
-def _qc_advanced_settings(context: SummaryReportContext, tab: str) -> dict[str, Any] | None:
-    return _advanced_settings_from_map(context.qcAdvancedSettingsByTab, tab)
+def _workflow_options(context, kind, setting, legacy):
+    if context.workflowPlotSettings:
+        return context.workflowPlotSettings.get(kind, {}).get(setting, {})
+    return legacy
 
 
-def _completeness_advanced_settings(context: SummaryReportContext, tab: str) -> dict[str, Any] | None:
-    return _advanced_settings_from_map(context.completenessAdvancedSettingsByTab, tab)
+def _qc_advanced_settings(context, kind, tab):
+    return _advanced_settings_from_map(_workflow_options(context, kind, "qcAppearance", context.qcAdvancedSettingsByTab), tab)
+
+
+def _completeness_advanced_settings(context, kind, tab):
+    return _advanced_settings_from_map(_workflow_options(context, kind, "completenessAppearance", context.completenessAdvancedSettingsByTab), tab)
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -544,17 +574,6 @@ def _to_str(value: Any, default: str) -> str:
 
 def _interactive_height_px(height_cm: float, *, min_px: int = 760, extra_px: int = 240) -> int:
     return max(min_px, int(round((height_cm * 96.0) / 2.54)) + extra_px)
-
-
-def _volcano_entries(
-    context: SummaryReportContext,
-    kind: str,
-) -> list[SummaryVolcanoEntry]:
-    return [
-        entry
-        for entry in context.volcanoEntries
-        if entry.kind == kind and not entry.control
-    ]
 
 
 def _format_imputation_value(value: Any, *, digits: int = 4) -> str:
@@ -633,8 +652,8 @@ def _imputation_paragraphs(kind: str) -> list[str]:
         ]
 
     # Random seeds are not reported: they carry no scientific information.
-    rendered.append(
-        f"The values were drawn with {'sample-wise' if sample_wise else 'dataset-wide'} parameters."
+    rendered[-1] += (
+        f" The values were drawn with {'sample-wise' if sample_wise else 'dataset-wide'} parameters."
     )
 
     return rendered
@@ -753,14 +772,29 @@ def _filter_description(annotation) -> str | None:
         f" ({len(annotation.filtered_data)} of {len(annotation.source_data)} rows)."
     )
     contaminants = getattr(filter_config, "contaminants", None)
-    if getattr(contaminants, "enabled", False):
+    if getattr(contaminants, "enabled", False) and set(contaminants.categories) & {1, 2, 3, 4, 5}:
         description += (
             f" Cambridge cRAP contaminant filtering ({cite('cambridge_contaminants')}; "
             f"Cambridge Centre for Proteomics / camprotR) followed the completeness filter: "
-            f"categories {', '.join(map(str, contaminants.categories))}; exact protein names"
-            f"{' and accessions' if contaminants.matchAccessions else ''}; every group member must match."
+            "every group member must match a selected database category; the applied categories are listed below."
         )
+    if getattr(contaminants, "enabled", False) and 6 in contaminants.categories:
+        description += (" Upstream-flagged contaminants were removed independently of cRAP membership "
+                        "using MaxQuant Potential contaminant flags or fully contaminant-prefixed protein groups.")
     return description
+
+
+def _contaminant_categories_html(annotation) -> str:
+    contaminants = getattr(getattr(annotation, "filter_config", None), "contaminants", None)
+    if not getattr(contaminants, "enabled", False):
+        return ""
+    from app.services.contaminant_filter import contaminant_reference
+    names = {int(row["gpm_category_id"]): row["gpm_category"]
+             for row in contaminant_reference()["records"] if row.get("gpm_category_id")}
+    names[6] = "Upstream-flagged contaminants"
+    rows = "".join(f"<tr><td>{html.escape(names[int(category)])}</td></tr>"
+                   for category in sorted(set(contaminants.categories)))
+    return "<table><thead><tr><th>Applied contaminant categories</th></tr></thead><tbody>" + rows + "</tbody></table>"
 
 
 def _filter_not_applied_description(annotation) -> str | None:
@@ -785,10 +819,8 @@ def _filter_not_applied_description(annotation) -> str | None:
 IMPUTED_AS_OBSERVED_SENTENCE = (
     "Imputed values were treated as observed values in the statistical test: they count towards "
     "each group's size and the degrees of freedom. Counts distinguish measured-only, fully imputed and "
-    "partially imputed values (n_measured__, n_fully_imputed__, n_partially_imputed__). For collapsed "
-    "phosphoproteins this describes direct site contributions in each sample, not cross-sample centering effects. "
-    "The n_imputed__<condition> and imputed_values "
-    "columns count values with either fully or partially imputed contributions behind every feature."
+    "partially imputed values. The total imputed count includes values with either fully or "
+    "partially imputed contributions for each feature."
 )
 
 
@@ -888,6 +920,8 @@ def _data_provenance_html(
         parts.append(
             f"<p><strong>Filtering:</strong> {html.escape(filter_description)}</p>"
         )
+    if source != "data":
+        parts.append(_contaminant_categories_html(annotation))
     parts.append(_localization_html(kind))
     parts.append(
         _imputation_html(kind=kind, imputed=source == "imputed", subject=subject, tested=tested)
@@ -961,7 +995,7 @@ def _level_imputation_html(kind: str) -> str:
     return (
         f"<p><strong>Imputation:</strong> {html.escape(head)}</p>"
         + "".join(f"<p>{html.escape(paragraph)}</p>" for paragraph in rest)
-        + "<p>Imputed values are used only where a plot names Imputed Data as its "
+        + "<p>Imputed values are used only where a plot names <strong>Imputed Data</strong> as its "
         "source; every plot below states its own source.</p>"
     )
 
@@ -1060,11 +1094,65 @@ def _volcano_block_html(
     entries: list[SummaryVolcanoEntry],
     warnings: list[str],
     advanced: dict[str, Any] | None = None,
+    styles: list[dict[str, Any]] | None = None,
+    anchors: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
-    for index, entry in enumerate(entries, start=1):
+    index = 0
+    for position, entry in enumerate(entries):
+        style = styles[position] if styles else {}
+        entry_advanced = style["advanced"] if style.get("advanced") is not None else advanced
+        size = {key: style[key] for key in ("width_cm", "height_cm", "dpi") if key in style}
+        title = f"{kind.capitalize()} Volcano Plot ({entry.condition1} vs {entry.condition2})"
+        try:
+            request = VolcanoRequest(
+                kind=kind,
+                dataSource=entry.dataSource,
+                condition1=entry.condition1,
+                condition2=entry.condition2,
+                identifier=entry.identifier,
+                pValueThreshold=entry.pValueThreshold,
+                log2fcThreshold=entry.log2fcThreshold,
+                testType=entry.testType,
+                useUncorrected=entry.useUncorrected,
+                proteinCorrection=entry.proteinCorrection,
+                highlightTerms=entry.highlightTerms,
+            )
+        except Exception as exc:
+            _report_failure(warnings, title, exc)
+            continue
+        # Each entry renders the way it was added. The PCA blocks make the same
+        # choice from a page-level setting; a volcano is per comparison, so the
+        # mode rides on the entry.
+        if entry.renderType == "Normal":
+            figure = _safe_png(
+                renderer=lambda request=request, entry=entry, entry_advanced=entry_advanced, size=size: report_plot(volcano_png,
+                    request,
+                    advanced=entry_advanced,
+                    **size,
+                    label_top_up=entry.labelTopUp,
+                    label_top_down=entry.labelTopDown,
+                    highlight_outline=entry.highlightOutline,
+                    highlight_labels=entry.highlightLabels,
+                ),
+                fallback_title=title,
+                warnings=warnings,
+            )
+        else:
+            figure = _safe_plotly(
+                renderer=lambda request=request, entry=entry, entry_advanced=entry_advanced: report_plot(
+                    volcano_html, request, advanced=entry_advanced, highlight_outline=entry.highlightOutline,
+                    label_top_up=entry.labelTopUp, label_top_down=entry.labelTopDown),
+                fallback_title=title,
+                warnings=warnings,
+                height_px=920,
+            )
+        if not figure:
+            continue
+        index += 1
+        anchor = f" id='{anchors[position]}'" if anchors else ""
         parts.append(
-            f"<h3>Comparison {index}: {html.escape(entry.condition1)} vs {html.escape(entry.condition2)}</h3>"
+            f"<h3{anchor}>Comparison {index}: {html.escape(entry.condition1)} vs {html.escape(entry.condition2)}</h3>"
         )
         parts.append(
             _data_provenance_html(
@@ -1079,49 +1167,21 @@ def _volcano_block_html(
         )
         parts.append(_volcano_statistics_html(entry))
         parts.append(_volcano_counts_html(entry=entry, kind=kind, warnings=warnings))
-        title = f"{kind.capitalize()} Volcano Plot ({entry.condition1} vs {entry.condition2})"
-        request = VolcanoRequest(
-            kind=kind,
-            dataSource=entry.dataSource,
-            condition1=entry.condition1,
-            condition2=entry.condition2,
-            identifier=entry.identifier,
-            pValueThreshold=entry.pValueThreshold,
-            log2fcThreshold=entry.log2fcThreshold,
-            testType=entry.testType,
-            useUncorrected=entry.useUncorrected,
-            proteinCorrection=entry.proteinCorrection,
-            highlightTerms=entry.highlightTerms,
-        )
-        # Each entry renders the way it was added. The PCA blocks make the same
-        # choice from a page-level setting; a volcano is per comparison, so the
-        # mode rides on the entry.
-        if entry.renderType == "Normal":
-            parts.append(
-                _safe_png(
-                    renderer=lambda request=request, entry=entry: report_plot(volcano_png,
-                        request,
-                        advanced=advanced,
-                        label_top_up=entry.labelTopUp,
-                        label_top_down=entry.labelTopDown,
-                        highlight_outline=entry.highlightOutline,
-                        highlight_labels=entry.highlightLabels,
-                    ),
-                    fallback_title=title,
-                    warnings=warnings,
-                )
-            )
-        else:
-            parts.append(
-                _safe_plotly(
-                    renderer=lambda request=request, entry=entry: report_plot(
-                        volcano_html, request, advanced=advanced, highlight_outline=entry.highlightOutline),
-                    fallback_title=title,
-                    warnings=warnings,
-                    height_px=920,
-                )
-            )
+        parts.append(figure)
     return "".join(parts)
+
+
+def _figure_with_text(text_html: str, figure_html: str) -> str:
+    """The text that belongs to a figure, or nothing when the figure is missing."""
+    return text_html + figure_html if figure_html else ""
+
+
+def _default_pca_data_source(kind: str) -> str:
+    """What the PCA tab opens on when it was never opened: the most processed matrix."""
+    try:
+        return _report_data_source(most_processed_data_source(kind))
+    except Exception:
+        return "data"
 
 
 def _qc_plot_style(settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -1138,12 +1198,35 @@ def _abundance_report(kind, settings, advanced, warnings, title):
     options.update(condition=_to_str(settings.get("condition"), "All Conditions"),
                    height_cm=_to_float(settings.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
                    advanced=advanced)
+    if "identifier" in settings:
+        options["identifier"] = _to_str(settings.get("identifier"), "workflow")
+    if any(key in settings for key in ("search", "topHigh", "topLow", "highlightOutline", "highlightLabels")):
+        options.update(search=_to_str(settings.get("search"), ""),
+                       top_high=_to_int(settings.get("topHigh"), 0, minimum=0),
+                       top_low=_to_int(settings.get("topLow"), 0, minimum=0),
+                       highlight_outline=_to_bool(settings.get("highlightOutline"), True),
+                       highlight_labels=_to_bool(settings.get("highlightLabels"), False))
     if settings.get("type") == "Interactive":
         options.pop("dpi")
         return _safe_plotly(renderer=lambda: report_plot(qc_abundance_interactive_html, kind=kind, **options),
                             fallback_title=title, warnings=warnings)
     return _safe_png(renderer=lambda: report_plot(qc_abundance_plot, kind=kind, **options),
                      fallback_title=title, warnings=warnings)
+
+
+def _coverage_plot_options(settings: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        'include_id': _to_bool(settings.get('includeId'), False),
+        'header': _to_bool(settings.get('header'), True),
+        'legend': _to_bool(settings.get('legend'), True),
+        'summary': _to_bool(settings.get('summary'), False),
+        'text': _to_bool(settings.get('text'), False),
+        'text_size': _to_int(settings.get('textSize'), 9, minimum=6, maximum=24),
+        'random_seed': _to_int(settings.get('randomSeed'), 1, minimum=0, maximum=2147483647),
+        'width_cm': _to_float(settings.get('widthCm'), 20.0, minimum=6.0, maximum=60.0),
+        'height_cm': _to_float(settings.get('heightCm'), 10.0, minimum=4.0, maximum=60.0),
+        'dpi': _to_int(settings.get('dpi'), 300, minimum=72, maximum=1200),
+    }
 
 
 def _missing_plot_options(settings: Mapping[str, Any], *, peptide=False) -> dict[str, Any]:
@@ -1187,7 +1270,7 @@ def _pca_plot_options(settings: Mapping[str, Any]) -> dict[str, Any]:
         "color_by": _to_str(settings.get("colorBy"), "Condition"),
         "dbscan_eps_factor": _to_float(settings.get("dbscanEpsFactor"), 0.5, minimum=1e-6, maximum=1000.0),
         "dbscan_min_samples": _to_int(settings.get("dbscanMinSamples"), 2, minimum=1, maximum=500),
-        "random_state": _to_int(settings.get("randomState"), 42, minimum=0, maximum=10_000_000),
+        "random_state": _to_int(settings.get("randomState"), 1, minimum=0, maximum=10_000_000),
         "width_cm": _to_float(settings.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
     }
 
@@ -1212,7 +1295,7 @@ def _pca_parameters_html(kind: str, data_source: str, options: Mapping[str, Any]
 
     cluster_key = str(options.get("cluster_method", "None")).strip().lower()
     if cluster_key in {"none", "", "off"}:
-        parts.append("clustering: none")
+        pass
     elif cluster_key == "kmeans":
         parts.append(f"clustering: k-means with k = {int(options.get('cluster_count', 3))}")
     elif cluster_key in {"agglomerative", "hierarchical"}:
@@ -1233,7 +1316,7 @@ def _pca_parameters_html(kind: str, data_source: str, options: Mapping[str, Any]
                 cluster_method="DBSCAN",
                 dbscan_eps_factor=factor,
                 dbscan_min_samples=min_samples,
-                random_state=int(options.get("random_state", 42)),
+                random_state=int(options.get("random_state", 1)),
             )
             resolved = summary.get("dbscan") or {}
             if resolved.get("epsEffective"):
@@ -1308,27 +1391,17 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                 else ""
             )
             + f"<p><strong>Filtering:</strong> {html.escape(description)}</p>"
+            + _contaminant_categories_html(annotation)
             + _localization_html(kind)
             + _level_imputation_html(kind)
         )
 
     report_context = payload.reportContext or SummaryReportContext()
-    protein_volcano_entries = _volcano_entries(report_context, "protein")
-    phospho_volcano_entries = _volcano_entries(report_context, "phospho")
-    qc_coverage_advanced = _qc_advanced_settings(report_context, "coverage")
-    qc_hist_advanced = _qc_advanced_settings(report_context, "histogram")
-    qc_box_advanced = _qc_advanced_settings(report_context, "boxplot")
-    qc_cv_advanced = _qc_advanced_settings(report_context, "cv")
-    qc_pca_advanced = _qc_advanced_settings(report_context, "pca")
-    qc_abundance_advanced = _qc_advanced_settings(report_context, "abundance")
-    qc_correlation_advanced = _qc_advanced_settings(report_context, "correlation")
-    completeness_missing_advanced = _completeness_advanced_settings(report_context, "missingPlot")
     peptide_rt_advanced = _global_advanced_settings(report_context, "peptide:rtPlot")
     peptide_modification_advanced = _global_advanced_settings(report_context, "peptide:modification")
     peptide_missed_cleavage_advanced = _global_advanced_settings(report_context, "peptide:missedCleavage")
     phosphosite_plot_advanced = _global_advanced_settings(report_context, "phospho:phosphositePlot")
     phospho_coverage_advanced = _global_advanced_settings(report_context, "phospho:coverage")
-    stats_volcano_advanced = _global_advanced_settings(report_context, "stats:volcano")
 
     next_block = 1
     peptide_block = next_block if has_peptide else None
@@ -1347,6 +1420,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         "<style>",
         "body{font-family:Arial,sans-serif;max-width:1300px;margin:0 auto;padding:24px;line-height:1.5;color:#111;}",
         "h1{margin-bottom:6px;}",
+        "h1.level{font-size:1.7em;margin-top:28px;}",
         "h2{margin-top:24px;border-top:1px solid #e8e8e8;padding-top:14px;}",
         "h3{margin-top:18px;}",
         "table{border-collapse:collapse;width:100%;font-size:14px;}",
@@ -1354,6 +1428,8 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         "th{background:#f5f5f5;}",
         ".toc-group{font-size:20px;font-weight:700;margin:10px 0 4px;}",
         ".toc-item{font-size:15px;margin:2px 0 2px 14px;}",
+        ".toc-group a,.toc-item a{color:inherit;text-decoration:none;}",
+        ".toc-group a:hover,.toc-item a:hover{text-decoration:underline;}",
         ".meta{color:#444;margin:2px 0;}",
         ".warn{border:1px solid #ffe69c;background:#fff3cd;color:#664d03;padding:10px;border-radius:8px;margin:8px 0;}",
         # The sample mapping is capped in height so a 6-sample run and a
@@ -1383,54 +1459,35 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         html_parts.append(introduction)
 
     html_parts.append("<h2>Table of Contents</h2>")
-    html_parts.append("<p class='toc-group'>Sample Mapping</p>")
-    if peptide_block is not None:
-        html_parts.extend(
-            [
-                f"<p class='toc-group'>{peptide_block}. Peptide Level Plots</p>",
-                f"<p class='toc-item'>{peptide_block}.1 Coverage Plot - Peptide Level</p>",
-                f"<p class='toc-item'>{peptide_block}.2 Missing Value Plot - Peptide Level</p>",
-                f"<p class='toc-item'>{peptide_block}.3 Retention Time Plot</p>",
-                f"<p class='toc-item'>{peptide_block}.4 Modification Plot</p>",
-                f"<p class='toc-item'>{peptide_block}.5 Missed Cleavage Plot</p>",
-            ]
-        )
-    if protein_block is not None:
-        html_parts.extend(
-            [
-                f"<p class='toc-group'>{protein_block}. Protein Level Plots</p>",
-                f"<p class='toc-item'>{protein_block}.1 Coverage Plot</p>",
-                f"<p class='toc-item'>{protein_block}.2 Missing Value Plot</p>",
-                f"<p class='toc-item'>{protein_block}.3 Histogram Intensity</p>",
-                f"<p class='toc-item'>{protein_block}.4 Boxplot Intensity</p>",
-                f"<p class='toc-item'>{protein_block}.5 Coefficient of Variation Plot</p>",
-                f"<p class='toc-item'>{protein_block}.6 PCA Plot</p>",
-                f"<p class='toc-item'>{protein_block}.7 Abundance Plot</p>",
-                f"<p class='toc-item'>{protein_block}.8 Correlation Plot</p>",
-            ]
-        )
-        if protein_volcano_entries:
-            html_parts.append(f"<p class='toc-item'>{protein_block}.9 Volcano Plot</p>")
-    if phospho_block is not None:
-        html_parts.extend(
-            [
-                f"<p class='toc-group'>{phospho_block}. Phosphosite Level Plots</p>",
-                f"<p class='toc-item'>{phospho_block}.1 Overview Phosphosites</p>",
-                f"<p class='toc-item'>{phospho_block}.2 Coverage Plot (per sample)</p>",
-                f"<p class='toc-item'>{phospho_block}.3 Coverage Plot (per condition)</p>",
-                f"<p class='toc-item'>{phospho_block}.4 Missing Value Plot</p>",
-                f"<p class='toc-item'>{phospho_block}.5 Histogram Intensity</p>",
-                f"<p class='toc-item'>{phospho_block}.6 Boxplot Intensity</p>",
-                f"<p class='toc-item'>{phospho_block}.7 Coefficient of Variation Plot</p>",
-                f"<p class='toc-item'>{phospho_block}.8 PCA Plot</p>",
-                f"<p class='toc-item'>{phospho_block}.9 Abundance Plot</p>",
-                f"<p class='toc-item'>{phospho_block}.10 Correlation Plot</p>",
-            ]
-        )
-        if phospho_volcano_entries:
-            html_parts.append(f"<p class='toc-item'>{phospho_block}.11 Volcano Plot</p>")
+    # The contents are written from the headings below once they are known, so
+    # the two cannot disagree.
+    contents: list[tuple[str, str, str]] = [("group", "sample-mapping", "Sample Mapping")]
+    contents_position = len(html_parts)
+    html_parts.append("")
 
-    html_parts.append("<h2>Sample Mapping</h2>")
+    def append_level_heading(block: int, name: str) -> None:
+        contents.append(("group", f"s-{block}", f"{block} {name}"))
+        html_parts.append(f"<h1 class='level' id='s-{block}'>{block} {name}</h1>")
+
+    def append_optional_sections(kind: str, block: int, first_section: int, suffix: str) -> None:
+        number = first_section
+        for key, title, content in optional_sections(kind, report_context, warnings):
+            if not content:
+                continue
+            _append_plot_section(
+                html_parts=html_parts,
+                contents=contents,
+                section_id=f"{block}.{number}",
+                title=title,
+                description=None,
+                general_comment_key=f"{key}{suffix}",
+                text_entries=text_entries,
+                text_key=f"{key}{suffix}",
+                content_html=content,
+            )
+            number += 1
+
+    html_parts.append("<h2 id='sample-mapping'>Sample Mapping</h2>")
     html_parts.append(
         _sample_mapping_html(
             levels=[
@@ -1445,18 +1502,31 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                 ),
             ],
             warnings=warnings,
+            custom_labels=payload.sampleLabels if payload.includeSampleLabels else None,
         )
     )
 
     if peptide_block is not None:
-        html_parts.append(f"<h1>{peptide_block} Peptide Level</h1>")
+        append_level_heading(peptide_block, "Peptide Level")
         peptide_rt = _module_settings(report_context, "peptide", "rtPlot")
         peptide_modification = _module_settings(report_context, "peptide", "modification")
         peptide_missed_cleavage = _module_settings(report_context, "peptide", "missedCleavage")
         peptide_coverage = _module_settings(report_context, "peptide", "coverage")
+        peptide_coverage_options = dict(
+            include_id=_to_bool(peptide_coverage.get("includeId"), False),
+            header=_to_bool(peptide_coverage.get("header"), True),
+            legend=_to_bool(peptide_coverage.get("legend"), True),
+            summary=_to_bool(peptide_coverage.get("summary"), False),
+            text=_to_bool(peptide_coverage.get("text"), False),
+            text_size=_to_int(peptide_coverage.get("textSize"), 9, minimum=6, maximum=24),
+            random_seed=_to_int(peptide_coverage.get("randomSeed"), 1, minimum=0, maximum=2_147_483_647),
+            width_cm=_to_float(peptide_coverage.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
+            height_cm=_to_float(peptide_coverage.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
+            dpi=_to_int(peptide_coverage.get("dpi"), 300, minimum=72, maximum=1200),
+        ) if peptide_coverage else {}
 
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{peptide_block}.1",
             title="Coverage Plot - Peptide Level",
             description=None,
@@ -1465,7 +1535,8 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             text_key="CoveragePep",
             content_html=_safe_png(
                 renderer=lambda: report_plot(qc_peptide_coverage_plot,
-                    advanced=qc_coverage_advanced,
+                    advanced=_qc_advanced_settings(report_context, "peptide", "coverage"),
+                    **peptide_coverage_options,
                     reference_line=_to_bool(peptide_coverage.get("referenceLine"), True),
                     **({"quantity_column": peptide_coverage["quantityColumn"]}
                        if "quantityColumn" in peptide_coverage else {})),
@@ -1474,7 +1545,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             ),
         )
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{peptide_block}.2",
             title="Missing Value Plot - Peptide Level",
             description=None,
@@ -1482,14 +1553,14 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             text_entries=text_entries,
             text_key="MissingValuePep",
             content_html=_safe_png(
-                renderer=lambda: report_plot(completeness_missing_value_plot_peptide, advanced=completeness_missing_advanced,
-                    **_missing_plot_options(report_context.completenessSettings, peptide=True)),
+                renderer=lambda: report_plot(completeness_missing_value_plot_peptide, advanced=_completeness_advanced_settings(report_context, "peptide", "missingPlot"),
+                    **_missing_plot_options(_workflow_options(report_context, "peptide", "missingPlot", report_context.completenessSettings), peptide=True)),
                 fallback_title="Peptide Missing Value Plot",
                 warnings=warnings,
             ),
         )
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{peptide_block}.3",
             title="Retention Time Plot",
             description=None,
@@ -1498,12 +1569,12 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             text_key="RT",
             content_html=_safe_png(
                 renderer=lambda: report_plot(peptide_rt_plot,
-                    method=_to_str(peptide_rt.get("method"), "Hexbin Plot"),
+                    method=_to_str(peptide_rt.get("method"), "Scatter Plot"),
                     add_line=_to_bool(peptide_rt.get("addLine"), False),
-                    bins=_to_int(peptide_rt.get("bins"), 1000, minimum=10, maximum=2000),
+                    bins=_to_int(peptide_rt.get("bins"), 100, minimum=10, maximum=2000),
                     header=_to_bool(peptide_rt.get("header"), True),
                     sampling_seed=_to_int(
-                        peptide_rt.get("randomSeed"), 69, minimum=0, maximum=2_147_483_647
+                        peptide_rt.get("randomSeed"), 1, minimum=0, maximum=2_147_483_647
                     ),
                     width_cm=_to_float(peptide_rt.get("widthCm"), 20.0, minimum=5.0, maximum=60.0),
                     height_cm=_to_float(peptide_rt.get("heightCm"), 15.0, minimum=5.0, maximum=60.0),
@@ -1515,7 +1586,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             ),
         )
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{peptide_block}.4",
             title="Modification Plot",
             description=None,
@@ -1537,7 +1608,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             ),
         )
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{peptide_block}.5",
             title="Missed Cleavage Plot",
             description=None,
@@ -1566,8 +1637,215 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             ),
         )
 
+    def append_common_qc_sections(
+        kind: str, block: int, first_section: int, suffix: str, display_name: str,
+        hist: dict, box: dict, cv: dict,
+    ) -> None:
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=f"{block}.{first_section}",
+            title="Missing Value Plot",
+            description=None,
+            general_comment_key=f"MissingValue{suffix}",
+            text_entries=text_entries,
+            text_key=f"MissingValue{suffix}",
+            content_html=_figure_with_text(_completeness_exclusion_html(kind), _safe_png(
+                renderer=lambda: report_plot(completeness_missing_value_plot, kind=kind, advanced=_completeness_advanced_settings(report_context, kind, "missingPlot"),
+                    **_missing_plot_options(_workflow_options(report_context, kind, "missingPlot", report_context.completenessSettings))),
+                fallback_title=f"{display_name} Missing Value Plot",
+                warnings=warnings,
+            )),
+        )
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=f"{block}.{first_section + 1}",
+            title="Histogram Intensity",
+            description=None,
+            general_comment_key=f"HistogramInt{suffix}",
+            text_entries=text_entries,
+            text_key=f"HistogramInt{suffix}",
+            content_html=_safe_png(
+                renderer=lambda: report_plot(qc_intensity_histogram_plot,
+                    kind=kind,
+                    **_qc_plot_style(hist),
+                    height_cm=_to_float(hist.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
+                    advanced=_qc_advanced_settings(report_context, kind, "histogram"),
+                ),
+                fallback_title=f"{display_name} Histogram Plot",
+                warnings=warnings,
+            ),
+        )
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=f"{block}.{first_section + 2}",
+            title="Boxplot Intensity",
+            description=None,
+            general_comment_key=f"BoxplotInt{suffix}",
+            comments_override=_boxplot_comment_paragraphs(
+                kind, _to_str(box.get("mode"), "Mean"), f"BoxplotInt{suffix}"
+            ),
+            text_entries=text_entries,
+            text_key=f"BoxplotInt{suffix}",
+            content_html=(
+                _safe_png(
+                    renderer=lambda: report_plot(qc_boxplot_plot,
+                        kind=kind,
+                        mode=_to_str(box.get("mode"), "Mean"),
+                        outliers=_to_bool(box.get("outliers"), False),
+                        include_id=_to_bool(box.get("includeId"), False),
+                        **_qc_plot_style(box),
+                        text=_to_bool(box.get("text"), False),
+                        text_size=_to_int(box.get("textSize"), 9, minimum=6, maximum=24),
+                        height_cm=_to_float(box.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
+                        advanced=_qc_advanced_settings(report_context, kind, "boxplot"),
+                    ),
+                    fallback_title=f"{display_name} Boxplot",
+                    warnings=warnings,
+                )
+                + _safe_table_html(
+                    renderer=lambda: report_table(qc_boxplot_table,
+                        kind=kind,
+                        mode=_to_str(box.get("mode"), "Mean"),
+                    ),
+                    title="Boxplot Summary Table",
+                    fallback_title=f"{display_name} Boxplot Summary Table",
+                    warnings=warnings,
+                )
+            ),
+        )
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=f"{block}.{first_section + 3}",
+            title="Coefficient of Variation Plot",
+            description=None,
+            general_comment_key=f"Cov{suffix}",
+            text_entries=text_entries,
+            text_key=f"Cov{suffix}",
+            content_html=(
+                _safe_png(
+                    renderer=lambda: report_plot(qc_cv_plot,
+                        kind=kind,
+                        outliers=_to_bool(cv.get("outliers"), False),
+                        **_qc_plot_style(cv),
+                        text=_to_bool(cv.get("text"), False),
+                        text_size=_to_int(cv.get("textSize"), 9, minimum=6, maximum=24),
+                        height_cm=_to_float(cv.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
+                        advanced=_qc_advanced_settings(report_context, kind, "cv"),
+                    ),
+                    fallback_title=f"{display_name} CV Plot",
+                    warnings=warnings,
+                )
+                + _safe_table_html(
+                    renderer=lambda: report_table(qc_cv_table, kind=kind),
+                    title="Coefficient of Variation Summary Table",
+                    fallback_title=f"{display_name} CV Summary Table",
+                    warnings=warnings,
+                )
+            ),
+        )
+
+    def append_abundance_correlation_sections(
+        kind: str, block: int, first_section: int, suffix: str, display_name: str,
+        abundance: dict, correlation: dict,
+    ) -> None:
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=f"{block}.{first_section}",
+            title="Abundance Plot",
+            description=None,
+            general_comment_key=f"Abundance{suffix}",
+            text_entries=text_entries,
+            text_key=f"Abundance{suffix}",
+            content_html=_abundance_report(kind, abundance, _qc_advanced_settings(report_context, kind, "abundance"),
+                                           warnings, f"{display_name} Abundance Plot"),
+        )
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=f"{block}.{first_section + 1}",
+            title="Correlation Plot",
+            description=None,
+            general_comment_key=f"Correlation{suffix}",
+            text_entries=text_entries,
+            text_key=f"Correlation{suffix}",
+            content_html=_safe_png(
+                renderer=lambda: report_plot(qc_correlation_plot,
+                    kind=kind,
+                    method=_to_str(correlation.get("method"), "Matrix"),
+                    include_id=_to_bool(correlation.get("includeId"), False),
+                    full_range=_to_bool(correlation.get("fullRange"), False),
+                    width_cm=_to_float(correlation.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
+                    height_cm=_to_float(correlation.get("heightCm"), 16.0, minimum=4.0, maximum=60.0),
+                    dpi=_to_int(correlation.get("dpi"), 400, minimum=72, maximum=1200),
+                    advanced=_qc_advanced_settings(report_context, kind, "correlation"),
+                ),
+                fallback_title=f"{display_name} Correlation Plot",
+                warnings=warnings,
+            ),
+        )
+
+    def append_pca_section(
+        kind: str, section_id: str, comment_key: str, display_name: str, pca: dict,
+    ) -> None:
+        pca_height_cm = _to_float(pca.get("heightCm"), 10.0, minimum=4.0, maximum=60.0)
+        pca_interactive = _to_str(pca.get("type"), "Normal").lower() == "interactive"
+        # The report follows the PCA tab: its last selection, or the tab's own
+        # default when it was never opened.
+        pca_data_source = (
+            _report_data_source(pca.get("dataSource")) if "dataSource" in pca
+            else _default_pca_data_source(kind)
+        )
+        # A PCA is built from the rows that survived filtering, and from drawn
+        # values when its source is imputed, so it carries the same provenance
+        # block as a volcano rather than a bare source line.
+        pca_source_html = _data_provenance_html(
+            kind=kind,
+            data_source=pca_data_source,
+            subject="this plot",
+            completeness=_pca_completeness_description(kind, pca_data_source),
+        ) + _pca_parameters_html(kind, pca_data_source, _pca_plot_options(pca))
+        _append_plot_section(
+            html_parts=html_parts, contents=contents,
+            section_id=section_id,
+            title="PCA Plot",
+            description=None,
+            general_comment_key=comment_key,
+            text_entries=text_entries,
+            text_key=comment_key,
+            content_html=(
+                (
+                    _figure_with_text(pca_source_html, _safe_plotly(
+                        renderer=lambda: report_plot(qc_pca_interactive_html,
+                            kind=kind,
+                            data_source=pca_data_source,
+                            **_pca_plot_options(pca),
+                            height_cm=pca_height_cm,
+                            advanced=_qc_advanced_settings(report_context, kind, "pca"),
+                        ),
+                        fallback_title=f"{display_name} PCA Interactive Plot",
+                        warnings=warnings,
+                        height_px=_interactive_height_px(pca_height_cm),
+                    ))
+                )
+                if pca_interactive
+                else (
+                    _figure_with_text(pca_source_html, _safe_png(
+                        renderer=lambda: report_plot(qc_pca_plot,
+                            kind=kind,
+                            data_source=pca_data_source,
+                            **_pca_plot_options(pca),
+                            height_cm=pca_height_cm,
+                            dpi=_to_int(pca.get("dpi"), 300, minimum=72, maximum=1200),
+                            advanced=_qc_advanced_settings(report_context, kind, "pca"),
+                        ),
+                        fallback_title=f"{display_name} PCA Plot",
+                        warnings=warnings,
+                    ))
+                )
+            ),
+        )
+
     if protein_block is not None:
-        html_parts.append(f"<h1>{protein_block} Protein Level</h1>")
+        append_level_heading(protein_block, "Protein Level")
         if "protein" in filter_paragraphs:
             html_parts.append(filter_paragraphs["protein"])
         protein_coverage = _module_settings(report_context, "protein", "coverage")
@@ -1579,7 +1857,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         protein_correlation = _module_settings(report_context, "protein", "correlation")
 
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{protein_block}.1",
             title="Coverage Plot",
             description=None,
@@ -1590,268 +1868,55 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                 _safe_png(
                     renderer=lambda: report_plot(qc_coverage_plot,
                         kind="protein",
-                        include_id=_to_bool(protein_coverage.get("includeId"), False),
-                        header=_to_bool(protein_coverage.get("header"), True),
-                        legend=_to_bool(protein_coverage.get("legend"), True),
-                        summary=_to_bool(protein_coverage.get("summary"), False),
-                        text=_to_bool(protein_coverage.get("text"), False),
-                        text_size=_to_int(protein_coverage.get("textSize"), 9, minimum=6, maximum=24),
-                        random_seed=_to_int(
-                            protein_coverage.get("randomSeed"),
-                            187,
-                            minimum=0,
-                            maximum=2_147_483_647,
-                        ),
-                        width_cm=_to_float(protein_coverage.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
-                        height_cm=_to_float(protein_coverage.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                        dpi=_to_int(protein_coverage.get("dpi"), 300, minimum=72, maximum=1200),
-                        advanced=qc_coverage_advanced,
+                        **_coverage_plot_options(protein_coverage),
+                        advanced=_qc_advanced_settings(report_context, "protein", "coverage"),
                         reference_line=_to_bool(protein_coverage.get("referenceLine"), True),
                     ),
                     fallback_title="Protein Coverage Plot",
                     warnings=warnings,
                 )
                 + _safe_table_html(
-                    renderer=lambda: report_table(qc_coverage_table,
-                        kind="protein",
-                        summary=_to_bool(protein_coverage.get("summary"), False),
-                    ),
+                    renderer=lambda: report_table(qc_coverage_table, kind="protein", summary=False),
                     title="Coverage Table (per sample)",
                     fallback_title="Protein Coverage Table",
-                    warnings=warnings,
-                )
-            ),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.2",
-            title="Missing Value Plot",
-            description=None,
-            general_comment_key="MissingValueProt",
-            text_entries=text_entries,
-            text_key="MissingValueProt",
-            content_html=_completeness_exclusion_html("protein") + _safe_png(
-                renderer=lambda: report_plot(completeness_missing_value_plot, kind="protein", advanced=completeness_missing_advanced,
-                    **_missing_plot_options(report_context.completenessSettings)),
-                fallback_title="Protein Missing Value Plot",
-                warnings=warnings,
-            ),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.3",
-            title="Histogram Intensity",
-            description=None,
-            general_comment_key="HistogramIntProt",
-            text_entries=text_entries,
-            text_key="HistogramIntProt",
-            content_html=_safe_png(
-                renderer=lambda: report_plot(qc_intensity_histogram_plot,
-                    kind="protein",
-                    **_qc_plot_style(protein_hist),
-                    height_cm=_to_float(protein_hist.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                    advanced=qc_hist_advanced,
-                ),
-                fallback_title="Protein Histogram Plot",
-                warnings=warnings,
-            ),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.4",
-            title="Boxplot Intensity",
-            description=None,
-            general_comment_key="BoxplotIntProt",
-            comments_override=_boxplot_comment_paragraphs(
-                "protein", _to_str(protein_box.get("mode"), "Mean"), "BoxplotIntProt"
-            ),
-            text_entries=text_entries,
-            text_key="BoxplotIntProt",
-            content_html=(
-                _safe_png(
-                    renderer=lambda: report_plot(qc_boxplot_plot,
-                        kind="protein",
-                        mode=_to_str(protein_box.get("mode"), "Mean"),
-                        outliers=_to_bool(protein_box.get("outliers"), False),
-                        include_id=_to_bool(protein_box.get("includeId"), False),
-                        **_qc_plot_style(protein_box),
-                        text=_to_bool(protein_box.get("text"), False),
-                        text_size=_to_int(protein_box.get("textSize"), 9, minimum=6, maximum=24),
-                        height_cm=_to_float(protein_box.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                        advanced=qc_box_advanced,
-                    ),
-                    fallback_title="Protein Boxplot",
+                    entity_plural=entity_labels_for_kind("protein")[1],
                     warnings=warnings,
                 )
                 + _safe_table_html(
-                    renderer=lambda: report_table(qc_boxplot_table,
-                        kind="protein",
-                        mode=_to_str(protein_box.get("mode"), "Mean"),
-                    ),
-                    title="Boxplot Summary Table",
-                    fallback_title="Protein Boxplot Summary Table",
+                    renderer=lambda: report_table(qc_coverage_table, kind="protein", summary=True),
+                    title="Coverage Table (per condition)",
+                    fallback_title="Protein Coverage Table (per condition)",
+                    entity_plural=entity_labels_for_kind("protein")[1],
                     warnings=warnings,
                 )
             ),
         )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.5",
-            title="Coefficient of Variation Plot",
-            description=None,
-            general_comment_key="CovProt",
-            text_entries=text_entries,
-            text_key="CovProt",
-            content_html=(
-                _safe_png(
-                    renderer=lambda: report_plot(qc_cv_plot,
-                        kind="protein",
-                        outliers=_to_bool(protein_cv.get("outliers"), False),
-                        **_qc_plot_style(protein_cv),
-                        text=_to_bool(protein_cv.get("text"), False),
-                        text_size=_to_int(protein_cv.get("textSize"), 9, minimum=6, maximum=24),
-                        height_cm=_to_float(protein_cv.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                        advanced=qc_cv_advanced,
-                    ),
-                    fallback_title="Protein CV Plot",
-                    warnings=warnings,
-                )
-                + _safe_table_html(
-                    renderer=lambda: report_table(qc_cv_table, kind="protein"),
-                    title="Coefficient of Variation Summary Table",
-                    fallback_title="Protein CV Summary Table",
-                    warnings=warnings,
-                )
-            ),
+        append_common_qc_sections(
+            "protein", protein_block, 2, "Prot", "Protein",
+            protein_hist, protein_box, protein_cv,
         )
-        protein_pca_height_cm = _to_float(protein_pca.get("heightCm"), 10.0, minimum=4.0, maximum=60.0)
-        protein_pca_interactive = _to_str(protein_pca.get("type"), "Normal").lower() == "interactive"
-        protein_pca_data_source = _report_data_source(protein_pca.get("dataSource"))
-        # A PCA is built from the rows that survived filtering, and from drawn
-        # values when its source is imputed, so it carries the same provenance
-        # block as a volcano rather than a bare source line.
-        protein_pca_source_html = _data_provenance_html(
-            kind="protein",
-            data_source=protein_pca_data_source,
-            subject="this plot",
-            completeness=_pca_completeness_description("protein", protein_pca_data_source),
-        ) + _pca_parameters_html("protein", protein_pca_data_source, _pca_plot_options(protein_pca))
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.6",
-            title="PCA Plot",
-            description=None,
-            general_comment_key="PCAProt",
-            text_entries=text_entries,
-            text_key="PCAProt",
-            content_html=(
-                (
-                    protein_pca_source_html
-                    + _safe_plotly(
-                        renderer=lambda: report_plot(qc_pca_interactive_html,
-                            kind="protein",
-                            data_source=protein_pca_data_source,
-                            **_pca_plot_options(protein_pca),
-                            height_cm=protein_pca_height_cm,
-                            advanced=qc_pca_advanced,
-                        ),
-                        fallback_title="Protein PCA Interactive Plot",
-                        warnings=warnings,
-                        height_px=_interactive_height_px(protein_pca_height_cm),
-                    )
-                )
-                if protein_pca_interactive
-                else (
-                    protein_pca_source_html
-                    + _safe_png(
-                        renderer=lambda: report_plot(qc_pca_plot,
-                            kind="protein",
-                            data_source=protein_pca_data_source,
-                            **_pca_plot_options(protein_pca),
-                            height_cm=protein_pca_height_cm,
-                            dpi=_to_int(protein_pca.get("dpi"), 300, minimum=72, maximum=1200),
-                            advanced=qc_pca_advanced,
-                        ),
-                        fallback_title="Protein PCA Plot",
-                        warnings=warnings,
-                    )
-                )
-            ),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.7",
-            title="Abundance Plot",
-            description=None,
-            general_comment_key="AbundanceProt",
-            text_entries=text_entries,
-            text_key="AbundanceProt",
-            content_html=_abundance_report("protein", protein_abundance, qc_abundance_advanced,
-                                           warnings, "Protein Abundance Plot"),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{protein_block}.8",
-            title="Correlation Plot",
-            description=None,
-            general_comment_key="CorrelationProt",
-            text_entries=text_entries,
-            text_key="CorrelationProt",
-            content_html=_safe_png(
-                renderer=lambda: report_plot(qc_correlation_plot,
-                    kind="protein",
-                    method=_to_str(protein_correlation.get("method"), "Matrix"),
-                    include_id=_to_bool(protein_correlation.get("includeId"), False),
-                    full_range=_to_bool(protein_correlation.get("fullRange"), False),
-                    width_cm=_to_float(protein_correlation.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
-                    height_cm=_to_float(protein_correlation.get("heightCm"), 16.0, minimum=4.0, maximum=60.0),
-                    dpi=_to_int(protein_correlation.get("dpi"), 400, minimum=72, maximum=1200),
-                    advanced=qc_correlation_advanced,
-                ),
-                fallback_title="Protein Correlation Plot",
-                warnings=warnings,
-            ),
+        append_pca_section("protein", f"{protein_block}.6", "PCAProt", "Protein", protein_pca)
+        append_abundance_correlation_sections(
+            "protein", protein_block, 7, "Prot", "Protein",
+            protein_abundance, protein_correlation,
         )
 
-        if protein_volcano_entries:
-            _append_plot_section(
-                html_parts=html_parts,
-                section_id=f"{protein_block}.9",
-                title="Volcano Plot",
-                description=None,
-                general_comment_key="VolcanoProt",
-                text_entries=text_entries,
-                text_key="VolcanoProt",
-                # No section-wide imputation note: every comparison now states
-                # its own, which is also the accurate one when some comparisons
-                # use imputed data and others do not.
-                content_html=(
-                    _volcano_block_html(
-                        kind="protein",
-                        entries=protein_volcano_entries,
-                        warnings=warnings,
-                        advanced=stats_volcano_advanced,
-                    )
-                ),
-            )
+        append_optional_sections("protein", protein_block, 9, "Prot")
 
     if phospho_block is not None:
-        html_parts.append(f"<h1>{phospho_block} Phosphosite Level</h1>")
+        append_level_heading(phospho_block, "Phosphosite Level")
         if "phospho" in filter_paragraphs:
             html_parts.append(filter_paragraphs["phospho"])
         phospho_coverage = _module_settings(report_context, "phospho", "coverage")
         # The Phospho-specific page's own coverage settings (include-ID, the
-        # conditions shown, colours, point jitter), saved for the report.
+        # colours and point jitter), saved for the report. All conditions are included.
         site_coverage = _module_settings(report_context, "phospho", "phosphoCoverage")
-        site_coverage_conditions = [
-            str(condition) for condition in site_coverage.get("conditions", []) or [] if str(condition).strip()
-        ] if isinstance(site_coverage.get("conditions"), list) else []
         site_coverage_options = dict(
             include_id=_to_bool(site_coverage.get("includeId"), False),
-            conditions=site_coverage_conditions or None,
-            color_class_i=_to_str(site_coverage.get("colorClassI"), "#2563eb"),
-            color_not_class_i=_to_str(site_coverage.get("colorNotClassI"), "#f59e0b"),
-            random_seed=_to_int(site_coverage.get("randomSeed"), 69, minimum=0, maximum=2_147_483_647),
+            conditions=None,
+            color_class_i=_to_str(site_coverage.get("colorClassI"), ""),
+            color_not_class_i=_to_str(site_coverage.get("colorNotClassI"), ""),
+            random_seed=_to_int(site_coverage.get("randomSeed"), 1, minimum=0, maximum=2_147_483_647),
         )
         phospho_hist = _module_settings(report_context, "phospho", "hist")
         phospho_box = _module_settings(report_context, "phospho", "box")
@@ -1861,7 +1926,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
         phospho_correlation = _module_settings(report_context, "phospho", "correlation")
 
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{phospho_block}.1",
             title="Overview Phosphosites",
             description=None,
@@ -1875,39 +1940,45 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             ),
         )
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{phospho_block}.2",
-            title="Coverage Plot (per sample)",
+            title=("Coverage Plot (per sample)" if report_context.workflowPlotSettings and not _to_bool(phospho_coverage.get("summary"), False) else "Coverage Plot (per condition)"),
             description=None,
             general_comment_key="Coverage(Number)Phos",
-            comments_override=[*GENERAL_COMMENTS.get("Coverage(Number)Phos", []), CLASS_I_SENTENCE],
+            comments_override=GENERAL_COMMENTS.get("Coverage(Number)Phos", []),
             text_entries=text_entries,
             text_key="Coverage(Number)Phos",
             content_html=(
                 _safe_png(
-                    renderer=lambda: report_plot(phospho_coverage_png,
-                        mode="Normal",
-                        **site_coverage_options,
-                        advanced=phospho_coverage_advanced,
+                    renderer=lambda: report_plot(qc_coverage_plot,
+                        kind="phospho",
+                        **_coverage_plot_options(phospho_coverage),
+                        reference_line=_to_bool(phospho_coverage.get("referenceLine"), True),
+                        advanced=_qc_advanced_settings(report_context, "phospho", "coverage"),
                     ),
                     fallback_title="Phospho Coverage Number Plot",
                     warnings=warnings,
                 )
                 + _safe_table_html(
-                    renderer=lambda: report_table(qc_coverage_table,
-                        kind="phospho",
-                        summary=_to_bool(phospho_coverage.get("summary"), False),
-                    ),
+                    renderer=lambda: report_table(qc_coverage_table, kind="phospho", summary=False),
                     title="Coverage Table (per sample)",
                     fallback_title="Phospho Coverage Table",
+                    entity_plural=entity_labels_for_kind("phospho")[1],
+                    warnings=warnings,
+                )
+                + _safe_table_html(
+                    renderer=lambda: report_table(qc_coverage_table, kind="phospho", summary=True),
+                    title="Coverage Table (per condition)",
+                    fallback_title="Phospho Coverage Table (per condition)",
+                    entity_plural=entity_labels_for_kind("phospho")[1],
                     warnings=warnings,
                 )
             ),
         )
         _append_plot_section(
-            html_parts=html_parts,
+            html_parts=html_parts, contents=contents,
             section_id=f"{phospho_block}.3",
-            title="Coverage Plot (per condition)",
+            title="Coverage Plot (localization probability)",
             description=None,
             general_comment_key="Coverage(Quality)Phos",
             comments_override=[*GENERAL_COMMENTS.get("Coverage(Quality)Phos", []), CLASS_I_SENTENCE],
@@ -1915,7 +1986,7 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
             text_key="Coverage(Quality)Phos",
             content_html=_safe_png(
                 renderer=lambda: report_plot(phospho_coverage_png,
-                    mode="Summary",
+                    mode=_to_str(site_coverage.get("mode"), "Normal"),
                     **site_coverage_options,
                     advanced=phospho_coverage_advanced,
                 ),
@@ -1923,218 +1994,35 @@ def report_function(payload: SummaryReportRequest) -> SummaryReportResponse:
                 warnings=warnings,
             ),
         )
+        sty_settings = _module_settings(report_context, "phospho", "sty")
         _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.4",
-            title="Missing Value Plot",
-            description=None,
-            general_comment_key="MissingValuePhos",
-            text_entries=text_entries,
-            text_key="MissingValuePhos",
-            content_html=_completeness_exclusion_html("phospho") + _safe_png(
-                renderer=lambda: report_plot(completeness_missing_value_plot, kind="phospho", advanced=completeness_missing_advanced,
-                    **_missing_plot_options(report_context.completenessSettings)),
-                fallback_title="Phospho Missing Value Plot",
-                warnings=warnings,
-            ),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.5",
-            title="Histogram Intensity",
-            description=None,
-            general_comment_key="HistogramIntPhos",
-            text_entries=text_entries,
-            text_key="HistogramIntPhos",
+            html_parts=html_parts, contents=contents, section_id=f"{phospho_block}.4", title="STY Plot",
+            description=None, general_comment_key="STYPhos", text_entries=text_entries, text_key="STYPhos",
             content_html=_safe_png(
-                renderer=lambda: report_plot(qc_intensity_histogram_plot,
-                    kind="phospho",
-                    **_qc_plot_style(phospho_hist),
-                    height_cm=_to_float(phospho_hist.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                    advanced=qc_hist_advanced,
-                ),
-                fallback_title="Phospho Histogram Plot",
-                warnings=warnings,
+                renderer=lambda: report_plot(phospho_sty_png,
+                    advanced=_global_advanced_settings(report_context, "phospho:sty"),
+                    width_cm=_to_float(sty_settings.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
+                    height_cm=_to_float(sty_settings.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
+                    dpi=_to_int(sty_settings.get("dpi"), 300, minimum=72, maximum=1200)),
+                fallback_title="STY Plot", warnings=warnings,
             ),
         )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.6",
-            title="Boxplot Intensity",
-            description=None,
-            general_comment_key="BoxplotIntPhos",
-            comments_override=_boxplot_comment_paragraphs(
-                "phospho", _to_str(phospho_box.get("mode"), "Mean"), "BoxplotIntPhos"
-            ),
-            text_entries=text_entries,
-            text_key="BoxplotIntPhos",
-            content_html=(
-                _safe_png(
-                    renderer=lambda: report_plot(qc_boxplot_plot,
-                        kind="phospho",
-                        mode=_to_str(phospho_box.get("mode"), "Mean"),
-                        outliers=_to_bool(phospho_box.get("outliers"), False),
-                        include_id=_to_bool(phospho_box.get("includeId"), False),
-                        **_qc_plot_style(phospho_box),
-                        text=_to_bool(phospho_box.get("text"), False),
-                        text_size=_to_int(phospho_box.get("textSize"), 9, minimum=6, maximum=24),
-                        height_cm=_to_float(phospho_box.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                        advanced=qc_box_advanced,
-                    ),
-                    fallback_title="Phospho Boxplot",
-                    warnings=warnings,
-                )
-                + _safe_table_html(
-                    renderer=lambda: report_table(qc_boxplot_table,
-                        kind="phospho",
-                        mode=_to_str(phospho_box.get("mode"), "Mean"),
-                    ),
-                    title="Boxplot Summary Table",
-                    fallback_title="Phospho Boxplot Summary Table",
-                    warnings=warnings,
-                )
-            ),
+        append_common_qc_sections(
+            "phospho", phospho_block, 5, "Phos", "Phospho",
+            phospho_hist, phospho_box, phospho_cv,
         )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.7",
-            title="Coefficient of Variation Plot",
-            description=None,
-            general_comment_key="CovPhos",
-            text_entries=text_entries,
-            text_key="CovPhos",
-            content_html=(
-                _safe_png(
-                    renderer=lambda: report_plot(qc_cv_plot,
-                        kind="phospho",
-                        outliers=_to_bool(phospho_cv.get("outliers"), False),
-                        **_qc_plot_style(phospho_cv),
-                        text=_to_bool(phospho_cv.get("text"), False),
-                        text_size=_to_int(phospho_cv.get("textSize"), 9, minimum=6, maximum=24),
-                        height_cm=_to_float(phospho_cv.get("heightCm"), 10.0, minimum=4.0, maximum=60.0),
-                        advanced=qc_cv_advanced,
-                    ),
-                    fallback_title="Phospho CV Plot",
-                    warnings=warnings,
-                )
-                + _safe_table_html(
-                    renderer=lambda: report_table(qc_cv_table, kind="phospho"),
-                    title="Coefficient of Variation Summary Table",
-                    fallback_title="Phospho CV Summary Table",
-                    warnings=warnings,
-                )
-            ),
-        )
-        phospho_pca_height_cm = _to_float(phospho_pca.get("heightCm"), 10.0, minimum=4.0, maximum=60.0)
-        phospho_pca_interactive = _to_str(phospho_pca.get("type"), "Normal").lower() == "interactive"
-        phospho_pca_data_source = _report_data_source(phospho_pca.get("dataSource"))
-        phospho_pca_source_html = _data_provenance_html(
-            kind="phospho",
-            data_source=phospho_pca_data_source,
-            subject="this plot",
-            completeness=_pca_completeness_description("phospho", phospho_pca_data_source),
-        ) + _pca_parameters_html("phospho", phospho_pca_data_source, _pca_plot_options(phospho_pca))
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.8",
-            title="PCA Plot",
-            description=None,
-            general_comment_key="PCAPhos",
-            text_entries=text_entries,
-            text_key="PCAPhos",
-            content_html=(
-                (
-                    phospho_pca_source_html
-                    + _safe_plotly(
-                        renderer=lambda: report_plot(qc_pca_interactive_html,
-                            kind="phospho",
-                            data_source=phospho_pca_data_source,
-                            **_pca_plot_options(phospho_pca),
-                            height_cm=phospho_pca_height_cm,
-                            advanced=qc_pca_advanced,
-                        ),
-                        fallback_title="Phospho PCA Interactive Plot",
-                        warnings=warnings,
-                        height_px=_interactive_height_px(phospho_pca_height_cm),
-                    )
-                )
-                if phospho_pca_interactive
-                else (
-                    phospho_pca_source_html
-                    + _safe_png(
-                        renderer=lambda: report_plot(qc_pca_plot,
-                            kind="phospho",
-                            data_source=phospho_pca_data_source,
-                            **_pca_plot_options(phospho_pca),
-                            height_cm=phospho_pca_height_cm,
-                            dpi=_to_int(phospho_pca.get("dpi"), 300, minimum=72, maximum=1200),
-                            advanced=qc_pca_advanced,
-                        ),
-                        fallback_title="Phospho PCA Plot",
-                        warnings=warnings,
-                    )
-                )
-            ),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.9",
-            title="Abundance Plot",
-            description=None,
-            general_comment_key="AbundancePhos",
-            text_entries=text_entries,
-            text_key="AbundancePhos",
-            content_html=_abundance_report("phospho", phospho_abundance, qc_abundance_advanced,
-                                           warnings, "Phospho Abundance Plot"),
-        )
-        _append_plot_section(
-            html_parts=html_parts,
-            section_id=f"{phospho_block}.10",
-            title="Correlation Plot",
-            description=None,
-            general_comment_key="CorrelationPhos",
-            text_entries=text_entries,
-            text_key="CorrelationPhos",
-            content_html=_safe_png(
-                renderer=lambda: report_plot(qc_correlation_plot,
-                    kind="phospho",
-                    method=_to_str(phospho_correlation.get("method"), "Matrix"),
-                    include_id=_to_bool(phospho_correlation.get("includeId"), False),
-                    full_range=_to_bool(phospho_correlation.get("fullRange"), False),
-                    width_cm=_to_float(phospho_correlation.get("widthCm"), 20.0, minimum=6.0, maximum=60.0),
-                    height_cm=_to_float(phospho_correlation.get("heightCm"), 16.0, minimum=4.0, maximum=60.0),
-                    dpi=_to_int(phospho_correlation.get("dpi"), 400, minimum=72, maximum=1200),
-                    advanced=qc_correlation_advanced,
-                ),
-                fallback_title="Phospho Correlation Plot",
-                warnings=warnings,
-            ),
+        append_pca_section("phospho", f"{phospho_block}.9", "PCAPhos", "Phospho", phospho_pca)
+        append_abundance_correlation_sections(
+            "phospho", phospho_block, 10, "Phos", "Phospho",
+            phospho_abundance, phospho_correlation,
         )
 
-        if phospho_volcano_entries:
-            _append_plot_section(
-                html_parts=html_parts,
-                section_id=f"{phospho_block}.11",
-                title="Volcano Plot",
-                description=None,
-                general_comment_key="VolcanoPhos",
-                text_entries=text_entries,
-                text_key="VolcanoPhos",
-                # See the protein volcano above: each comparison carries its own
-                # imputation note now.
-                content_html=(
-                    _volcano_block_html(
-                        kind="phospho",
-                        entries=phospho_volcano_entries,
-                        warnings=warnings,
-                        advanced=stats_volcano_advanced,
-                    )
-                ),
-            )
+        append_optional_sections("phospho", phospho_block, 12, "Phos")
 
     # Warnings go back to the page that asked for the report (the response's
     # `warnings`), not into the report: the report is the record of an analysis
     # done on purpose, read by people who were not there.
+    html_parts[contents_position] = _contents_html(contents)
     html_parts.append("</body></html>")
     html_doc = "\n".join(html_parts)
     return SummaryReportResponse(

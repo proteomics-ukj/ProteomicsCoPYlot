@@ -19,9 +19,11 @@ import { activeContextSlot, CONTEXT_SLOTS, contextText, keepOnly, withContextMod
 import { resolveSelectedLocalPath } from "../../src/lib/localFilePath";
 import { coercePlotDownloadFormat, PLOT_DOWNLOAD_FORMAT_OPTIONS, withPlotDownloadFilename, withPlotDownloadFormat } from "../../src/lib/plotDownload";
 import { compactAdvancedPlotSettings, compactMap, compactTextElement } from "../../src/lib/plotSerialization";
+import { readWorkflowState, writeWorkflowState } from "../../src/lib/persistedUiState";
 import { getSummaryReportContext, saveQcReportSettings } from "../../src/lib/reportState";
+import { stableSnapshot } from "../../src/lib/unsavedAnalysis";
 import { applyCopylotSessionStorageState, captureCopylotSessionStorageState, clearCopylotClientStorageState } from "../../src/lib/restoreUiState";
-import { collectColumns, formatCellValue, rowsToCsv, rowsToQuotedCsv } from "../../src/lib/tableData";
+import { collectColumns, formatCellValue } from "../../src/lib/tableData";
 import { dataSourceOptions, resolveDataSource } from "../../src/lib/types";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -57,18 +59,6 @@ describe("plot setting serialisation", () => {
 });
 
 describe("tables", () => {
-  it("escape CSV headers and keep every row without rounding", () => {
-    const columns = ["sample,1", 'say "hi"', "line\nbreak", "carriage\rreturn", "number"];
-    const rows = Array.from({ length: 205 }, (_, i) => ({
-      "sample,1": `P${i}`, 'say "hi"': 'a"b', "line\nbreak": "x\ny", "carriage\rreturn": "x\ry", number: 0.12345678901234568,
-    }));
-    const header = '"sample,1","say ""hi""","line\nbreak","carriage\rreturn"';
-    expect(rowsToCsv(rows, columns)).toBe(header + ",number\n" + rows.map((_, i) =>
-      `P${i},"a""b","x\ny","x\ry",0.12345678901234568`).join("\n"));
-    expect(rowsToQuotedCsv(rows, columns)).toBe(header + ',"number"\n' + rows.map((_, i) =>
-      `"P${i}","a""b","x\ny","x\ry","0.12345678901234568"`).join("\n"));
-  });
-
   it("keep the first-seen column order across heterogeneous rows without mutation", () => {
     const rows = Object.freeze([Object.freeze({ b: 1, a: 2 }), Object.freeze({ c: 3, b: 4 })]);
     expect(collectColumns(rows as never)).toEqual(["b", "a", "c"]);
@@ -78,16 +68,6 @@ describe("tables", () => {
   it("keep the preview's rounding and its non-numeric representation", () => {
     expect([null, undefined, 0, 1.234567, true, false, { a: 1 }, "text"].map(formatCellValue))
       .toEqual(["", "", "0", "1.2346", "true", "false", '{"a":1}', "text"]);
-  });
-
-  it("keep precision, missing cells, escaping and the empty behaviour in both CSV variants", () => {
-    const rows = [{ n: 0.12345678901234568, text: 'a,"b"\nc', empty: null }];
-    const columns = ["n", "text", "empty", "missing"];
-    expect(rowsToCsv(rows, columns)).toBe('n,text,empty,missing\n0.12345678901234568,"a,""b""\nc",,');
-    expect(rowsToQuotedCsv(rows, columns)).toBe('"n","text","empty","missing"\n"0.12345678901234568","a,""b""\nc","",""');
-    expect(rowsToCsv([], ["n"])).toBe("n");
-    expect(rowsToQuotedCsv([], ["n"])).toBe("");
-    expect(rowsToQuotedCsv(rows, [])).toBe("");
   });
 });
 
@@ -187,6 +167,22 @@ describe("the assistant request", () => {
 });
 
 describe("the report context", () => {
+  it("restores a legacy choice only for its owner and keeps scoped report appearance and bins", () => {
+    sessionStorage.clear();
+    sessionStorage.setItem("pcopylot.ui.completeness.v1", JSON.stringify({kind: "peptide", missingPlot: {binCount: 2}}));
+    expect(readWorkflowState("completeness.v1", "precursor")).toEqual({});
+    writeWorkflowState("completeness.v1", {kind: "precursor", missingPlot: {binCount: 4}});
+    writeWorkflowState("qc.pipeline.v1", {kind: "protein", advancedV2: {coverage: {title: "Protein counts"}}});
+    writeWorkflowState("qc.pipeline.v1", {kind: "phospho", advancedV2: {coverage: {title: "Site counts"}}});
+    const settings = getSummaryReportContext().workflowPlotSettings!;
+    expect(settings.peptide.missingPlot.binCount).toBe(2);
+    expect(settings.precursor.missingPlot.binCount).toBe(4);
+    expect(settings.protein.qcAppearance.coverage.title).toBe("Protein counts");
+    expect(settings.phospho.qcAppearance.coverage.title).toBe("Site counts");
+    expect(settings.precursor.qcAppearance).toEqual({});
+    sessionStorage.clear();
+  });
+
   it("keeps peptide coverage beside the module settings and the missingness choices", () => {
     saveQcReportSettings("peptide", { coverage: { quantityColumn: "LFQ intensity" } });
     saveQcReportSettings("peptide", { rtPlot: { method: "Scatter" } });
@@ -210,6 +206,33 @@ describe("the tab's analysis snapshot", () => {
     clearCopylotClientStorageState();
     expect(Object.keys(sessionStorage).sort()).toEqual(["copylot.tab.id", "unrelated"]);
     expect(sessionStorage.getItem("copylot.tab.id")).toBe("a".repeat(32));
+  });
+
+  it("carries saved plot styles, replaces them on restore and keeps them on a session reset", () => {
+    sessionStorage.clear();
+    sessionStorage.setItem("copylot:savedPlotStyles.v1", '{"Paper":{"fontSize":9}}');
+    sessionStorage.setItem("copylot:plotStyleTemplate.v1", '{"style":{"fontSize":9},"stamp":5}');
+    sessionStorage.setItem("copylot:plotStyleSeen.app", "5");
+    const saved = captureCopylotSessionStorageState();
+    expect(Object.keys(saved).sort()).toEqual([
+      "copylot:plotStyleSeen.app", "copylot:plotStyleTemplate.v1", "copylot:savedPlotStyles.v1",
+    ]);
+    expect(stableSnapshot(saved)).not.toBe(stableSnapshot({}));
+
+    sessionStorage.setItem("copylot:savedPlotStyles.v1", '{"Other":{"fontSize":14}}');
+    // A save state from before styles were recorded leaves the current ones alone.
+    applyCopylotSessionStorageState({ "pcopylot.ui.plot": "restored" });
+    expect(sessionStorage.getItem("copylot:savedPlotStyles.v1")).toBe('{"Other":{"fontSize":14}}');
+    applyCopylotSessionStorageState(saved, true);
+    expect(sessionStorage.getItem("copylot:savedPlotStyles.v1")).toBe('{"Paper":{"fontSize":9}}');
+    expect(sessionStorage.getItem("copylot:plotStyleSeen.app")).toBe("5");
+    applyCopylotSessionStorageState({}, true);
+    expect(sessionStorage.getItem("copylot:savedPlotStyles.v1")).toBeNull();
+
+    sessionStorage.setItem("copylot:savedPlotStyles.v1", '{"Paper":{"fontSize":9}}');
+    clearCopylotClientStorageState();
+    expect(sessionStorage.getItem("copylot:savedPlotStyles.v1")).toBe('{"Paper":{"fontSize":9}}');
+    sessionStorage.clear();
   });
 });
 

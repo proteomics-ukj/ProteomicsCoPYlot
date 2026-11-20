@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.schemas.annotation import AnnotationFilterConfig
+from annotation_support import save_log2_protein_annotation
 from app.services import single_protein_tools
-from app.services.annotation_store import reset_all_annotations, save_annotation
+from app.services.annotation_store import reset_all_annotations
 
 LONG = "P12345_S123_long_phosphosite_key_with_many_characters_here"
 SAMPLES = [f"S{i}" for i in range(6)]
@@ -25,9 +25,7 @@ def annotated():
                           **{s: rng.normal(20, 1, 3) for s in SAMPLES}})
     meta = pd.DataFrame({"sample": SAMPLES, "condition": ["A"] * 3 + ["B"] * 3})
     reset_all_annotations()
-    save_annotation(kind="protein", source_data=frame, metadata=meta, log2_data=frame, filtered_data=frame,
-                    is_log2_transformed=True, metadata_source="manual", filter_config=AnnotationFilterConfig(),
-                    auto_detected=False, warnings=[])
+    save_log2_protein_annotation(frame, meta)
     yield
     reset_all_annotations()
 
@@ -52,6 +50,27 @@ def test_the_legend_sits_below_the_axes_with_shortened_names(annotated, monkeypa
     # The table is untouched by the legend shortening.
     table = single_protein_tools.single_protein_lineplot_table("protein", [LONG], ["A", "B"])
     assert LONG in set(table["Feature"])
+
+
+def test_the_legend_can_be_placed_to_the_right_of_the_axes(annotated, monkeypatch) -> None:
+    captured: dict = {}
+    plt = single_protein_tools._get_plt()
+    original = plt.Axes.legend
+
+    def spy(self, *args, **kwargs):
+        captured.update(loc=kwargs.get("loc"), ncol=kwargs.get("ncol"), anchor=kwargs.get("bbox_to_anchor"))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(plt.Axes, "legend", spy)
+    png = single_protein_tools.single_protein_lineplot_plot(
+        "protein", [LONG, "SHORT"], ["A", "B"], advanced={"legendPlacement": "right"})
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert captured["loc"] == "center right" and captured["ncol"] == 1
+    # At the right edge of the figure, vertically centred.
+    assert captured["anchor"] == (0.99, 0.5)
+    # Anything else keeps the legend below.
+    single_protein_tools.single_protein_lineplot_plot("protein", ["SHORT"], ["A", "B"], advanced={"legendPlacement": "below"})
+    assert captured["loc"] == "lower center"
 
 
 @pytest.mark.parametrize("visible", [True, False])

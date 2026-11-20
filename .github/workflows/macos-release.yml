@@ -1,4 +1,4 @@
-name: Build macOS release
+name: Prepare beta release
 
 on:
   workflow_dispatch:
@@ -12,35 +12,50 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-release-${{ github.ref }}-${{ inputs.source_commit }}
+  group: prepare-release-${{ github.ref }}-${{ inputs.source_commit }}
   cancel-in-progress: false
 
 jobs:
   build:
-    name: macOS ${{ matrix.arch }} / ${{ matrix.variant }}
+    name: ${{ matrix.platform }} ${{ matrix.arch }} / ${{ matrix.variant }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
+            platform: macOS
             arch: arm64
             variant: standard
             executable: ProteomicsCoPYlot
-          - runner: macos-14
+          - runner: macos-15
+            platform: macOS
             arch: arm64
             variant: ai
             executable: ProteomicsCoPYlotAI
           - runner: macos-15-intel
+            platform: macOS
             arch: x86_64
             variant: standard
             executable: ProteomicsCoPYlot
           - runner: macos-15-intel
+            platform: macOS
+            arch: x86_64
+            variant: ai
+            executable: ProteomicsCoPYlotAI
+          - runner: ubuntu-22.04
+            platform: Linux
+            arch: x86_64
+            variant: standard
+            executable: ProteomicsCoPYlot
+          - runner: ubuntu-22.04
+            platform: Linux
             arch: x86_64
             variant: ai
             executable: ProteomicsCoPYlotAI
     runs-on: ${{ matrix.runner }}
     env:
+      PLATFORM: ${{ matrix.platform }}
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       EXECUTABLE: ${{ matrix.executable }}
       ARCH: ${{ matrix.arch }}
@@ -82,7 +97,7 @@ jobs:
           node-version: '24'
 
       - name: Set up Intel package installer
-        if: matrix.arch == 'x86_64'
+        if: matrix.platform == 'macOS' && matrix.arch == 'x86_64'
         uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4
         with:
           miniforge-version: '26.7.2-0'
@@ -100,7 +115,7 @@ jobs:
             echo 'Select a reviewed source_commit containing requirements-runtime-hashed.lock.'
             exit 1
           }
-          if [[ "$ARCH" == x86_64 ]]; then
+          if [[ "$PLATFORM" == macOS && "$ARCH" == x86_64 ]]; then
             # PyPI no longer provides Intel macOS wheels for these two packages.
             # Read their exact versions from the selected application's lock.
             numba_pin=$(sed -n 's/^numba==/numba=/p' backend/requirements-runtime.lock)
@@ -159,7 +174,9 @@ jobs:
           BACKEND_VERSION: ${{ steps.version.outputs.backend }}
         shell: bash
         run: |
-          test "$(lipo -archs "source/dist/$EXECUTABLE")" = "$ARCH"
+          if [[ "$PLATFORM" == macOS ]]; then
+            test "$(lipo -archs "source/dist/$EXECUTABLE")" = "$ARCH"
+          fi
           mkdir -p downloads
           extra=()
           if [[ "$VARIANT" == ai ]]; then extra+=(--ai); fi
@@ -167,14 +184,14 @@ jobs:
             --executable "source/dist/$EXECUTABLE" \
             --bundle "source/dist/$EXECUTABLE-release.zip" \
             --revision "$SOURCE_COMMIT" --version "$BACKEND_VERSION" \
-            --output "downloads/startup-$EXECUTABLE-macOS-$ARCH.json" "${extra[@]}"
+            --output "downloads/startup-$EXECUTABLE-$PLATFORM-$ARCH.json" "${extra[@]}"
 
       - name: Name release download and write checksum
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
-          filename="$EXECUTABLE-$RELEASE_VERSION-macOS-$ARCH.zip"
+          filename="$EXECUTABLE-$RELEASE_VERSION-$PLATFORM-$ARCH.zip"
           cp "source/dist/$EXECUTABLE-release.zip" "downloads/$filename"
           cd downloads
           shasum -a 256 "$filename" > "$filename.sha256"
@@ -183,10 +200,10 @@ jobs:
       - name: Save verified release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.executable }}-${{ steps.version.outputs.version }}-macOS-${{ matrix.arch }}
+          name: ${{ matrix.executable }}-${{ steps.version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: downloads/
           compression-level: 0
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: error
 
       - name: Save startup diagnostics on failure
@@ -195,5 +212,5 @@ jobs:
         with:
           name: diagnostics-${{ matrix.executable }}-${{ matrix.arch }}
           path: downloads/*.log
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: ignore

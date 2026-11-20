@@ -24,7 +24,7 @@ class Tags(HTMLParser):
         self.tags.append((tag, dict(attrs)))
 
 
-@pytest.mark.parametrize('module', ['plot_images', 'stats_tools', 'phospho_tools', 'peptide_tools', 'comparison_tools'])
+@pytest.mark.parametrize('module', ['plot_images', 'stats_tools', 'phospho_tools', 'comparison_tools'])
 def test_plotly_labels_cannot_break_out_of_script_or_add_event_handlers(module):
     # Every field here carries text straight out of an uploaded table: protein
     # and gene names into `text` and `hovertext`, condition names into `name`

@@ -905,23 +905,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/peptide/quantity-options": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Peptide Quantity Options */
-        get: operations["get_peptide_quantity_options_api_peptide_quantity_options_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/peptide/sequence-coverage": {
         parameters: {
             query?: never;
@@ -1210,23 +1193,6 @@ export interface paths {
         };
         /** Peptide Modification Route */
         get: operations["peptide_modification_route_api_plots_peptide_modification_png_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/plots/peptide/rt-interactive.html": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Peptide Rt Interactive Route */
-        get: operations["peptide_rt_interactive_route_api_plots_peptide_rt_interactive_html_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4846,18 +4812,6 @@ export interface components {
             /** Rows */
             rows: number;
         };
-        /** PeptideQuantityOptionsResponse */
-        PeptideQuantityOptionsResponse: {
-            /** Columns */
-            columns?: string[];
-            /** Defaultcolumn */
-            defaultColumn?: string | null;
-            /**
-             * Requiresselection
-             * @default false
-             */
-            requiresSelection?: boolean;
-        };
         /** PhosphoLocalizationCutoffRequest */
         PhosphoLocalizationCutoffRequest: {
             /** Cutoff */
@@ -7478,26 +7432,6 @@ export interface operations {
             };
         };
     };
-    get_peptide_quantity_options_api_peptide_quantity_options_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PeptideQuantityOptionsResponse"];
-                };
-            };
-        };
-    };
     get_sequence_coverage_api_peptide_sequence_coverage_get: {
         parameters: {
             query: {
@@ -8168,42 +8102,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    peptide_rt_interactive_route_api_plots_peptide_rt_interactive_html_get: {
-        parameters: {
-            query?: {
-                addLine?: boolean;
-                header?: boolean;
-                randomSeed?: number;
-                widthCm?: number;
-                heightCm?: number;
-                advanced?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
                 };
             };
             /** @description Validation Error */

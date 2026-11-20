@@ -7,7 +7,7 @@ One of the routers `routes_plots` combines; see that module for what is shared.
 
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import Response
 
 from app.services.plot_styling import (
     parse_advanced_plot_settings,
@@ -44,28 +44,6 @@ def peptide_rt_route(
         )
         response = png_response(content)
         return with_notebook_token(response, token)
-
-
-@router.get("/peptide/rt-interactive.html", response_class=HTMLResponse)
-def peptide_rt_interactive_route(
-    addLine: bool = False,
-    header: bool = True,
-    randomSeed: int = 1,
-    widthCm: float = 20,
-    heightCm: float = 15,
-    advanced: str = "",
-) -> HTMLResponse:
-    with plot_errors("Failed to render interactive peptide RT plot", optional_dependency=True):
-        from app.services.notebook_peptide import render_interactive_rt
-        html, token = render_interactive_rt(
-            add_line=addLine,
-            header=header,
-            sampling_seed=randomSeed,
-            width_cm=widthCm,
-            height_cm=heightCm,
-            advanced=parse_advanced_plot_settings(advanced),
-        )
-        return HTMLResponse(content=html, headers={'X-CoPYlot-Notebook': token} if token else {})
 
 
 @router.get("/peptide/modification.png")

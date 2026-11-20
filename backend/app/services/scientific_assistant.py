@@ -2205,7 +2205,8 @@ def _basic_download_response(request: AssistantRequest, revision: int) -> Assist
     """
     if request.answerOnly or not _DOWNLOAD_HOW.search(request.message) or code_request(request.message):
         return None
-    found = re.search(r"every plot has a format choice and Download Plot;[^.]*\.", WORKFLOW_GUIDE)
+    # up to the end of the sentence; the full stop in "(.xlsx)" is not one
+    found = re.search(r"every plot has a format choice and Download Plot;.*?\.(?= |$)", WORKFLOW_GUIDE)
     if found is None:
         return None
     notebook = "" if viewer_mode() else (" To reproduce the output later, Export notebook sits beside the download "

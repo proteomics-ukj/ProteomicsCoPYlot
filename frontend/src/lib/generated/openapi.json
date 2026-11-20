@@ -5658,35 +5658,6 @@
         "title": "PeptidePathResponse",
         "type": "object"
       },
-      "PeptideQuantityOptionsResponse": {
-        "properties": {
-          "columns": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Columns",
-            "type": "array"
-          },
-          "defaultColumn": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Defaultcolumn"
-          },
-          "requiresSelection": {
-            "default": false,
-            "title": "Requiresselection",
-            "type": "boolean"
-          }
-        },
-        "title": "PeptideQuantityOptionsResponse",
-        "type": "object"
-      },
       "PhosphoLocalizationCutoffRequest": {
         "properties": {
           "cutoff": {
@@ -9971,27 +9942,6 @@
         ]
       }
     },
-    "/api/peptide/quantity-options": {
-      "get": {
-        "operationId": "get_peptide_quantity_options_api_peptide_quantity_options_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PeptideQuantityOptionsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Get Peptide Quantity Options",
-        "tags": [
-          "peptide"
-        ]
-      }
-    },
     "/api/peptide/sequence-coverage": {
       "get": {
         "operationId": "get_sequence_coverage_api_peptide_sequence_coverage_get",
@@ -12092,99 +12042,6 @@
           }
         },
         "summary": "Peptide Modification Route",
-        "tags": [
-          "plots"
-        ]
-      }
-    },
-    "/api/plots/peptide/rt-interactive.html": {
-      "get": {
-        "operationId": "peptide_rt_interactive_route_api_plots_peptide_rt_interactive_html_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "addLine",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Addline",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "header",
-            "required": false,
-            "schema": {
-              "default": true,
-              "title": "Header",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "randomSeed",
-            "required": false,
-            "schema": {
-              "default": 1,
-              "title": "Randomseed",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "widthCm",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "title": "Widthcm",
-              "type": "number"
-            }
-          },
-          {
-            "in": "query",
-            "name": "heightCm",
-            "required": false,
-            "schema": {
-              "default": 15,
-              "title": "Heightcm",
-              "type": "number"
-            }
-          },
-          {
-            "in": "query",
-            "name": "advanced",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Advanced",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Peptide Rt Interactive Route",
         "tags": [
           "plots"
         ]

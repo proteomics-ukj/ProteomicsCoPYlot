@@ -53,7 +53,7 @@ CASES = [
     ('anova', 'anova_source'), ('pathway', 'pathway_source'), ('sequence', 'sequence_source'),
     ('ksea', 'table_source'), ('interactive', 'abundance_source'),
     ('peptide', 'coverage_source'), ('peptide', 'missed_cleavage_source'),
-    ('peptide', 'modification_source'), ('peptide', 'rt_source'), ('peptide', 'interactive_rt_source'),
+    ('peptide', 'modification_source'), ('peptide', 'rt_source'),
     ('phospho', 'count_source'), ('phospho', 'coverage_source')]]
 
 

@@ -85,25 +85,6 @@ def test_the_uploaded_kinase_library_volcano_sends_no_webgl(client) -> None:
     _assert_no_webgl(response, "ksea-volcano.html")
 
 
-def test_the_interactive_retention_time_plot_sends_no_webgl(client, tmp_path) -> None:
-    from app.services.dataset_store import save_peptide_path
-
-    # Enough precursors that plotly express would pick WebGL on its own.
-    rng = np.random.default_rng(1)
-    rows = [
-        {
-            "File.Name": f"run{run}", "Stripped.Sequence": f"PEPTIDE{i}K", "Modified.Sequence": f"PEPTIDE{i}K",
-            "Precursor.Id": f"PEPTIDE{i}K2", "Precursor.Quantity": float(i + 1),
-            "RT": float(rng.uniform(5, 60)), "Predicted.RT": float(rng.uniform(5, 60)),
-        }
-        for run in range(3) for i in range(1_500)
-    ]
-    path = tmp_path / "peptides.tsv"
-    pd.DataFrame(rows).to_csv(path, sep="\t", index=False)
-    save_peptide_path(str(path))
-    _assert_no_webgl(client.get("/api/plots/peptide/rt-interactive.html"), "rt-interactive.html")
-
-
 def test_the_control_volcano_sends_no_webgl(client) -> None:
     """The example has two conditions; the control volcano needs four."""
     from app.schemas.annotation import AnnotationFilterConfig
@@ -182,7 +163,7 @@ def test_large_scatters_still_render_as_svg_rather_than_warn():
 
 @pytest.mark.parametrize(
     "module_name",
-    ["plot_images", "stats_tools", "comparison_tools", "peptide_tools", "phospho_tools"],
+    ["plot_images", "stats_tools", "comparison_tools", "phospho_tools"],
 )
 def test_every_interactive_renderer_serialises_svg_traces(module_name, monkeypatch):
     """Every module's HTML entry point applies the policy, not just some of them.

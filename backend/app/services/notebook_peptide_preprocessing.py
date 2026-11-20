@@ -30,7 +30,7 @@ def replay_peptide_matrix(raw, config):
 def bind_peptide_preprocessing(recipe):
     """Read the run mapping from live state now; check the replay when the notebook is downloaded."""
     from app.services import peptide_tools, plot_images, completeness_tools
-    from app.services.notebook_peptide import missed_cleavage_source, modification_source, interactive_rt_source
+    from app.services.notebook_peptide import missed_cleavage_source, modification_source
     from app.services.notebook_preprocessing import preprocessing_source
     from app.services.notebook_provenance import NotebookProvenanceError
 
@@ -84,10 +84,6 @@ def bind_peptide_preprocessing(recipe):
         preparation += ("data, sequence_column = functions.prepare_input(raw, processing_metadata)\n"
             if plot == 'missed_cleavages' else "data = functions.prepare_input(raw, processing_metadata)\n")
         roots = ('prepare_input',)
-    elif plot == 'retention_time' and recipe.provenance.get('view') == 'interactive':
-        extra = extract_notebook_source(interactive_rt_source().code, ('prepare_points',)).code
-        preparation = 'data = functions.prepare_points(raw)\n'
-        roots = ('prepare_points',)
     elif plot in {'retention_time', 'sequence_coverage'}:
         preparation = 'data = raw\n'
         roots = ()

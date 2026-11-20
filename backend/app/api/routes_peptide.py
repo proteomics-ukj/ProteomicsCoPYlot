@@ -11,7 +11,6 @@ from app.schemas.peptide import (
     PeptideMetadataGenerateRequest,
     PeptideMetadataResponse,
     PeptideOverviewResponse,
-    PeptideQuantityOptionsResponse,
     PeptideSpecies,
 )
 from app.services.peptide_metadata_store import (
@@ -24,7 +23,6 @@ from app.services.peptide_tools import (
     get_peptide_frame,
     peptide_overview,
 )
-from app.services.peptide_quantity import default_peptide_quantity_column
 from app.services.json_records import json_records
 
 LOGGER = logging.getLogger(__name__)
@@ -47,18 +45,6 @@ def _metadata_response(stored) -> PeptideMetadataResponse:
 def get_peptide_overview() -> PeptideOverviewResponse:
     with api_errors("Failed to load peptide overview", logger=LOGGER):
         return PeptideOverviewResponse(**peptide_overview())
-
-
-@router.get("/quantity-options", response_model=PeptideQuantityOptionsResponse)
-def get_peptide_quantity_options() -> PeptideQuantityOptionsResponse:
-    with api_errors("Failed to load peptide abundance options", logger=LOGGER):
-        frame = get_peptide_frame()
-        default_column = default_peptide_quantity_column(frame)
-        return PeptideQuantityOptionsResponse(
-            columns=[default_column] if default_column else [],
-            defaultColumn=default_column,
-            requiresSelection=False,
-        )
 
 
 @router.post("/metadata/generate", response_model=PeptideMetadataResponse)

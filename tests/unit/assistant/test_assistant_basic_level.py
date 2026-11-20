@@ -208,7 +208,9 @@ def test_too_small_does_not_pick_a_setting_by_one_shared_word(assistant_rig):
 def test_how_to_download_is_the_guides_sentence(assistant_rig, message):
     result = assistant_rig.run([], message=message, view=_view("stats.volcano"))
     assert assistant_rig.calls == [] and not result.actions
-    assert "Download Plot" in result.answer and "Download CSV" in result.answer and "Export notebook" in result.answer
+    assert "Download Plot" in result.answer and "Download table (.xlsx)" in result.answer and "Export notebook" in result.answer
+    assert "which saves an Excel workbook" in result.answer
+    assert "separate summary and feature-CV workbooks." in result.answer
 
 
 @pytest.mark.parametrize("message", ["how many proteins are in the plot?", "how was this plot made for my thesis?",

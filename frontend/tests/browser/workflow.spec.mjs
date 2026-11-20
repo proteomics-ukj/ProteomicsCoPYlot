@@ -1019,7 +1019,7 @@ test('assistant changes are logged and the last one can be undone', { tag: '@ai'
   const log = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Changes made by the assistant' }) });
   await expect(log.locator('summary')).toHaveText('Changes made by the assistant (1 recorded; 1 this request)');
   await log.locator('summary').click();
-  await expect(log.getByRole('list', { name: 'Assistant changes' })).toContainText('Highlight terms: empty â†’ G1');
+  await expect(log.getByRole('list', { name: 'Assistant changes' })).toContainText('Highlight terms: empty → G1');
 
   // Changed by hand since: undo refuses and keeps the entry.
   await highlight.fill('G2');
@@ -1467,7 +1467,7 @@ test('canvas plot loading hides old results and failed renders can be retried', 
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Temporary plot failure' }) });
   });
   await volcano.getByRole('combobox', { name: 'P-value mode', exact: true }).selectOption('uncorrected');
-  await expect(volcano.getByRole('status')).toHaveText('Loading plotâ€¦');
+  await expect(volcano.getByRole('status')).toHaveText('Loading plot…');
   await expect(volcano.locator('svg')).toHaveCount(0);
   releaseVolcano();
   await expect(volcano.getByRole('alert')).toContainText('Temporary plot failure');
@@ -1491,7 +1491,7 @@ test('canvas plot loading hides old results and failed renders can be retried', 
       await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
     });
     await tile.getByRole('textbox').fill('K1');
-    await expect(tile.getByRole('status')).toHaveText('Loading plotâ€¦');
+    await expect(tile.getByRole('status')).toHaveText('Loading plot…');
     await expect(tile.locator('img')).toHaveAttribute('aria-busy', 'true');
     await expect(tile.locator('img')).toBeHidden();
     await expect(tile.getByRole('link', { name: 'Download Plot', exact: true })).toHaveCount(0);
@@ -1843,7 +1843,7 @@ for (const approved of [false, true]) {
     page.on('dialog', async dialog => {
       confirmations++;
       expect(dialog.type()).toBe('confirm');
-      expect(dialog.message()).toContain('Test type: "unpaired" â†’ "unpaired_welch"');
+      expect(dialog.message()).toContain('Test type: "unpaired" → "unpaired_welch"');
       if (approved) await dialog.accept();
       else await dialog.dismiss();
     });
@@ -2405,7 +2405,7 @@ test('shared plot controls preserve numeric editing, bounds, toggles and multipl
 
 for (const [panel, endpoint, setting, value, parameter] of [
   ['One-way ANOVA', 'anova', 'P-value threshold', '0.01', 'pValueThreshold'],
-  ['Replicate & Variance Projection', 'simulation', 'Variance Ã— factor', '2', 'varianceMultiplier'],
+  ['Replicate & Variance Projection', 'simulation', 'Variance × factor', '2', 'varianceMultiplier'],
   ['Replicate & Variance Projection', 'simulation', 'Replicates per group (0 = observed, 2-100 fixed)', '8', 'sampleSizeOverride'],
 ]) {
   test(`${panel} hides old results until the changed request completes: ${setting}`, async ({ page }) => {

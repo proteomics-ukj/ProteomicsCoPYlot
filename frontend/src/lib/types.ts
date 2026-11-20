@@ -274,7 +274,6 @@ export type PeptideMetadataResponse = Served<Schemas["PeptideMetadataResponse"]>
 
 export type PeptideOverviewResponse = Served<Schemas["PeptideOverviewResponse"]>;
 
-export type PeptideQuantityOptionsResponse = Served<Schemas["PeptideQuantityOptionsResponse"]>;
 
 export type PeptideSpecies = "human" | "mouse";
 

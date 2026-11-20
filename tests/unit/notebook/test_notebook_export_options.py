@@ -286,8 +286,6 @@ def _peptide_token(output):
     if output == "retention time":
         return notebook_peptide.render_rt(method="Scatter Plot", bins=20, dpi=80, add_line=True, header=True,
                                           sampling_seed=21, advanced=None)[1]
-    if output == "interactive retention time":
-        return notebook_peptide.render_interactive_rt(add_line=True, header=True, sampling_seed=32, advanced=None)[1]
     if output == "modifications":
         return notebook_peptide.render_modification(include_id=False, dpi=80, header=True, legend=True, advanced=None)[1]
     if output == "missed cleavages":
@@ -296,7 +294,7 @@ def _peptide_token(output):
     return capture_sequence_coverage(species="human", protein="TEST_HUMAN", chunk_size=30)["notebookToken"]
 
 
-@pytest.mark.parametrize("output", ["retention time", "interactive retention time", "modifications",
+@pytest.mark.parametrize("output", ["retention time", "modifications",
                                     "missed cleavages", "sequence coverage"])
 def test_every_peptide_export_runs_from_the_file_and_from_a_shipped_matrix(peptide_report, tmp_path, output):
     token = _peptide_token(output)

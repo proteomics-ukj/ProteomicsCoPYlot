@@ -1,10 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { runVolcanoAnalysis } from "../../src/lib/api";
-import { collectColumns, rowsToQuotedCsv } from "../../src/lib/tableData";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("restores every stats cell and produces the same downloadable CSV", async () => {
+it("restores every stats cell in the column order sent", async () => {
   const columns = ["label", "sample,1", "__proto__", 'sample"2'];
   const values = [["protein α", null, "A", 1.0000000000000002], ["β", 0, "B", -3]];
   const rows = values.map(row => Object.fromEntries(columns.map((key, i) => [key, row[i]])));
@@ -16,5 +15,4 @@ it("restores every stats cell and produces the same downloadable CSV", async () 
   expect(result.rows).toEqual(rows);
   expect(Object.keys(result.rows[0])).toEqual(columns);
   expect(result.warnings).toEqual(["notice"]);
-  expect(rowsToQuotedCsv(result.rows, collectColumns(result.rows))).toEqual(rowsToQuotedCsv(rows, columns));
 });

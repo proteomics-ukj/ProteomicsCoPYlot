@@ -68,7 +68,7 @@ METHODS = {
         "so others can browse the same results in the app without changing them; it is set up by whoever packages the app (docs/INSTALLATION.md) "
         "and reruns nothing. To let someone rerun the analysis, give them the notebook ZIP and required original input files; to let them look, the HTML report or a viewer build."
     ),
-    "summary.tables": "Summary / Tables lists the result tables of the session for download (Download CSV, which Excel opens). The tables are the ones the analysis pages produced with their current settings; nothing is recalculated here.",
+    "summary.tables": "Summary / Tables lists the result tables of the session for download (Download table (.xlsx), which saves an Excel workbook). The tables are the ones the analysis pages produced with their current settings; nothing is recalculated here.",
     "summary.text": "Summary / Text holds the free-text entries used above and below the plots of the HTML report; it is editorial text, not a calculated result.",
     "peptide.sequenceCoverage": "Maps observed peptide sequences onto a protein sequence. Sequence coverage is not intensity coverage and does not prove absence of unobserved sequence regions.",
 }

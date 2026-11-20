@@ -5,7 +5,6 @@ from app.services.peptide_preparation_cache import cached_peptide_preparation
 
 from app.services.notebook_archive import NotebookRecipe, dataframe_bytes
 from app.services.notebook_preprocessing import capture_notebook, notebook_capture_requested
-from app.services.notebook_interactive import abundance_source
 from app.services.notebook_qc import qc_source
 from app.services.notebook_source import portable_styling, portable_output_format, bound_settings, portable_module, extract_notebook_source, function_definition, merge_source, module_source, replace_once
 
@@ -178,80 +177,6 @@ def render_modification(**options):
     except ValueError:
         token = ''
     return image, token
-
-
-@lru_cache(maxsize=1)
-def interactive_rt_source():
-    original = module_source('peptide_tools.py')
-    function = function_definition(original, 'peptide_rt_interactive_html')
-    start = function.index('    _require_column(frame, "Predicted.RT")')
-    boundary = function.index('    if len(data) > 250_000:')
-    preparation = ('def prepare_points(frame):\n' + function[start:boundary]
-                   + "    return data.drop(columns=['sample'])\n")
-    rendering = ('def plot_figure(data, *, add_line=False, header=True, sampling_seed=1, '
-                 'width_cm=20, height_cm=15, advanced=None, plot_colors=None):\n    go = get_plotly()[1]\n'
-                 + function[boundary:])
-    rendering = replace_once(rendering, 'return _plotly_html(fig)', 'return force_svg_rendering(fig)')
-    rendering = rendering.replace('_cm_to_px(', 'cm_to_px(')
-    helpers = '\n\n'.join(function_definition(original, name) for name in
-        ('_require_column', '_peptide_feature_column', '_file_name_column', '_short_sample_label'))
-    helpers = helpers.replace('_truncate_hover_text(', 'truncate_hover_text(')
-    preparation = preparation.replace('_truncate_hover_text(', 'truncate_hover_text(')
-    styling = portable_styling()
-    sources = merge_source(extract_notebook_source(module_source('_core.py'), ('resolve_plot_colors',)).code, 'import re\nimport numpy as np\nimport pandas as pd',
-        extract_notebook_source(abundance_source().code,
-            ('get_plotly', 'plotly_html', 'force_svg_rendering', 'cm_to_px', 'advanced_plotly_layout')).code,
-        extract_notebook_source(styling, ('plotly_marker', 'resolve_reference_line')).code,
-        function_definition(module_source('plotting_common.py'), 'truncate_hover_text'), helpers, preparation, rendering)
-    return extract_notebook_source(sources, ('prepare_points', 'plot_figure', 'plotly_html'))
-
-
-@lru_cache(maxsize=1)
-def _interactive_rt_module():
-    return portable_module('_copylot_portable_interactive_rt', interactive_rt_source)
-
-
-def render_interactive_rt(**options):
-    import pandas as pd
-    from app.services.dataset_store import get_current_dataset
-    from app.services.peptide_tools import get_peptide_frame, peptide_rt_interactive_html
-    from app.services.runtime_cache import runtime_cache_version
-    from app.services.session_context import get_session_id
-
-    revision = runtime_cache_version()
-    dataset = get_current_dataset('peptide')
-    settings = bound_settings(peptide_rt_interactive_html, **options)
-    module = _interactive_rt_module()
-    data = module.prepare_points(get_peptide_frame())
-    figure = module.plot_figure(data, **settings)
-    html = module.plotly_html(figure)
-    recipe = NotebookRecipe(plot_name='Interactive Peptide Retention Time',
-        source=extract_notebook_source(interactive_rt_source().code, ('plot_figure', 'plotly_html')),
-        settings=settings, original_filename=dataset.filename,
-        resources={'input.parquet': dataframe_bytes(data), 'metadata.parquet': dataframe_bytes(pd.DataFrame()),
-            'figure.json': figure.to_json().encode(), 'original.html': html.encode()},
-        provenance={'kind': 'peptide', 'plot': 'retention_time', 'view': 'interactive',
-            'normalizationApplied': False, 'filterApplied': False, 'imputationApplied': False,
-            'validPairs': len(data), 'displayedPoints': len(figure.data[0].x),
-            'samplingSeed': settings['sampling_seed'], 'sampleLimit': 250000,
-            'inputBoundary': 'Numeric complete RT pairs with original feature and shortened hover labels'},
-        input_explanation='The exact valid retention-time pairs and displayed hover labels are captured before '
-            'scatter sampling. Numeric conversion, missing-pair exclusion, feature selection/fallback identifiers, '
-            'shortened labels and Actual - Predicted differences were prepared by the app. Full run paths are '
-            'omitted. No intensity normalization, filtering or imputation applies. The notebook repeats sampling '
-            'above 250,000 pairs with the recorded seed, applies the same SVG rendering safeguards, '
-            'and verifies every trace and layout value. '
-            'Plotly JavaScript is embedded for offline viewing.',
-        calculation="from IPython.display import IFrame, display\n"
-            "figure = functions.plot_figure(data, **settings)\n"
-            "assert json.loads(figure.to_json()) == json.loads((RESOURCES / 'figure.json').read_text())\n"
-            "Path('reproduced.html').write_text(functions.plotly_html(figure), encoding='utf-8', newline='')\n"
-            "display(IFrame('reproduced.html', width='100%', height=600))")
-    try:
-        token = capture_notebook(get_session_id(), recipe) if runtime_cache_version() == revision else ''
-    except ValueError:
-        token = ''
-    return html, token
 
 
 @lru_cache(maxsize=1)

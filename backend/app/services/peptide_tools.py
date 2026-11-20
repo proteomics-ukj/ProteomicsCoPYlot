@@ -10,7 +10,6 @@ import gzip
 from app.services.plot_export import (
     to_png_bytes as _to_png_bytes,
     cm_to_inch as _cm_to_inch,
-    cm_to_px as _cm_to_px,
 )
 
 import logging
@@ -32,15 +31,13 @@ from app.services.functions import extract_sample_id as _extract_id_or_number, s
 from app.services.functions import sample_id_map
 from app.services.peptide_metadata_store import get_peptide_metadata
 from app.services.plot_styling import (
-    advanced_plotly_layout,
     apply_advanced_axes,
     advanced_label_size,
     marker_style,
-    plotly_marker,
     resolve_reference_line,
 )
 from app.services.reference_db import resolve_reference_db
-from app.services.plotting_common import get_plt as _get_plt, get_plotly_go as _get_plotly, plotly_html as _plotly_html, truncate_hover_text as _truncate_hover_text
+from app.services.plotting_common import get_plt as _get_plt
 
 
 LOGGER = logging.getLogger(__name__)
@@ -201,32 +198,6 @@ def _stripped_sequence_column(frame: pd.DataFrame) -> str:
     if not matches:
         raise ValueError("Could not find a stripped-sequence column in the peptide dataset.")
     return matches[0]
-
-
-def _peptide_feature_column(frame: pd.DataFrame) -> str | None:
-    preferred = [
-        "Stripped.Sequence",
-        "Modified.Sequence",
-        "Precursor.Id",
-        "PrecursorID",
-        "Precursor",
-        "ProteinNames",
-    ]
-    for column in preferred:
-        if column in frame.columns:
-            return column
-    for column in frame.columns:
-        normalized = str(column).strip().lower()
-        if "sequence" in normalized:
-            return str(column)
-    return None
-
-
-def _short_sample_label(value: object, max_len: int = 14) -> str:
-    text = str(value or "").strip()
-    basename = re.split(r"[\\/]", text)[-1]
-    candidate = basename.strip() or text
-    return _truncate_hover_text(candidate, max_len=max_len)
 
 
 PeptideProtease = Literal["trypsin", "trypsin_lysc"]
@@ -573,116 +544,6 @@ def peptide_rt_plot(
     apply_advanced_axes(ax, advanced)
     fig.tight_layout()
     return _to_png_bytes(fig, plt, dpi=dpi)
-
-
-
-def peptide_rt_interactive_html(
-    *,
-    add_line: bool = False,
-    header: bool = True,
-    sampling_seed: int = 1,
-    width_cm: float = 20,
-    height_cm: float = 15,
-    advanced: dict | None = None,
-    plot_colors=None,
-) -> str:
-    go = _get_plotly()
-    frame = get_peptide_frame()
-    _require_column(frame, "Predicted.RT")
-    _require_column(frame, "RT")
-
-    feature_col = _peptide_feature_column(frame)
-    feature_series = (
-        frame[feature_col].fillna("").astype(str)
-        if feature_col is not None
-        else pd.Series([f"feature_{idx + 1}" for idx in range(len(frame))], index=frame.index, dtype=str)
-    )
-
-    try:
-        sample_col = _file_name_column(frame)
-        sample_series = frame[sample_col].fillna("").astype(str)
-    except ValueError:
-        sample_series = pd.Series([""] * len(frame), index=frame.index, dtype=str)
-
-    data = pd.DataFrame(
-        {
-            "feature": feature_series,
-            "sample": sample_series,
-            "predicted": pd.to_numeric(frame["Predicted.RT"], errors="coerce"),
-            "actual": pd.to_numeric(frame["RT"], errors="coerce"),
-        }
-    ).dropna(subset=["predicted", "actual"])
-    if data.empty:
-        raise ValueError("No numeric Predicted.RT / RT values are available for the retention-time plot.")
-
-    data["feature"] = data["feature"].replace("", "n/a")
-    data["feature_short"] = data["feature"].map(lambda value: _truncate_hover_text(value, max_len=48))
-    data["sample_short"] = data["sample"].map(_short_sample_label)
-    data["delta"] = data["actual"] - data["predicted"]
-
-    if len(data) > 250_000:
-        data = data.sample(n=250_000, random_state=int(sampling_seed))
-
-    custom_data = np.column_stack(
-        [
-            data["feature"].to_numpy(dtype=object),
-            data["sample_short"].to_numpy(dtype=object),
-            data["delta"].to_numpy(dtype=float),
-            data["feature_short"].to_numpy(dtype=object),
-        ]
-    )
-
-    fig = go.Figure()
-    fig.add_trace(
-        # SVG, not Scattergl: see plot_webgl - WebGL fails outright without
-        # hardware acceleration, and _plotly_html enforces the same policy.
-        go.Scatter(
-            x=data["predicted"],
-            y=data["actual"],
-            mode="markers",
-            marker=plotly_marker(advanced, size=4, alpha=0.35, color_default=resolve_plot_colors(1, plot_colors)[0]),
-            customdata=custom_data,
-            hovertemplate=(
-                "Feature: %{customdata[3]}<br>"
-                "Predicted RT: %{x:.4f}<br>"
-                "Actual RT: %{y:.4f}<br>"
-                "Delta (Actual - Predicted): %{customdata[2]:.4f}<br>"
-                "Sample: %{customdata[1]}"
-                "<extra></extra>"
-            ),
-            showlegend=False,
-        )
-    )
-
-    identity_line = resolve_reference_line(advanced, color="red", width=2.0)
-    if add_line and identity_line.visible:
-        x_min = float(min(data["predicted"].min(), data["actual"].min()))
-        x_max = float(max(data["predicted"].max(), data["actual"].max()))
-        line_x = np.array([x_min, x_max], dtype=float)
-        fig.add_trace(
-            go.Scatter(
-                x=line_x,
-                y=line_x,
-                mode="lines",
-                line=identity_line.plotly(),
-                hoverinfo="skip",
-                showlegend=False,
-            )
-        )
-
-    fig.update_layout(
-        title=("Retention Time Plot" if header else None),
-        xaxis_title="Predicted RT",
-        yaxis_title="Actual RT",
-        template="plotly_white",
-        autosize=True,
-        height=_cm_to_px(height_cm),
-        margin=dict(l=56, r=22, t=(64 if header else 18), b=54),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.25)")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.25)")
-    fig.update_layout(**advanced_plotly_layout(advanced, width_px=_cm_to_px(width_cm), height_px=_cm_to_px(height_cm)))
-    return _plotly_html(fig)
 
 
 
@@ -1167,4 +1028,4 @@ def peptide_sequence_coverage(
     }
 
 from app.services.condition_palette_store import apply_category_palettes
-apply_category_palettes(globals(), ['peptide_rt_plot', 'peptide_rt_interactive_html', 'peptide_modification_plot', 'peptide_missed_cleavage_plot'], kind='protein')
+apply_category_palettes(globals(), ['peptide_rt_plot', 'peptide_modification_plot', 'peptide_missed_cleavage_plot'], kind='protein')

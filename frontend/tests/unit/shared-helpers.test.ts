@@ -23,7 +23,7 @@ import { readWorkflowState, writeWorkflowState } from "../../src/lib/persistedUi
 import { getSummaryReportContext, saveQcReportSettings } from "../../src/lib/reportState";
 import { stableSnapshot } from "../../src/lib/unsavedAnalysis";
 import { applyCopylotSessionStorageState, captureCopylotSessionStorageState, clearCopylotClientStorageState } from "../../src/lib/restoreUiState";
-import { collectColumns, formatCellValue, rowsToCsv, rowsToQuotedCsv } from "../../src/lib/tableData";
+import { collectColumns, formatCellValue } from "../../src/lib/tableData";
 import { dataSourceOptions, resolveDataSource } from "../../src/lib/types";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -59,18 +59,6 @@ describe("plot setting serialisation", () => {
 });
 
 describe("tables", () => {
-  it("escape CSV headers and keep every row without rounding", () => {
-    const columns = ["sample,1", 'say "hi"', "line\nbreak", "carriage\rreturn", "number"];
-    const rows = Array.from({ length: 205 }, (_, i) => ({
-      "sample,1": `P${i}`, 'say "hi"': 'a"b', "line\nbreak": "x\ny", "carriage\rreturn": "x\ry", number: 0.12345678901234568,
-    }));
-    const header = '"sample,1","say ""hi""","line\nbreak","carriage\rreturn"';
-    expect(rowsToCsv(rows, columns)).toBe(header + ",number\n" + rows.map((_, i) =>
-      `P${i},"a""b","x\ny","x\ry",0.12345678901234568`).join("\n"));
-    expect(rowsToQuotedCsv(rows, columns)).toBe(header + ',"number"\n' + rows.map((_, i) =>
-      `"P${i}","a""b","x\ny","x\ry","0.12345678901234568"`).join("\n"));
-  });
-
   it("keep the first-seen column order across heterogeneous rows without mutation", () => {
     const rows = Object.freeze([Object.freeze({ b: 1, a: 2 }), Object.freeze({ c: 3, b: 4 })]);
     expect(collectColumns(rows as never)).toEqual(["b", "a", "c"]);
@@ -80,16 +68,6 @@ describe("tables", () => {
   it("keep the preview's rounding and its non-numeric representation", () => {
     expect([null, undefined, 0, 1.234567, true, false, { a: 1 }, "text"].map(formatCellValue))
       .toEqual(["", "", "0", "1.2346", "true", "false", '{"a":1}', "text"]);
-  });
-
-  it("keep precision, missing cells, escaping and the empty behaviour in both CSV variants", () => {
-    const rows = [{ n: 0.12345678901234568, text: 'a,"b"\nc', empty: null }];
-    const columns = ["n", "text", "empty", "missing"];
-    expect(rowsToCsv(rows, columns)).toBe('n,text,empty,missing\n0.12345678901234568,"a,""b""\nc",,');
-    expect(rowsToQuotedCsv(rows, columns)).toBe('"n","text","empty","missing"\n"0.12345678901234568","a,""b""\nc","",""');
-    expect(rowsToCsv([], ["n"])).toBe("n");
-    expect(rowsToQuotedCsv([], ["n"])).toBe("");
-    expect(rowsToQuotedCsv(rows, [])).toBe("");
   });
 });
 
